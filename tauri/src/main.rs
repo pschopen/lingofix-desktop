@@ -22,6 +22,8 @@ use uuid::Uuid;
 const MAX_DOCX_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
 const BACKEND_API_KEY_ENV: &str = "LINGOFIX_RUNTIME_API_KEY";
 const BACKEND_KEEP_TEMP_ENV: &str = "LINGOFIX_KEEP_TEMP_ARTIFACTS";
+const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
+const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
 const KNOWN_PROVIDERS: [&str; 7] = [
     "openai",
@@ -843,21 +845,46 @@ async fn run_docx_processor(
     let settings_temp = std::env::temp_dir().join(format!("lingofix-settings-{}.json", uuid_like()));
     tokio::fs::write(&settings_temp, settings_json).await?;
     let run_result = async {
-        let project = workspace_root()?.join("backend").join("Lingofix.Backend.csproj");
-        let mut cmd = Command::new("dotnet");
+        let (mut cmd, launch_mode) = if let Some(backend_bin) = resolve_bundled_backend_executable(app) {
+            let mut command = Command::new(&backend_bin);
+            command.arg("--input").arg(file_path).arg("--settings-path").arg(&settings_temp);
+            if let Some(parent) = backend_bin.parent() {
+                command.current_dir(parent);
+            }
+            (
+                command,
+                format!("bundled backend executable ({})", backend_bin.display()),
+            )
+        } else {
+            let project = workspace_root()?.join("backend").join("Lingofix.Backend.csproj");
+            let dotnet = resolve_dotnet_path();
+            let dotnet_cmd = dotnet
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("dotnet"));
+            let launch = if let Some(path) = dotnet {
+                format!("dotnet run via {}", path.display())
+            } else {
+                "dotnet run via PATH".to_string()
+            };
+
+            let mut command = Command::new(dotnet_cmd);
+            command
+                .arg("run")
+                .arg("--project")
+                .arg(project)
+                .arg("--")
+                .arg("--input")
+                .arg(file_path)
+                .arg("--settings-path")
+                .arg(&settings_temp);
+            (command, launch)
+        };
+
         if let Some(api_key) = env_api_key.as_ref() {
             cmd.env(BACKEND_API_KEY_ENV, api_key);
         }
         cmd.env(BACKEND_KEEP_TEMP_ENV, "1");
-        cmd.arg("run")
-            .arg("--project")
-            .arg(project)
-            .arg("--")
-            .arg("--input")
-            .arg(file_path)
-            .arg("--settings-path")
-            .arg(&settings_temp)
-            .stdout(Stdio::piped())
+        cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
         #[cfg(target_os = "windows")]
@@ -867,7 +894,9 @@ async fn run_docx_processor(
             cmd.as_std_mut().creation_flags(CREATE_NO_WINDOW);
         }
 
-        let mut child = cmd.spawn().context("failed to start DOCX processor")?;
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("failed to start DOCX processor ({launch_mode})"))?;
         let stdout = child.stdout.take().context("missing DOCX processor stdout")?;
         let stderr = child.stderr.take().context("missing DOCX processor stderr")?;
         let mut reader = BufReader::new(stdout).lines();
@@ -993,6 +1022,93 @@ async fn run_docx_processor(
 
     let _ = tokio::fs::remove_file(&settings_temp).await;
     run_result
+}
+
+fn resolve_bundled_backend_executable(app: &AppHandle) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    let sidecar_name = format!("{BACKEND_EXECUTABLE_BASE}-{}", current_sidecar_triple());
+    let base_name = backend_executable_filename();
+
+    let mut candidates = vec![
+        resource_dir.join("binaries").join(&sidecar_name),
+        resource_dir.join("binaries").join(&base_name),
+        resource_dir.join(&sidecar_name),
+        resource_dir.join(&base_name),
+        resource_dir
+            .join("Resources")
+            .join("binaries")
+            .join(&sidecar_name),
+        resource_dir
+            .join("Resources")
+            .join("binaries")
+            .join(&base_name),
+    ];
+
+    if let Some(exe_dir) = exe_dir {
+        candidates.push(exe_dir.join(&base_name));
+        candidates.push(exe_dir.join(&sidecar_name));
+        candidates.push(exe_dir.join("binaries").join(&base_name));
+        candidates.push(exe_dir.join("binaries").join(&sidecar_name));
+    }
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+fn resolve_dotnet_path() -> Option<PathBuf> {
+    let from_env = std::env::var(BACKEND_DOTNET_PATH_ENV)
+        .ok()
+        .map(|v| PathBuf::from(v.trim()))
+        .filter(|v| !v.as_os_str().is_empty())
+        .filter(|v| v.is_file());
+    if from_env.is_some() {
+        return from_env;
+    }
+
+    let candidates = [
+        PathBuf::from("/opt/homebrew/bin/dotnet"),
+        PathBuf::from("/usr/local/share/dotnet/dotnet"),
+        PathBuf::from("/usr/local/bin/dotnet"),
+        PathBuf::from("C:/Program Files/dotnet/dotnet.exe"),
+    ];
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn backend_executable_filename() -> String {
+    format!("{BACKEND_EXECUTABLE_BASE}.exe")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn backend_executable_filename() -> String {
+    BACKEND_EXECUTABLE_BASE.to_string()
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn current_sidecar_triple() -> &'static str {
+    "aarch64-apple-darwin"
+}
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+fn current_sidecar_triple() -> &'static str {
+    "x86_64-apple-darwin"
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn current_sidecar_triple() -> &'static str {
+    "x86_64-pc-windows-msvc"
+}
+
+#[cfg(not(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "macos", target_arch = "x86_64"),
+    all(target_os = "windows", target_arch = "x86_64")
+)))]
+fn current_sidecar_triple() -> &'static str {
+    ""
 }
 
 fn combine_backend_error(message: &str, stderr: &str) -> String {

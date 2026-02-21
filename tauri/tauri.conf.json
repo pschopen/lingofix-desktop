@@ -30,6 +30,13 @@
     "targets": [
       "app"
     ],
+    "externalBin": [
+      "binaries/lingofix-backend"
+    ],
+    "resources": {
+      "resources/word-compare.scpt": "word-compare.scpt",
+      "resources/binaries/word-compare.scpt": "binaries/word-compare.scpt"
+    },
     "icon": [
       "icons/icon.icns",
       "icons/icon.png",

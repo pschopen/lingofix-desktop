@@ -46,6 +46,31 @@ Further targets:
 - macOS x64: `npm run publish:osx-x64`
 - Linux x64: `npm run publish:linux-x64`
 
+### Desktop App Bundles (self-contained backend included)
+
+These commands publish the .NET backend as self-contained binaries and bundle them into the Tauri app, so no separate .NET runtime is required on target machines.
+
+- macOS app bundle (includes ARM64 + x64 backend binaries): `npm run build:app:mac`
+- macOS ARM64 app bundle target: `npm run build:app:mac:arm64`
+- macOS x64 app bundle target: `npm run build:app:mac:x64`
+- Windows installer build (includes win-x64 backend binary): `npm run build:app:win`
+
+You can also prepare backend binaries directly:
+
+```bash
+npm run prepare:backend:binaries
+```
+
+### CI Build Pipeline
+
+GitHub Actions workflow `Desktop Bundles` builds distributable artifacts for:
+
+- macOS ARM64 (`.app` zipped)
+- macOS x64 (`.app` zipped)
+- Windows x64 (NSIS `.exe` installer)
+
+You can run it manually from the Actions tab via `workflow_dispatch`.
+
 ## macOS Startup and Signing Notes
 
 - Unsigned/ad-hoc signed apps can start slower on macOS and may show a blank window longer during initial verification.
@@ -53,9 +78,8 @@ Further targets:
 - Local testing build:
 
 ```bash
-cd tauri
-cargo tauri build --bundles app
-open target/release/bundle/macos/Lingofix.app
+npm run build:app:mac
+open "tauri/target/release/bundle/macos/Lingofix Desktop.app"
 ```
 
 ## License
