@@ -1,0 +1,1174 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::OnceLock;
+use std::sync::Arc;
+
+use anyhow::{anyhow, Context};
+use base64::{engine::general_purpose, Engine as _};
+use futures_util::StreamExt;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::process::Command;
+use tokio::sync::Mutex;
+use uuid::Uuid;
+
+const MAX_DOCX_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
+const BACKEND_API_KEY_ENV: &str = "LINGOFIX_RUNTIME_API_KEY";
+const BACKEND_KEEP_TEMP_ENV: &str = "LINGOFIX_KEEP_TEMP_ARTIFACTS";
+const ENCRYPTION_PREFIX: &str = "enc_v1:";
+const KNOWN_PROVIDERS: [&str; 7] = [
+    "openai",
+    "ollama",
+    "openrouter",
+    "huggingface",
+    "google",
+    "custom",
+    "mistral",
+];
+
+fn is_known_provider(provider: &str) -> bool {
+    KNOWN_PROVIDERS
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(provider))
+}
+
+fn normalize_provider(provider: &str) -> String {
+    let trimmed = provider.trim();
+    if is_known_provider(trimmed) {
+        trimmed.to_ascii_lowercase()
+    } else {
+        "openai".to_string()
+    }
+}
+
+#[derive(Default)]
+struct CancellationState {
+    text: Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
+    docx: Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DocxSettings {
+    compare_mode: String,
+    enable_batching: bool,
+    batch_max_chars: i32,
+    batch_max_paragraphs: i32,
+    enable_cache: bool,
+    enable_parallelization: bool,
+    max_parallel_requests: i32,
+}
+
+impl Default for DocxSettings {
+    fn default() -> Self {
+        Self {
+            compare_mode: "diff-engine".into(),
+            enable_batching: true,
+            batch_max_chars: 50_000,
+            batch_max_paragraphs: 100,
+            enable_cache: true,
+            enable_parallelization: true,
+            max_parallel_requests: 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FrontendSettings {
+    provider: String,
+    api_url: String,
+    api_key: Option<String>,
+    model: String,
+    custom_prompt: String,
+    system_prompt: String,
+    temperature: f64,
+    provider_keys: HashMap<String, Option<String>>,
+    docx: DocxSettings,
+    font_size: String,
+}
+
+impl Default for FrontendSettings {
+    fn default() -> Self {
+        Self {
+            provider: "openai".into(),
+            api_url: "https://api.openai.com/v1".into(),
+            api_key: None,
+            model: "gpt-4".into(),
+            custom_prompt: "Correct the following text while maintaining the style and tone.".into(),
+            system_prompt: "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.".into(),
+            temperature: 0.0,
+            provider_keys: HashMap::new(),
+            docx: DocxSettings::default(),
+            font_size: "default".into(),
+        }
+    }
+}
+
+fn settings_path(app: &AppHandle) -> anyhow::Result<PathBuf> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| anyhow!("failed to resolve app config dir: {e}"))?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("settings.json"))
+}
+
+fn weak_device_secret() -> Vec<u8> {
+    let user = std::env::var("USER").unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let host = std::env::var("HOSTNAME").unwrap_or_default();
+    let seed = format!(
+        "lingofix|{}|{}|{}|{}|{}",
+        user,
+        home,
+        host,
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    Sha256::digest(seed.as_bytes()).to_vec()
+}
+
+fn build_keystream(secret: &[u8], nonce: &[u8], len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len);
+    let mut counter: u32 = 0;
+    while out.len() < len {
+        let mut hasher = Sha256::new();
+        hasher.update(secret);
+        hasher.update(nonce);
+        hasher.update(counter.to_le_bytes());
+        out.extend_from_slice(&hasher.finalize());
+        counter = counter.wrapping_add(1);
+    }
+    out.truncate(len);
+    out
+}
+
+fn encrypt_secret(raw: &str) -> String {
+    if raw.is_empty() || raw.starts_with(ENCRYPTION_PREFIX) {
+        return raw.to_string();
+    }
+
+    let nonce = *Uuid::new_v4().as_bytes();
+    let secret = weak_device_secret();
+    let bytes = raw.as_bytes();
+    let stream = build_keystream(&secret, &nonce, bytes.len());
+    let cipher: Vec<u8> = bytes
+        .iter()
+        .zip(stream.iter())
+        .map(|(a, b)| a ^ b)
+        .collect();
+
+    let mut payload = Vec::with_capacity(nonce.len() + cipher.len());
+    payload.extend_from_slice(&nonce);
+    payload.extend_from_slice(&cipher);
+    format!("{}{}", ENCRYPTION_PREFIX, general_purpose::STANDARD.encode(payload))
+}
+
+fn decrypt_secret(raw: &str) -> Option<String> {
+    if raw.trim().is_empty() {
+        return Some(String::new());
+    }
+
+    if !raw.starts_with(ENCRYPTION_PREFIX) {
+        return Some(raw.to_string());
+    }
+
+    let data = general_purpose::STANDARD
+        .decode(&raw[ENCRYPTION_PREFIX.len()..])
+        .ok()?;
+    if data.len() < 16 {
+        return None;
+    }
+
+    let (nonce, cipher) = data.split_at(16);
+    let secret = weak_device_secret();
+    let stream = build_keystream(&secret, nonce, cipher.len());
+    let plain: Vec<u8> = cipher
+        .iter()
+        .zip(stream.iter())
+        .map(|(a, b)| a ^ b)
+        .collect();
+
+    String::from_utf8(plain).ok()
+}
+
+fn decrypt_settings_secrets(mut settings: FrontendSettings) -> FrontendSettings {
+    settings.api_key = settings
+        .api_key
+        .as_deref()
+        .and_then(decrypt_secret)
+        .filter(|v| !v.trim().is_empty());
+
+    for value in settings.provider_keys.values_mut() {
+        let decrypted = value
+            .as_deref()
+            .and_then(decrypt_secret)
+            .filter(|v| !v.trim().is_empty());
+        *value = decrypted;
+    }
+
+    settings
+}
+
+fn encrypt_settings_secrets(mut settings: FrontendSettings) -> FrontendSettings {
+    settings.api_key = settings
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(encrypt_secret);
+
+    for value in settings.provider_keys.values_mut() {
+        let encrypted = value
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(encrypt_secret);
+        *value = encrypted;
+    }
+
+    settings
+}
+
+fn sanitize_settings_for_disk(mut settings: FrontendSettings) -> FrontendSettings {
+    settings.provider = normalize_provider(&settings.provider);
+    settings.api_key = None;
+    let mut cleaned_keys: HashMap<String, Option<String>> = HashMap::new();
+    for provider in KNOWN_PROVIDERS {
+        let maybe_key = settings
+            .provider_keys
+            .get(provider)
+            .and_then(|v| v.as_ref())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        cleaned_keys.insert(provider.to_string(), maybe_key);
+    }
+    settings.provider_keys = cleaned_keys;
+    settings
+}
+
+fn resolve_provider_key(settings: &FrontendSettings) -> Option<String> {
+    if let Some(value) = settings.api_key.as_ref().filter(|v| !v.trim().is_empty()) {
+        return Some(value.clone());
+    }
+
+    settings
+        .provider_keys
+        .get(&settings.provider)
+        .cloned()
+        .flatten()
+        .filter(|v| !v.trim().is_empty())
+}
+
+fn normalize_docx_path(path: &str) -> anyhow::Result<PathBuf> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("path is empty"));
+    }
+
+    let canonical = std::fs::canonicalize(trimmed)
+        .with_context(|| format!("invalid path: {trimmed}"))?;
+    if !canonical.exists() {
+        return Err(anyhow!("path does not exist"));
+    }
+    if !canonical.is_file() {
+        return Err(anyhow!("path is not a file"));
+    }
+
+    let ext = canonical
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    if !ext.eq_ignore_ascii_case("docx") {
+        return Err(anyhow!("only .docx files are allowed"));
+    }
+
+    Ok(canonical)
+}
+
+fn normalize_existing_path(path: &str) -> anyhow::Result<PathBuf> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("path is empty"));
+    }
+
+    let canonical = std::fs::canonicalize(trimmed)
+        .with_context(|| format!("invalid path: {trimmed}"))?;
+    if !canonical.exists() {
+        return Err(anyhow!("path does not exist"));
+    }
+
+    Ok(canonical)
+}
+
+fn frontend_path(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{}", rest);
+    }
+
+    if let Some(rest) = path.strip_prefix(r"\\?\") {
+        return rest.to_string();
+    }
+
+    path.to_string()
+}
+
+fn clear_temp_lingofix_dir() {
+    let temp_root = std::env::temp_dir().join("Lingofix");
+    if !temp_root.exists() {
+        return;
+    }
+
+    if let Err(err) = std::fs::remove_dir_all(&temp_root) {
+        eprintln!("Failed to clear temp Lingofix directory at startup: {err}");
+    }
+}
+
+#[tauri::command]
+async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
+    let path = settings_path(&app).map_err(|e| e.to_string())?;
+    if !path.exists() {
+        return Ok(FrontendSettings::default());
+    }
+
+    let content = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let raw_settings: FrontendSettings = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let has_plain_secrets = raw_settings
+        .api_key
+        .as_ref()
+        .map(|v| !v.trim().is_empty() && !v.starts_with(ENCRYPTION_PREFIX))
+        .unwrap_or(false)
+        || raw_settings.provider_keys.values().any(|value| {
+            value
+                .as_ref()
+                .map(|v| !v.trim().is_empty() && !v.starts_with(ENCRYPTION_PREFIX))
+                .unwrap_or(false)
+        });
+
+    let mut settings = decrypt_settings_secrets(raw_settings);
+    settings.provider = normalize_provider(&settings.provider);
+
+    if settings.api_key.as_ref().map(|v| v.trim().is_empty()).unwrap_or(true) {
+        settings.api_key = settings
+            .provider_keys
+            .get(&settings.provider)
+            .cloned()
+            .flatten()
+            .filter(|v| !v.trim().is_empty());
+    }
+
+    if has_plain_secrets {
+        let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(settings.clone()));
+        if let Ok(serialized) = serde_json::to_string_pretty(&encrypted) {
+            let _ = tokio::fs::write(&path, serialized).await;
+        }
+    }
+
+    Ok(settings)
+}
+
+#[tauri::command]
+async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(), String> {
+    let normalized_provider = normalize_provider(&settings.provider);
+    let mut normalized_settings = settings;
+    normalized_settings.provider = normalized_provider.clone();
+    if let Some(active) = normalized_settings
+        .api_key
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        normalized_settings
+            .provider_keys
+            .insert(normalized_provider, Some(active));
+    }
+
+    let path = settings_path(&app).map_err(|e| e.to_string())?;
+    let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(normalized_settings));
+    let content = serde_json::to_string_pretty(&encrypted)
+        .map_err(|e| e.to_string())?;
+    tokio::fs::write(path, content)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn fetch_models(api_url: String, api_key: Option<String>, provider: String) -> Result<Vec<String>, String> {
+    let client = reqwest::Client::new();
+    let effective_key = api_key
+        .filter(|v| !v.trim().is_empty());
+
+    if provider.eq_ignore_ascii_case("ollama") {
+        let url = format!("{}/api/tags", api_url.trim_end_matches('/'));
+        let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+        let value: Value = resp.json().await.map_err(|e| e.to_string())?;
+        let models = value
+            .get("models")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m.get("model").and_then(|s| s.as_str()).map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        return Ok(models);
+    }
+
+    let url = format!("{}/models", api_url.trim_end_matches('/'));
+    let mut req = client.get(url);
+    if let Some(key) = effective_key {
+        if !key.trim().is_empty() {
+            req = req.bearer_auth(key);
+        }
+    }
+
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let value: Value = resp.json().await.map_err(|e| e.to_string())?;
+    let mut models = Vec::new();
+    if let Some(arr) = value.get("data").and_then(|v| v.as_array()) {
+        for m in arr {
+            if let Some(id) = m.get("id").and_then(|s| s.as_str()) {
+                let l = id.to_lowercase();
+                if l.contains("vision") || l.contains("audio") || l.contains("image") {
+                    continue;
+                }
+                models.push(id.to_string());
+            }
+        }
+    }
+    Ok(models)
+}
+
+#[tauri::command]
+async fn cancel_correction(state: State<'_, CancellationState>) -> Result<(), String> {
+    let guard = state.text.lock().await;
+    if let Some(flag) = guard.as_ref() {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn correct_text_streaming(
+    app: AppHandle,
+    state: State<'_, CancellationState>,
+    text: String,
+    settings: FrontendSettings,
+) -> Result<(), String> {
+    let mut effective_settings = settings;
+    effective_settings.api_key = resolve_provider_key(&effective_settings);
+
+    if !effective_settings.provider.eq_ignore_ascii_case("ollama")
+        && effective_settings
+            .api_key
+            .as_ref()
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+    {
+        let message = "API key missing. Please open settings and provide an API key.".to_string();
+        let _ = app.emit("correction_error", message.clone());
+        return Err(message);
+    }
+
+    let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut guard = state.text.lock().await;
+        *guard = Some(cancel_flag.clone());
+    }
+
+    let _ = app.emit("correction_started", json!(null));
+    let result = if effective_settings.provider.eq_ignore_ascii_case("ollama") {
+        stream_ollama(&app, &cancel_flag, &text, &effective_settings).await
+    } else {
+        stream_openai_like(&app, &cancel_flag, &text, &effective_settings).await
+    };
+
+    {
+        let mut guard = state.text.lock().await;
+        *guard = None;
+    }
+
+    if let Err(err) = result {
+        let message = err.to_string();
+        let _ = app.emit("correction_error", message.clone());
+        return Err(message);
+    }
+
+    Ok(())
+}
+
+async fn stream_ollama(
+    app: &AppHandle,
+    cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
+    text: &str,
+    settings: &FrontendSettings,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/chat", settings.api_url.trim_end_matches('/'));
+    let prompt = format!(
+        "{}\n\n{}\n\nText:\n{}",
+        settings.custom_prompt, settings.system_prompt, text
+    );
+    let body = json!({
+        "model": settings.model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": true,
+        "temperature": settings.temperature
+    });
+
+    let resp = client.post(url).json(&body).send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = extract_api_error_message(&body);
+        return Err(anyhow!("Ollama request failed ({}): {}", status, detail));
+    }
+    let mut stream = resp.bytes_stream();
+    let mut buf = String::new();
+    let mut all = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = app.emit("correction_complete", all.clone());
+            return Ok(());
+        }
+
+        let chunk = chunk?;
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(pos) = buf.find('\n') {
+            let line = buf[..pos].trim().to_string();
+            buf = buf[pos + 1..].to_string();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(&line) {
+                if let Some(content) = value
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                {
+                    all.push_str(content);
+                    let _ = app.emit("correction_chunk", remove_markdown(&all));
+                }
+                if value.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
+                    let final_text = remove_markdown(&all);
+                    if final_text.trim().is_empty() {
+                        return Err(anyhow!("Ollama returned an empty correction result"));
+                    }
+                    let _ = app.emit("correction_complete", final_text);
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    let final_text = remove_markdown(&all);
+    if final_text.trim().is_empty() {
+        return Err(anyhow!("Ollama returned an empty correction result"));
+    }
+
+    let _ = app.emit("correction_complete", final_text);
+    Ok(())
+}
+
+async fn stream_openai_like(
+    app: &AppHandle,
+    cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
+    text: &str,
+    settings: &FrontendSettings,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/chat/completions", settings.api_url.trim_end_matches('/'));
+    let prompt = format!(
+        "{}\n\n{}\n\nText:\n{}",
+        settings.custom_prompt, settings.system_prompt, text
+    );
+    let mut include_reasoning_effort = true;
+    let mut resp = send_openai_like_request(
+        &client,
+        &url,
+        settings,
+        &prompt,
+        include_reasoning_effort,
+    )
+    .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = extract_api_error_message(&body);
+
+        if status.as_u16() == 400
+            && include_reasoning_effort
+            && is_reasoning_or_thinking_error(&detail)
+        {
+            include_reasoning_effort = false;
+            resp = send_openai_like_request(
+                &client,
+                &url,
+                settings,
+                &prompt,
+                include_reasoning_effort,
+            )
+            .await?;
+
+            if !resp.status().is_success() {
+                let retry_status = resp.status();
+                let retry_body = resp.text().await.unwrap_or_default();
+                let retry_detail = extract_api_error_message(&retry_body);
+                return Err(anyhow!("LLM request failed ({}): {}", retry_status, retry_detail));
+            }
+        } else {
+            return Err(anyhow!("LLM request failed ({}): {}", status, detail));
+        }
+    }
+
+    let mut stream = resp.bytes_stream();
+    let mut buf = String::new();
+    let mut all = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = app.emit("correction_complete", remove_markdown(&all));
+            return Ok(());
+        }
+
+        let chunk = chunk?;
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(pos) = buf.find('\n') {
+            let line = buf[..pos].trim().to_string();
+            buf = buf[pos + 1..].to_string();
+
+            if !line.starts_with("data: ") {
+                continue;
+            }
+
+            let data = &line[6..];
+            if data == "[DONE]" {
+                let final_text = remove_markdown(&all);
+                if final_text.trim().is_empty() {
+                    return Err(anyhow!("LLM returned an empty correction result"));
+                }
+                let _ = app.emit("correction_complete", final_text);
+                return Ok(());
+            }
+
+            if let Ok(value) = serde_json::from_str::<Value>(data) {
+                if let Some(content) = value
+                    .get("choices")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("delta"))
+                    .and_then(|d| d.get("content"))
+                    .and_then(|c| c.as_str())
+                {
+                    all.push_str(content);
+                    let _ = app.emit("correction_chunk", remove_markdown(&all));
+                }
+            }
+        }
+    }
+
+    let final_text = remove_markdown(&all);
+    if final_text.trim().is_empty() {
+        return Err(anyhow!("LLM returned an empty correction result"));
+    }
+
+    let _ = app.emit("correction_complete", final_text);
+    Ok(())
+}
+
+async fn send_openai_like_request(
+    client: &reqwest::Client,
+    url: &str,
+    settings: &FrontendSettings,
+    prompt: &str,
+    include_reasoning_effort: bool,
+) -> anyhow::Result<reqwest::Response> {
+    let mut body = json!({
+        "model": settings.model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": true,
+        "temperature": settings.temperature
+    });
+
+    if include_reasoning_effort {
+        body["reasoning_effort"] = json!("none");
+    }
+
+    let mut req = client.post(url).json(&body);
+    if let Some(api_key) = settings.api_key.as_ref() {
+        if !api_key.trim().is_empty() {
+            req = req.bearer_auth(api_key);
+        }
+    }
+
+    Ok(req.send().await?)
+}
+
+fn is_reasoning_or_thinking_error(message: &str) -> bool {
+    let m = message.to_lowercase();
+    m.contains("reasoning") || m.contains("thinking")
+}
+
+fn extract_api_error_message(body: &str) -> String {
+    if body.trim().is_empty() {
+        return "no response body".to_string();
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        if let Some(error) = value.get("error") {
+            if let Some(msg) = error.get("message").and_then(|m| m.as_str()) {
+                return msg.to_string();
+            }
+            if let Some(msg) = error.as_str() {
+                return msg.to_string();
+            }
+        }
+
+        if let Some(msg) = value.get("message").and_then(|m| m.as_str()) {
+            return msg.to_string();
+        }
+    }
+
+    let one_line = body.lines().next().unwrap_or_default().trim();
+    if one_line.is_empty() {
+        "unexpected error".to_string()
+    } else {
+        one_line.to_string()
+    }
+}
+
+#[tauri::command]
+async fn cancel_docx(state: State<'_, CancellationState>) -> Result<(), String> {
+    let guard = state.docx.lock().await;
+    if let Some(flag) = guard.as_ref() {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn correct_docx(
+    app: AppHandle,
+    state: State<'_, CancellationState>,
+    file_path: String,
+    original_path: Option<String>,
+    settings: FrontendSettings,
+) -> Result<(), String> {
+    let input_path = normalize_docx_path(&file_path).map_err(|e| e.to_string())?;
+    let input_path_str = input_path.to_string_lossy().to_string();
+    let original_normalized = match original_path.as_deref() {
+        Some(value) if !value.trim().is_empty() => {
+            Some(normalize_docx_path(value).map_err(|e| e.to_string())?.to_string_lossy().to_string())
+        }
+        _ => None,
+    };
+
+    let mut effective_settings = settings;
+    effective_settings.api_key = resolve_provider_key(&effective_settings);
+
+    let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut guard = state.docx.lock().await;
+        if guard.is_some() {
+            return Err("A DOCX correction job is already running".to_string());
+        }
+        *guard = Some(cancel_flag.clone());
+    }
+
+    let _ = app.emit("docx_started", frontend_path(&input_path_str));
+
+    let result = run_docx_processor(
+        &app,
+        &cancel_flag,
+        &input_path_str,
+        original_normalized.as_deref(),
+        &effective_settings,
+    )
+    .await;
+
+    {
+        let mut guard = state.docx.lock().await;
+        *guard = None;
+    }
+
+    result.map_err(|e| e.to_string())
+}
+
+async fn run_docx_processor(
+    app: &AppHandle,
+    cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
+    file_path: &str,
+    original_path: Option<&str>,
+    settings: &FrontendSettings,
+) -> anyhow::Result<()> {
+    const DOCX_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3 * 60 * 60);
+
+    let mut backend_settings = settings.clone();
+    let env_api_key = backend_settings
+        .api_key
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    if env_api_key.is_some() {
+        backend_settings.api_key = Some(format!("ENV:{BACKEND_API_KEY_ENV}"));
+    }
+    for value in backend_settings.provider_keys.values_mut() {
+        *value = None;
+    }
+
+    let settings_json = serde_json::to_string(&backend_settings)?;
+    let settings_temp = std::env::temp_dir().join(format!("lingofix-settings-{}.json", uuid_like()));
+    tokio::fs::write(&settings_temp, settings_json).await?;
+    let run_result = async {
+        let project = workspace_root()?.join("backend").join("Lingofix.Backend.csproj");
+        let mut cmd = Command::new("dotnet");
+        if let Some(api_key) = env_api_key.as_ref() {
+            cmd.env(BACKEND_API_KEY_ENV, api_key);
+        }
+        cmd.env(BACKEND_KEEP_TEMP_ENV, "1");
+        cmd.arg("run")
+            .arg("--project")
+            .arg(project)
+            .arg("--")
+            .arg("--input")
+            .arg(file_path)
+            .arg("--settings-path")
+            .arg(&settings_temp)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let mut child = cmd.spawn().context("failed to start DOCX processor")?;
+        let stdout = child.stdout.take().context("missing DOCX processor stdout")?;
+        let stderr = child.stderr.take().context("missing DOCX processor stderr")?;
+        let mut reader = BufReader::new(stdout).lines();
+        let stderr_task = tokio::spawn(async move {
+            let mut stderr_reader = BufReader::new(stderr);
+            let mut buffer = String::new();
+            let _ = stderr_reader.read_to_string(&mut buffer).await;
+            buffer
+        });
+
+        let mut output_path: Option<String> = None;
+        let mut track_changes = false;
+        let mut backend_error: Option<String> = None;
+        let mut cancelled = false;
+        let started_at = std::time::Instant::now();
+
+        loop {
+            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                cancelled = true;
+                let _ = child.kill().await;
+                break;
+            }
+
+            if started_at.elapsed() > DOCX_PROCESS_TIMEOUT {
+                backend_error = Some("DOCX processor timed out".to_string());
+                let _ = child.kill().await;
+                break;
+            }
+
+            match tokio::time::timeout(std::time::Duration::from_millis(100), reader.next_line()).await {
+                Ok(Ok(Some(line))) => {
+                    if let Ok(value) = serde_json::from_str::<Value>(&line) {
+                        match value.get("type").and_then(|v| v.as_str()).unwrap_or_default() {
+                            "progress" => {
+                                let percent = value.get("percent").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let message = value
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let _ = app.emit("docx_progress", json!({ "percent": percent, "message": message }));
+                            }
+                            "log" => {
+                                let level = value.get("level").and_then(|v| v.as_str()).unwrap_or("info");
+                                let message = value.get("message").and_then(|v| v.as_str()).unwrap_or_default();
+                                let _ = app.emit("docx_log", json!({ "level": level, "message": message }));
+                            }
+                            "result" => {
+                                output_path = value.get("outputPath").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                track_changes = value
+                                    .get("trackChangesCreated")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                            }
+                            "error" => {
+                                let message = value.get("message").and_then(|v| v.as_str()).unwrap_or("DOCX failed");
+                                backend_error = Some(message.to_string());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) => {
+                    backend_error = Some(e.to_string());
+                    break;
+                }
+                Err(_) => {}
+            }
+        }
+
+        let status = child.wait().await?;
+        let stderr_output = match stderr_task.await {
+            Ok(text) => text,
+            Err(_) => String::new(),
+        };
+
+        if cancelled {
+            return Err(anyhow!("DOCX processing cancelled"));
+        }
+
+        if let Some(message) = backend_error {
+            let combined = combine_backend_error(&message, &stderr_output);
+            let _ = app.emit("docx_error", combined.clone());
+            return Err(anyhow!(combined));
+        }
+
+        if !status.success() {
+            let message = combine_backend_error("DOCX processor failed", &stderr_output);
+            let _ = app.emit("docx_error", message.clone());
+            return Err(anyhow!(message));
+        }
+
+        let mut final_output = output_path.ok_or_else(|| anyhow!("No output path from DOCX processor"))?;
+        if let Some(original) = original_path {
+            let input = PathBuf::from(file_path);
+            let temp_base = std::env::temp_dir().join("Lingofix").join("uploads");
+            if input.starts_with(temp_base) && Path::new(original).exists() {
+                let output_suffix = Path::new(&final_output)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|stem| if stem.ends_with("_corrected") { "_corrected" } else { "_lingofix" })
+                    .unwrap_or("_lingofix");
+                let target = build_output_path(Path::new(original), output_suffix)?;
+                tokio::fs::copy(&final_output, &target).await?;
+                let _ = tokio::fs::remove_file(&final_output).await;
+                let _ = tokio::fs::remove_file(file_path).await;
+                final_output = target.to_string_lossy().to_string();
+            }
+        }
+
+        let _ = app.emit(
+            "docx_complete",
+            json!({
+                "outputPath": frontend_path(&final_output),
+                "trackChanges": track_changes
+            }),
+        );
+
+        Ok(())
+    }
+    .await;
+
+    let _ = tokio::fs::remove_file(&settings_temp).await;
+    run_result
+}
+
+fn combine_backend_error(message: &str, stderr: &str) -> String {
+    let trimmed = stderr.trim();
+    if trimmed.is_empty() {
+        return message.to_string();
+    }
+
+    let lines: Vec<&str> = trimmed.lines().collect();
+    let start = lines.len().saturating_sub(20);
+    let tail = lines[start..].join("\n");
+    format!("{message}\n{tail}")
+}
+
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let canonical = normalize_existing_path(&path).map_err(|e| e.to_string())?;
+    let folder = if canonical.is_dir() {
+        canonical
+    } else {
+        canonical.parent().map(|p| p.to_path_buf()).unwrap_or(canonical)
+    };
+
+    if cfg!(target_os = "windows") {
+        std::process::Command::new("explorer")
+            .arg(folder)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+            .arg(folder)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    } else {
+        std::process::Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_file_size(path: String) -> Result<u64, String> {
+    let safe_path = normalize_docx_path(&path).map_err(|e| e.to_string())?;
+    let meta = std::fs::metadata(safe_path).map_err(|e| e.to_string())?;
+    Ok(meta.len())
+}
+
+#[tauri::command]
+async fn save_temp_docx(name: String, base64: String) -> Result<String, String> {
+    let bytes = decode_base64(&base64).map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Err("file payload is empty".to_string());
+    }
+    if bytes.len() > MAX_DOCX_UPLOAD_BYTES {
+        return Err(format!(
+            "file too large (max {} MB)",
+            MAX_DOCX_UPLOAD_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let safe_name = Path::new(&name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("document.docx");
+    if !safe_name.to_ascii_lowercase().ends_with(".docx") {
+        return Err("only .docx uploads are allowed".to_string());
+    }
+
+    let dir = std::env::temp_dir().join("Lingofix").join("uploads");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}_{}", uuid_like(), safe_name));
+    tokio::fs::write(&path, bytes)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn decode_base64(value: &str) -> anyhow::Result<Vec<u8>> {
+    general_purpose::STANDARD.decode(value).context("invalid base64")
+}
+
+fn remove_markdown(text: &str) -> String {
+    static RE_BOLD: OnceLock<Regex> = OnceLock::new();
+    static RE_UBOLD: OnceLock<Regex> = OnceLock::new();
+    static RE_ISTAR: OnceLock<Regex> = OnceLock::new();
+    static RE_IUNDER: OnceLock<Regex> = OnceLock::new();
+    static RE_HEADERS: OnceLock<Regex> = OnceLock::new();
+    static RE_BULLETS: OnceLock<Regex> = OnceLock::new();
+    static RE_LINKS: OnceLock<Regex> = OnceLock::new();
+    static RE_IMAGES: OnceLock<Regex> = OnceLock::new();
+    static RE_MULTI_NL: OnceLock<Regex> = OnceLock::new();
+
+    let mut result = text.to_string();
+    result = RE_BOLD.get_or_init(|| Regex::new(r"\*\*(.+?)\*\*").expect("regex")).replace_all(&result, "$1").to_string();
+    result = RE_UBOLD.get_or_init(|| Regex::new(r"__(.+?)__").expect("regex")).replace_all(&result, "$1").to_string();
+    result = RE_ISTAR.get_or_init(|| Regex::new(r"\*(.+?)\*").expect("regex")).replace_all(&result, "$1").to_string();
+    result = RE_IUNDER.get_or_init(|| Regex::new(r"_(.+?)_").expect("regex")).replace_all(&result, "$1").to_string();
+    result = result.replace("```", "").replace('`', "");
+    result = RE_HEADERS.get_or_init(|| Regex::new(r"(?m)^#{1,3} ").expect("regex")).replace_all(&result, "").to_string();
+    result = RE_BULLETS.get_or_init(|| Regex::new(r"(?m)^[-*] ").expect("regex")).replace_all(&result, "").to_string();
+    result = RE_LINKS.get_or_init(|| Regex::new(r"\[([^\]]+)\]\([^)]+\)").expect("regex")).replace_all(&result, "$1").to_string();
+    result = RE_IMAGES.get_or_init(|| Regex::new(r"!\[([^\]]*)\]\([^)]+\)").expect("regex")).replace_all(&result, "").to_string();
+    result = result.lines().map(|s| s.trim()).collect::<Vec<_>>().join("\n");
+    result = RE_MULTI_NL.get_or_init(|| Regex::new(r"\n{3,}").expect("regex")).replace_all(&result, "\n\n").to_string();
+    result.trim().to_string()
+}
+
+fn build_output_path(input: &Path, suffix: &str) -> anyhow::Result<PathBuf> {
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow!("invalid input filename"))?;
+    let parent = input.parent().ok_or_else(|| anyhow!("invalid input parent"))?;
+    Ok(parent.join(format!("{stem}{suffix}.docx")))
+}
+
+fn workspace_root() -> anyhow::Result<PathBuf> {
+    if let Ok(from_env) = std::env::var("LINGOFIX_WORKSPACE_ROOT") {
+        let p = PathBuf::from(from_env);
+        if is_workspace_root(&p) {
+            return Ok(p);
+        }
+    }
+
+    let manifest_parent = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| anyhow!("manifest parent not found"))?;
+    if is_workspace_root(&manifest_parent) {
+        return Ok(manifest_parent);
+    }
+
+    let mut candidates = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.to_path_buf());
+        }
+    }
+
+    for mut current in candidates {
+        for _ in 0..10 {
+            if is_workspace_root(&current) {
+                return Ok(current);
+            }
+            if !current.pop() {
+                break;
+            }
+        }
+    }
+
+    Err(anyhow!("workspace root not found"))
+}
+
+fn is_workspace_root(path: &Path) -> bool {
+    path.join("frontend").is_dir() && path.join("backend").is_dir() && path.join("tauri").is_dir()
+}
+
+fn uuid_like() -> String {
+    Uuid::new_v4().simple().to_string()
+}
+
+fn main() {
+    clear_temp_lingofix_dir();
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
+        .manage(CancellationState::default())
+        .invoke_handler(tauri::generate_handler![
+            load_settings,
+            save_settings,
+            fetch_models,
+            correct_text_streaming,
+            cancel_correction,
+            correct_docx,
+            cancel_docx,
+            open_folder,
+            get_file_size,
+            save_temp_docx
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

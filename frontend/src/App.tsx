@@ -1,0 +1,744 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { invoke, listen } from './lib/bridge';
+import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal } from 'lucide-react';
+import { TextEditor } from './components/TextEditor';
+import { SettingsModal } from './components/SettingsModal';
+import { Settings, FontSize } from './types';
+import { t, detectLanguage } from './i18n';
+import { useDocxState } from './hooks/useDocxState';
+import { useCorrectionState } from './hooks/useCorrectionState';
+
+const DEFAULT_DOCX_SETTINGS = {
+  compare_mode: 'diff-engine' as const,
+  enable_batching: true,
+  batch_max_chars: 50000,
+  batch_max_paragraphs: 100,
+  enable_cache: true,
+  enable_parallelization: true,
+  max_parallel_requests: 2,
+};
+
+const DEFAULT_PROMPT_EN = 'Correct the following text while maintaining the style and tone.';
+const DEFAULT_SYSTEM_PROMPT_EN = 'Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.';
+
+function App() {
+  const [lang] = useState(detectLanguage());
+  const {
+    text,
+    setText,
+    correctedText,
+    setCorrectedText,
+    isCorrecting,
+    setIsCorrecting,
+    isStreaming,
+    setIsStreaming,
+    showDiff,
+    setShowDiff,
+    error,
+    setError,
+    clearDiff,
+    applyDiff,
+    clearAll,
+  } = useCorrectionState();
+  const {
+    docxFile,
+    docxProgress,
+    docxResult,
+    docxWarning,
+    docxLogs,
+    showLogs,
+    setShowLogs,
+    setDocxSelection,
+    setDocxProgress,
+    setDocxResult,
+    setDocxWarning,
+    setDocxLogs,
+    appendDocxLog,
+    resetDocxRunState,
+  } = useDocxState();
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [settings, setSettings] = useState<Settings>({
+    provider: 'openai',
+    api_url: 'https://api.openai.com/v1',
+    api_key: null,
+    model: 'gpt-4',
+    custom_prompt: t('settings.prompt.default', lang),
+    system_prompt: t('settings.system_prompt.value', lang),
+    temperature: 0.0,
+    provider_keys: {
+      openai: null,
+      ollama: null,
+      openrouter: null,
+      huggingface: null,
+      google: null,
+      mistral: null,
+      custom: null,
+    },
+    docx: DEFAULT_DOCX_SETTINGS,
+    font_size: 'default' as FontSize,
+  });
+
+  // Apply font-size CSS custom property to document root
+  useEffect(() => {
+    const FONT_SIZE_MAP: Record<FontSize, number> = {
+      small: 14,
+      default: 16,
+      large: 18,
+      xl: 20,
+      xxl: 22,
+    };
+    
+    const fontSize = settings.font_size as FontSize || 'default';
+    const px = FONT_SIZE_MAP[fontSize] || 16;
+    document.documentElement.style.setProperty('--fs-base', `${px}px`);
+    // Set font-size on html element so Tailwind's rem-based classes respond correctly
+    document.documentElement.style.fontSize = `${px}px`;
+  }, [settings.font_size]);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef(text);
+
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const loaded = await invoke<Settings>('load_settings');
+      if (!loaded.docx) {
+        loaded.docx = DEFAULT_DOCX_SETTINGS;
+      }
+      let updated = loaded;
+      let changed = false;
+
+      if (lang === 'de') {
+        if (!loaded.custom_prompt || loaded.custom_prompt === DEFAULT_PROMPT_EN) {
+          updated = { ...updated, custom_prompt: t('settings.prompt.default', lang) };
+          changed = true;
+        }
+        if (!loaded.system_prompt || loaded.system_prompt === DEFAULT_SYSTEM_PROMPT_EN) {
+          updated = { ...updated, system_prompt: t('settings.system_prompt.value', lang) };
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        await invoke('save_settings', { settings: updated });
+      }
+
+      setSettings(updated);
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+      setError(t('error.load_settings', lang));
+    }
+  }, [lang, setError]);
+
+  useEffect(() => {
+    loadSettings();
+    
+    const unlistenStarted = listen('correction_started', () => {
+      setIsStreaming(true);
+      setIsCorrecting(true);
+      setShowDiff(true);
+      setCorrectedText('');
+    });
+    
+    const unlistenChunk = listen<string>('correction_chunk', (event) => {
+      setCorrectedText(event.payload);
+    });
+    
+    const unlistenComplete = listen<string>('correction_complete', (event) => {
+      const payload = (event.payload ?? '').toString();
+      if (!payload.trim()) {
+        setError(t('error.empty_result', lang));
+        setIsStreaming(false);
+        setIsCorrecting(false);
+        setShowDiff(false);
+        return;
+      }
+
+      if (payload === textRef.current) {
+        setError(t('error.no_changes', lang));
+        setIsStreaming(false);
+        setIsCorrecting(false);
+        setShowDiff(false);
+        return;
+      }
+
+      setCorrectedText(payload);
+      setIsStreaming(false);
+      setIsCorrecting(false);
+    });
+    
+    const unlistenError = listen<string>('correction_error', (event) => {
+      console.error('Correction error:', event.payload);
+      setError(event.payload);
+      setIsStreaming(false);
+      setIsCorrecting(false);
+      setShowDiff(false);
+    });
+
+    const unlistenDocxProgress = listen<{ percent: number; message: string }>('docx_progress', (event) => {
+      setDocxProgress(event.payload);
+    });
+
+    const unlistenDocxComplete = listen<{ outputPath: string; trackChanges: boolean }>('docx_complete', (event) => {
+      setDocxResult(event.payload);
+      setIsCorrecting(false);
+      setDocxProgress(null);
+    });
+
+    const unlistenDocxError = listen<string>('docx_error', (event) => {
+      setError(event.payload);
+      setIsCorrecting(false);
+      setDocxProgress(null);
+    });
+
+    const unlistenDocxLog = listen<{ level: string; message: string }>('docx_log', (event) => {
+      appendDocxLog(event.payload.level, event.payload.message);
+      if (event.payload.level === 'warning') {
+        setDocxWarning(event.payload.message);
+      }
+    });
+    
+    return () => {
+      unlistenStarted.then(fn => fn()).catch(() => {});
+      unlistenChunk.then(fn => fn()).catch(() => {});
+      unlistenComplete.then(fn => fn()).catch(() => {});
+      unlistenError.then(fn => fn()).catch(() => {});
+      unlistenDocxProgress.then(fn => fn()).catch(() => {});
+      unlistenDocxComplete.then(fn => fn()).catch(() => {});
+      unlistenDocxError.then(fn => fn()).catch(() => {});
+      unlistenDocxLog.then(fn => fn()).catch(() => {});
+    };
+  }, [
+    appendDocxLog,
+    lang,
+    loadSettings,
+    setCorrectedText,
+    setDocxProgress,
+    setDocxResult,
+    setDocxWarning,
+    setError,
+    setIsCorrecting,
+    setIsStreaming,
+    setShowDiff,
+  ]);
+
+  // Auto-scroll to bottom of logs
+  useEffect(() => {
+    if (showLogs && logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [docxLogs, showLogs]);
+
+  const handleTextChange = (newText: string) => {
+    setText(newText);
+    if (newText.trim() && docxFile) {
+      setDocxSelection(null);
+    }
+  };
+
+  const handleDocxFile = useCallback((file: { name: string; path: string; size: number; originalPath?: string } | null) => {
+    setDocxSelection(file);
+  }, [setDocxSelection]);
+
+  const handleCorrect = useCallback(async () => {
+    if (docxFile) {
+      if (!docxFile.path) return;
+      
+      setIsCorrecting(true);
+      setDocxProgress({ percent: 0, message: t('docx.processing', lang) });
+      resetDocxRunState();
+      setError(null);
+      
+      try {
+        await invoke('correct_docx', {
+          filePath: docxFile.path,
+          originalPath: docxFile.originalPath,
+          settings,
+        });
+      } catch (error) {
+        console.error('DOCX correction failed:', error);
+        setError(String(error));
+        setIsCorrecting(false);
+        setDocxProgress(null);
+      }
+      return;
+    }
+    
+    if (!text.trim()) return;
+    if (text.trim().length < 3) {
+      setError(t('error.text_too_short', lang));
+      return;
+    }
+    
+    try {
+      await invoke('correct_text_streaming', {
+        text,
+        settings,
+      });
+    } catch (error) {
+      console.error('Correction failed:', error);
+      setError(String(error));
+      setIsCorrecting(false);
+      setIsStreaming(false);
+      setShowDiff(false);
+    }
+  }, [
+    docxFile,
+    lang,
+    resetDocxRunState,
+    setDocxProgress,
+    setError,
+    setIsCorrecting,
+    setIsStreaming,
+    setShowDiff,
+    settings,
+    text,
+  ]);
+
+  const handleNew = () => {
+    clearAll();
+    setDocxSelection(null);
+  };
+
+  const handleReject = () => {
+    clearDiff();
+  };
+
+  const handleApply = () => {
+    applyDiff();
+  };
+
+  const handleStop = async () => {
+    try {
+      if (docxFile) {
+        await invoke('cancel_docx');
+        setIsCorrecting(false);
+        setDocxProgress(null);
+        appendDocxLog('info', t('docx.cancelled', lang));
+      } else {
+        await invoke('cancel_correction');
+      }
+    } catch (error) {
+      console.error('Failed to stop correction:', error);
+    }
+  };
+
+  const handleSaveSettings = async (newSettings: Settings) => {
+    try {
+      await invoke('save_settings', { settings: newSettings });
+      setSettings(newSettings);
+      setIsSettingsOpen(false);
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      setError(String(error));
+    }
+  };
+
+  const isDocxMode = !!docxFile;
+  const hasText = text.trim().length > 0;
+
+  const handleToggleDarkMode = () => {
+    document.documentElement.classList.add('theme-switch-no-transition');
+    setIsDarkMode((v) => !v);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.documentElement.classList.remove('theme-switch-no-transition');
+      });
+    });
+  };
+
+  return (
+    <div className={`h-screen flex flex-col transition-colors duration-200 ${isDarkMode ? 'bg-surface-900 text-surface-50' : 'bg-surface-50 text-surface-900'}`}>
+      {/* === Header === */}
+      <header className={`flex-shrink-0 border-b transition-colors duration-200 ${isDarkMode ? 'border-surface-700 bg-surface-800' : 'border-surface-200 bg-white'}`}>
+        <div className="px-6 h-14 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-[10px] overflow-hidden shadow-sm">
+                <svg viewBox="0 0 1024 1024" className="w-full h-full">
+                  <defs>
+                    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#5B8EF4" />
+                      <stop offset="50%" stopColor="#4171E8" />
+                      <stop offset="100%" stopColor="#3059D6" />
+                    </linearGradient>
+                  </defs>
+                  <rect width="1024" height="1024" rx="230" fill="url(#bgGradient)"/>
+                  <g transform="translate(512, 512)">
+                    <path d="M 0 -300 L 50 -75 L 300 0 L 50 75 L 0 300 L -50 75 L -300 0 L -50 -75 Z" 
+                          fill="white" 
+                          stroke="white" 
+                          strokeWidth="14" 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round"/>
+                    <line x1="240" y1="-280" x2="240" y2="-180" stroke="white" strokeWidth="28" strokeLinecap="round"/>
+                    <line x1="190" y1="-230" x2="290" y2="-230" stroke="white" strokeWidth="28" strokeLinecap="round"/>
+                    <line x1="-240" y1="240" x2="-240" y2="180" stroke="white" strokeWidth="28" strokeLinecap="round"/>
+                    <line x1="-290" y1="210" x2="-190" y2="210" stroke="white" strokeWidth="28" strokeLinecap="round"/>
+                  </g>
+                </svg>
+              </div>
+              <h1 className={`text-lg font-semibold tracking-tight ${isDarkMode ? 'text-surface-50' : 'text-surface-900'}`}>
+                Lingofix
+              </h1>
+            </div>
+            <div className="flex items-center gap-1">
+            {/* Dark mode toggle */}
+            <button
+              onClick={handleToggleDarkMode}
+              aria-label="Toggle dark mode"
+              className={`p-2 rounded-lg transition-all duration-200 ${
+                isDarkMode 
+                  ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-700' 
+                  : 'text-surface-500 hover:text-surface-700 hover:bg-surface-100'
+              }`}
+            >
+              {isDarkMode ? <Sun size={18} strokeWidth={2} /> : <Moon size={18} strokeWidth={2} />}
+            </button>
+
+            <div className={`w-px h-5 mx-1 ${isDarkMode ? 'bg-surface-700' : 'bg-surface-200'}`} />
+
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className={`p-2 rounded-lg transition-all duration-200 ${
+                isDarkMode 
+                  ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-700' 
+                  : 'text-surface-500 hover:text-surface-700 hover:bg-surface-100'
+              }`}
+              aria-label={t('settings.button', lang)}
+            >
+              <SettingsIcon size={18} strokeWidth={2} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* === Main Content === */}
+      <main className="flex-1 overflow-hidden flex flex-col p-4">
+        <div className={`card flex-1 flex flex-col animate-fade-in transition-colors duration-200 ${isDarkMode ? '!bg-surface-800 !border-surface-700' : ''}`}>
+          
+          {/* --- Toolbar --- */}
+          <div className={`flex items-center justify-between h-14 px-5 border-b transition-colors duration-200 ${isDarkMode ? 'border-surface-700 bg-surface-800/50' : 'border-surface-100 bg-surface-50/50'}`}>
+            <div className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-600'} flex items-center min-w-0`}>
+              {docxProgress ? (
+                <div className="flex items-center gap-3 w-full flex-1">
+                  <Loader2 className={`animate-spin flex-shrink-0 ${isDarkMode ? 'text-accent-400' : 'text-accent-500'}`} size={16} />
+                  <div className="flex-1 flex items-center gap-3 min-w-0">
+                    <div className={`flex-1 max-w-[200px] rounded-full h-1.5 overflow-hidden ${isDarkMode ? 'bg-surface-700' : 'bg-surface-200'}`}>
+                      <div 
+                        className={`h-full rounded-full transition-all duration-500 ease-out relative ${isDarkMode ? 'bg-accent-500' : 'bg-accent-500'}`}
+                        style={{ width: `${docxProgress.percent}%` }}
+                      >
+                        <div className="absolute inset-0 progress-shimmer rounded-full" />
+                      </div>
+                    </div>
+                    <span className={`text-base font-medium tabular-nums ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>{docxProgress.percent}%</span>
+                    <span className={`text-base truncate ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>{docxProgress.message}</span>
+                  </div>
+                  
+                  {/* Log Toggle Button */}
+                  <button
+                    onClick={() => setShowLogs(!showLogs)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm font-medium transition-colors ${
+                      showLogs 
+                        ? (isDarkMode ? 'bg-surface-700 text-accent-400' : 'bg-surface-200 text-accent-600')
+                        : (isDarkMode ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-800' : 'text-surface-500 hover:text-surface-700 hover:bg-surface-100')
+                    }`}
+                  >
+                    <Terminal size={14} />
+                    <span>{docxLogs.length}</span>
+                    {showLogs ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+                </div>
+              ) : showDiff ? (
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex items-center gap-1.5 text-base">
+                    <span className={`w-2.5 h-2.5 rounded-sm ${isDarkMode ? 'bg-red-900/40 border-red-800/60' : 'bg-red-100 border-red-200'} border`}></span>
+                    <span className={isDarkMode ? 'text-surface-300' : 'text-surface-600'}>{t('toolbar.deleted', lang)}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-base">
+                    <span className={`w-2.5 h-2.5 rounded-sm ${isDarkMode ? 'bg-green-900/40 border-green-800/60' : 'bg-green-100 border-green-200'} border`}></span>
+                    <span className={isDarkMode ? 'text-surface-300' : 'text-surface-600'}>{t('toolbar.added', lang)}</span>
+                  </span>
+                  {isStreaming && (
+                    <span className={`inline-flex items-center gap-1.5 text-base ml-1 ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
+                      <Loader2 className="animate-spin" size={14} />
+                      {t('toolbar.streaming', lang)}
+                    </span>
+                  )}
+                </div>
+              ) : isDocxMode ? (
+                <span className={`inline-flex items-center gap-2 text-base font-medium ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
+                  <FileText size={16} />
+                  {docxFile?.name}
+                </span>
+              ) : hasText ? (
+                <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
+                  {text.trim().split(/\s+/).filter(w => w.length > 0).length} {t('stats.words', lang)}, {text.length} {t('stats.chars', lang)}
+                </span>
+              ) : (
+                <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>{t('toolbar.placeholder', lang)}</span>
+              )}
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+              {isStreaming || (isCorrecting && docxProgress) ? (
+                <>
+                  <button onClick={handleStop} className="btn-danger !py-2 !text-base">
+                    <X size={16} strokeWidth={2.5} />
+                    {t('button.stop', lang)}
+                  </button>
+                </>
+              ) : showDiff ? (
+                <>
+                  <button onClick={handleNew} className="btn-secondary !py-2 !text-base">
+                    <Trash2 size={16} />
+                    {t('button.clear', lang)}
+                  </button>
+                  <button onClick={handleReject} className="btn-secondary !py-2 !text-base">
+                    <XCircle size={16} />
+                    {t('button.reject', lang)}
+                  </button>
+                  <button onClick={handleApply} className="btn-success !py-2 !text-base">
+                    <Check size={16} strokeWidth={2.5} />
+                    {t('button.apply', lang)}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {(hasText || docxFile) && (
+                  <button onClick={handleNew} className="btn-secondary !py-2 !text-base">
+                      <Trash2 size={16} />
+                      {t('button.clear', lang)}
+                    </button>
+                  )}
+                  <button
+                    onClick={handleCorrect}
+                    disabled={isCorrecting || (!hasText && !docxFile)}
+                    className="btn-primary !py-2 !text-base"
+                  >
+                    {isCorrecting ? (
+                      <>
+                        <Loader2 className="animate-spin" size={16} />
+                        {t('button.starting', lang)}
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} />
+                        {t('button.correct', lang)}
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* --- Log Window --- */}
+          {showLogs && (
+            <div className={`border-b max-h-48 overflow-hidden flex flex-col ${isDarkMode ? 'bg-surface-900 border-surface-700' : 'bg-surface-50 border-surface-200'}`}>
+              <div className={`flex items-center justify-between px-4 py-2 border-b ${isDarkMode ? 'border-surface-800 bg-surface-800/50' : 'border-surface-200 bg-surface-100/50'}`}>
+                <span className={`text-sm font-medium ${isDarkMode ? 'text-surface-300' : 'text-surface-600'}`}>
+                  {t('docx.logs', lang)}
+                </span>
+                <button 
+                  onClick={() => {
+                    setDocxLogs([]);
+                    setShowLogs(false);
+                  }}
+                  className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'text-surface-400 hover:bg-surface-700' : 'text-surface-500 hover:bg-surface-200'}`}
+                >
+                  {t('docx.clearLogs', lang)}
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-1.5 font-mono text-sm">
+                {docxLogs.length === 0 && (
+                  <div className={`${isDarkMode ? 'text-surface-500' : 'text-surface-400'} text-sm`}>{t('docx.logs.empty', lang)}</div>
+                )}
+                {docxLogs.map((log, index) => (
+                  <div 
+                    key={index} 
+                    className={`flex items-start gap-2 ${
+                      log.level === 'error' 
+                        ? (isDarkMode ? 'text-red-400' : 'text-red-600')
+                        : log.level === 'warning'
+                        ? (isDarkMode ? 'text-amber-300' : 'text-amber-700')
+                        : log.level === 'info'
+                        ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-600')
+                        : (isDarkMode ? 'text-surface-400' : 'text-surface-600')
+                    }`}
+                  >
+                    <span className={`text-xs opacity-60 flex-shrink-0 mt-0.5`}>
+                      {new Date(log.timestamp).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 uppercase font-bold ${
+                      log.level === 'error'
+                        ? (isDarkMode ? 'bg-red-900/30 text-red-300' : 'bg-red-100 text-red-700')
+                        : log.level === 'warning'
+                        ? (isDarkMode ? 'bg-amber-900/30 text-amber-300' : 'bg-amber-100 text-amber-700')
+                        : log.level === 'info'
+                        ? (isDarkMode ? 'bg-emerald-900/30 text-emerald-300' : 'bg-emerald-100 text-emerald-700')
+                        : (isDarkMode ? 'bg-surface-700 text-surface-300' : 'bg-surface-200 text-surface-600')
+                    }`}>
+                      {log.level}
+                    </span>
+                    <span className="break-all">{log.message}</span>
+                  </div>
+                ))}
+                <div ref={logsEndRef} />
+              </div>
+            </div>
+          )}
+
+          {/* --- DOCX Result Banner --- */}
+          {docxResult && (
+            <div className={`px-5 py-3 border-b flex items-center justify-between animate-slide-up ${
+              isDarkMode 
+                ? 'bg-emerald-900/20 border-emerald-800/40' 
+                : 'bg-emerald-50/80 border-emerald-100'
+            }`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                  isDarkMode ? 'bg-emerald-900/30' : 'bg-emerald-100'
+                }`}>
+                  <CheckCircle2 size={16} className={isDarkMode ? 'text-emerald-400' : 'text-emerald-600'} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-medium ${isDarkMode ? 'text-emerald-300' : 'text-emerald-800'}`}>
+                      {t('docx.complete', lang)}
+                    </span>
+                    {docxResult.trackChanges && (
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
+                        isDarkMode 
+                          ? 'bg-emerald-900/40 text-emerald-300' 
+                          : 'bg-emerald-200/60 text-emerald-700'
+                      }`}>
+                        {t('docx.trackChanges.created', lang)}
+                      </span>
+                    )}
+                  </div>
+                  <p className={`text-base truncate mt-0.5 ${
+                    isDarkMode ? 'text-emerald-400/80' : 'text-emerald-600/80'
+                  }`} title={docxResult.outputPath}>
+                    {docxResult.outputPath}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => invoke('open_folder', { path: docxResult.outputPath })}
+                className={`btn-ghost !py-2 !px-3 !text-base flex-shrink-0 ${
+                  isDarkMode 
+                    ? '!text-emerald-300 hover:!bg-emerald-900/30' 
+                    : '!text-emerald-700 hover:!bg-emerald-100'
+                }`}
+              >
+                <FolderOpen size={14} />
+                {t('docx.openFolder', lang)}
+              </button>
+            </div>
+          )}
+
+          {docxWarning && (
+            <div className={`px-5 py-3 border-b flex items-start gap-3 animate-slide-up ${
+              isDarkMode
+                ? 'bg-amber-900/20 border-amber-800/40'
+                : 'bg-amber-50/90 border-amber-100'
+            }`}>
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                isDarkMode ? 'bg-amber-900/30' : 'bg-amber-100'
+              }`}>
+                <AlertTriangle size={16} className={isDarkMode ? 'text-amber-300' : 'text-amber-700'} />
+              </div>
+              <div className="min-w-0">
+                <span className={`text-sm font-medium ${isDarkMode ? 'text-amber-200' : 'text-amber-900'}`}>
+                  {t('docx.warning', lang)}
+                </span>
+                <p className={`text-sm mt-0.5 break-words ${isDarkMode ? 'text-amber-300/90' : 'text-amber-800/90'}`}>
+                  {docxWarning}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* --- Content Area --- */}
+          <div className="flex-1 overflow-hidden">
+            <TextEditor
+              text={text}
+              onChange={handleTextChange}
+              correctedText={correctedText}
+              showDiff={showDiff}
+              readOnly={showDiff || !!docxResult}
+              isStreaming={isStreaming}
+              lang={lang}
+              isDarkMode={isDarkMode}
+              docxFile={docxFile}
+              onDocxFile={handleDocxFile}
+              isCorrecting={isCorrecting}
+            />
+          </div>
+        </div>
+      </main>
+
+      {/* === Settings Modal === */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        onSave={handleSaveSettings}
+        lang={lang}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* === Error Modal === */}
+      {error && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
+          <div className={`card w-full max-w-lg mx-4 max-h-[80vh] flex flex-col animate-scale-in ${
+            isDarkMode ? '!bg-surface-800 !border-surface-700' : ''
+          }`}>
+            <div className="flex items-start gap-4 p-6">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                isDarkMode ? 'bg-red-900/30' : 'bg-red-50'
+              }`}>
+                <AlertCircle className={`w-5 h-5 ${isDarkMode ? 'text-red-400' : 'text-red-500'}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
+                  {isDocxMode ? t('docx.error', lang) : t('error.correction', lang)}
+                </h3>
+                <p className={`mt-2 text-sm whitespace-pre-wrap overflow-y-auto max-h-[40vh] leading-relaxed ${
+                  isDarkMode ? 'text-surface-300' : 'text-surface-600'
+                }`}>
+                  {error}
+                </p>
+              </div>
+              <button
+                onClick={() => setError(null)}
+                className="btn-ghost !p-1.5 !rounded-lg flex-shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className={`px-6 py-4 border-t rounded-b-2xl flex justify-end ${
+              isDarkMode 
+                ? 'bg-surface-900/50 border-surface-700' 
+                : 'bg-surface-50 border-surface-100'
+            }`}>
+              <button
+                onClick={() => setError(null)}
+                className="btn-primary !text-base"
+              >
+                {t('error.close', lang)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;
