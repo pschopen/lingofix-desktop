@@ -1,0 +1,45 @@
+# OS / editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/.vite/
+frontend/*.tsbuildinfo
+
+# .NET / backend
+backend/bin/
+backend/obj/
+backend/TestResults/
+backend/**/publish/
+
+# Rust / Tauri
+tauri/target/
+tauri/gen/
+
+# Publish artifacts
+out/
+*.stackdump
