@@ -51,6 +51,13 @@ jobs:
       - name: Build macOS ARM64 app bundle
         run: npm run build:app:mac:arm64
 
+      - name: Re-sign and verify macOS ARM64 app
+        run: |
+          APP_PATH="tauri/target/aarch64-apple-darwin/release/bundle/macos/Lingofix Desktop.app"
+          codesign --remove-signature "$APP_PATH" || true
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
       - name: Archive app bundle
         run: |
           mkdir -p artifacts
@@ -100,6 +107,13 @@ jobs:
 
       - name: Build macOS x64 app bundle
         run: npm run build:app:mac:x64
+
+      - name: Re-sign and verify macOS x64 app
+        run: |
+          APP_PATH="tauri/target/x86_64-apple-darwin/release/bundle/macos/Lingofix Desktop.app"
+          codesign --remove-signature "$APP_PATH" || true
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
       - name: Archive app bundle
         run: |
