@@ -23,6 +23,7 @@ const DEFAULT_SYSTEM_PROMPT_EN = 'Important: Respond with the corrected text onl
 
 function App() {
   const [lang] = useState(detectLanguage());
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const {
     text,
     setText,
@@ -137,6 +138,8 @@ function App() {
     loadSettings();
     
     const unlistenStarted = listen('correction_started', () => {
+      setError(null);
+      setInfoMessage(null);
       setIsStreaming(true);
       setIsCorrecting(true);
       setShowDiff(true);
@@ -150,6 +153,7 @@ function App() {
     const unlistenComplete = listen<string>('correction_complete', (event) => {
       const payload = (event.payload ?? '').toString();
       if (!payload.trim()) {
+        setInfoMessage(null);
         setError(t('error.empty_result', lang));
         setIsStreaming(false);
         setIsCorrecting(false);
@@ -158,13 +162,15 @@ function App() {
       }
 
       if (payload === textRef.current) {
-        setError(t('error.no_changes', lang));
+        setError(null);
+        setInfoMessage(t('error.no_changes', lang));
         setIsStreaming(false);
         setIsCorrecting(false);
         setShowDiff(false);
         return;
       }
 
+      setInfoMessage(null);
       setCorrectedText(payload);
       setIsStreaming(false);
       setIsCorrecting(false);
@@ -172,6 +178,7 @@ function App() {
     
     const unlistenError = listen<string>('correction_error', (event) => {
       console.error('Correction error:', event.payload);
+      setInfoMessage(null);
       setError(event.payload);
       setIsStreaming(false);
       setIsCorrecting(false);
@@ -189,6 +196,7 @@ function App() {
     });
 
     const unlistenDocxError = listen<string>('docx_error', (event) => {
+      setInfoMessage(null);
       setError(event.payload);
       setIsCorrecting(false);
       setDocxProgress(null);
@@ -220,6 +228,7 @@ function App() {
     setDocxResult,
     setDocxWarning,
     setError,
+    setInfoMessage,
     setIsCorrecting,
     setIsStreaming,
     setShowDiff,
@@ -234,6 +243,9 @@ function App() {
 
   const handleTextChange = (newText: string) => {
     setText(newText);
+    if (infoMessage) {
+      setInfoMessage(null);
+    }
     if (newText.trim() && docxFile) {
       setDocxSelection(null);
     }
@@ -251,6 +263,7 @@ function App() {
       setDocxProgress({ percent: 0, message: t('docx.processing', lang) });
       resetDocxRunState();
       setError(null);
+      setInfoMessage(null);
       
       try {
         await invoke('correct_docx', {
@@ -269,6 +282,7 @@ function App() {
     
     if (!text.trim()) return;
     if (text.trim().length < 3) {
+      setInfoMessage(null);
       setError(t('error.text_too_short', lang));
       return;
     }
@@ -280,6 +294,7 @@ function App() {
       });
     } catch (error) {
       console.error('Correction failed:', error);
+      setInfoMessage(null);
       setError(String(error));
       setIsCorrecting(false);
       setIsStreaming(false);
@@ -291,6 +306,7 @@ function App() {
     resetDocxRunState,
     setDocxProgress,
     setError,
+    setInfoMessage,
     setIsCorrecting,
     setIsStreaming,
     setShowDiff,
@@ -664,6 +680,34 @@ function App() {
             </div>
           )}
 
+          {infoMessage && (
+            <div className={`px-5 py-3 border-b flex items-start gap-3 animate-slide-up ${
+              isDarkMode
+                ? 'bg-blue-900/20 border-blue-800/40'
+                : 'bg-blue-50/90 border-blue-100'
+            }`}>
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                isDarkMode ? 'bg-blue-900/30' : 'bg-blue-100'
+              }`}>
+                <AlertCircle size={16} className={isDarkMode ? 'text-blue-300' : 'text-blue-700'} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className={`text-sm font-medium ${isDarkMode ? 'text-blue-200' : 'text-blue-900'}`}>
+                  {t('info.notice', lang)}
+                </span>
+                <p className={`text-sm mt-0.5 break-words ${isDarkMode ? 'text-blue-300/90' : 'text-blue-800/90'}`}>
+                  {infoMessage}
+                </p>
+              </div>
+              <button
+                onClick={() => setInfoMessage(null)}
+                className="btn-ghost !p-1.5 !rounded-lg flex-shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
           {/* --- Content Area --- */}
           <div className="flex-1 overflow-hidden">
             <TextEditor
@@ -737,6 +781,7 @@ function App() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

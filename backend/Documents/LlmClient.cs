@@ -253,8 +253,68 @@ public sealed class LlmClient
         }
 
         var text = responseBody.ToLowerInvariant();
+        if (text.Contains("unsupported_parameter") || text.Contains("param\":\"temperature"))
+        {
+            return true;
+        }
+
+        if (TryGetErrorText(responseBody, out var errorText))
+        {
+            text = errorText.ToLowerInvariant();
+        }
+
         return text.Contains("temperature") &&
-               (text.Contains("unsupported") || text.Contains("not supported") || text.Contains("not allowed") || text.Contains("invalid"));
+               (text.Contains("unsupported") ||
+                text.Contains("not supported") ||
+                text.Contains("does not support") ||
+                text.Contains("not allowed") ||
+                text.Contains("invalid"));
+    }
+
+    private static bool TryGetErrorText(string responseBody, out string errorText)
+    {
+        errorText = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("error", out var errorElement))
+            {
+                var parts = new List<string>();
+                if (errorElement.TryGetProperty("message", out var messageElement) && messageElement.ValueKind == JsonValueKind.String)
+                {
+                    parts.Add(messageElement.GetString() ?? string.Empty);
+                }
+
+                if (errorElement.TryGetProperty("type", out var typeElement) && typeElement.ValueKind == JsonValueKind.String)
+                {
+                    parts.Add(typeElement.GetString() ?? string.Empty);
+                }
+
+                if (errorElement.TryGetProperty("code", out var codeElement) && codeElement.ValueKind == JsonValueKind.String)
+                {
+                    parts.Add(codeElement.GetString() ?? string.Empty);
+                }
+
+                if (errorElement.TryGetProperty("param", out var paramElement) && paramElement.ValueKind == JsonValueKind.String)
+                {
+                    parts.Add(paramElement.GetString() ?? string.Empty);
+                }
+
+                errorText = string.Join(" ", parts.Where(static p => !string.IsNullOrWhiteSpace(p)));
+            }
+            else
+            {
+                errorText = responseBody;
+            }
+
+            return !string.IsNullOrWhiteSpace(errorText);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 }
 

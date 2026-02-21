@@ -95,8 +95,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'The correction returned no text. Please verify API key, model, and provider settings.',
   },
   'error.no_changes': {
-    de: 'Das Modell hat keine Aenderungen zurueckgegeben. Bitte pruefen Sie Modell und Prompt oder versuchen Sie einen anderen Provider.',
-    en: 'The model returned no changes. Please check model/prompt or try another provider.',
+    de: 'Das Modell hat keine Aenderungen vorgenommen. Der Text ist moeglicherweise bereits fehlerfrei.',
+    en: 'The model made no changes. The text may already be error-free.',
   },
   'error.text_too_short': {
     de: 'Bitte geben Sie mindestens 3 Zeichen ein.',
@@ -105,6 +105,10 @@ const translations: Record<string, Record<Language, string>> = {
   'error.close': {
     de: 'Schließen',
     en: 'Close',
+  },
+  'info.notice': {
+    de: 'Hinweis',
+    en: 'Notice',
   },
   
   // SettingsModal.tsx

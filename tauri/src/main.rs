@@ -592,44 +592,44 @@ async fn stream_openai_like(
         settings.custom_prompt, settings.system_prompt, text
     );
     let mut include_reasoning_effort = true;
-    let mut resp = send_openai_like_request(
-        &client,
-        &url,
-        settings,
-        &prompt,
-        include_reasoning_effort,
-    )
-    .await?;
+    let mut include_temperature = true;
+    let resp = loop {
+        let response = send_openai_like_request(
+            &client,
+            &url,
+            settings,
+            &prompt,
+            include_reasoning_effort,
+            include_temperature,
+        )
+        .await?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        if response.status().is_success() {
+            break response;
+        }
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
         let detail = extract_api_error_message(&body);
+
+        if status.as_u16() == 400
+            && include_temperature
+            && is_temperature_unsupported_error(&detail)
+        {
+            include_temperature = false;
+            continue;
+        }
 
         if status.as_u16() == 400
             && include_reasoning_effort
             && is_reasoning_or_thinking_error(&detail)
         {
             include_reasoning_effort = false;
-            resp = send_openai_like_request(
-                &client,
-                &url,
-                settings,
-                &prompt,
-                include_reasoning_effort,
-            )
-            .await?;
-
-            if !resp.status().is_success() {
-                let retry_status = resp.status();
-                let retry_body = resp.text().await.unwrap_or_default();
-                let retry_detail = extract_api_error_message(&retry_body);
-                return Err(anyhow!("LLM request failed ({}): {}", retry_status, retry_detail));
-            }
-        } else {
-            return Err(anyhow!("LLM request failed ({}): {}", status, detail));
+            continue;
         }
-    }
+
+        return Err(anyhow!("LLM request failed ({}): {}", status, detail));
+    };
 
     let mut stream = resp.bytes_stream();
     let mut buf = String::new();
@@ -692,13 +692,17 @@ async fn send_openai_like_request(
     settings: &FrontendSettings,
     prompt: &str,
     include_reasoning_effort: bool,
+    include_temperature: bool,
 ) -> anyhow::Result<reqwest::Response> {
     let mut body = json!({
         "model": settings.model,
         "messages": [{"role": "user", "content": prompt}],
-        "stream": true,
-        "temperature": settings.temperature
+        "stream": true
     });
+
+    if include_temperature {
+        body["temperature"] = json!(settings.temperature);
+    }
 
     if include_reasoning_effort {
         body["reasoning_effort"] = json!("none");
@@ -717,6 +721,16 @@ async fn send_openai_like_request(
 fn is_reasoning_or_thinking_error(message: &str) -> bool {
     let m = message.to_lowercase();
     m.contains("reasoning") || m.contains("thinking")
+}
+
+fn is_temperature_unsupported_error(message: &str) -> bool {
+    let m = message.to_lowercase();
+    m.contains("temperature")
+        && (m.contains("not support")
+            || m.contains("does not support")
+            || m.contains("unsupported")
+            || m.contains("not allowed")
+            || m.contains("invalid"))
 }
 
 fn extract_api_error_message(body: &str) -> String {
