@@ -103,4 +103,4 @@ open "tauri/target/release/bundle/macos/Lingofix Desktop.app"
 
 ## License
 
-MIT
+GNU Affero General Public License v3.0
