@@ -71,6 +71,25 @@ GitHub Actions workflow `Desktop Bundles` builds distributable artifacts for:
 
 You can run it manually from the Actions tab via `workflow_dispatch`.
 
+### GitHub Releases
+
+Release assets are published automatically by the `Release` workflow when you push a version tag matching `v*`.
+
+Example:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+This creates a GitHub Release with:
+
+- `Lingofix-Desktop-v0.2.0-macos-arm64.zip`
+- `Lingofix-Desktop-v0.2.0-macos-x64.zip`
+- `Lingofix-Desktop-v0.2.0-windows-x64.exe`
+
+Release notes are generated automatically from GitHub.
+
 ## macOS Startup and Signing Notes
 
 - Unsigned/ad-hoc signed apps can start slower on macOS and may show a blank window longer during initial verification.
