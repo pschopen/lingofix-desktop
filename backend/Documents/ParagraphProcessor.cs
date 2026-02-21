@@ -129,7 +129,7 @@ public static class ParagraphProcessor
             foreach (var batch in work)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, null, cancellationToken);
+                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, null, settings.BatchPrompt, cancellationToken);
                 ApplyBatchResult(result, cache);
                 completedBatches++;
                 processedParagraphs += batch.Items.Count;
@@ -156,7 +156,7 @@ public static class ParagraphProcessor
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
+                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, concurrency, settings.BatchPrompt, cancellationToken);
                     lock (progressLock)
                     {
                         ApplyBatchResult(result, cache);
@@ -222,7 +222,7 @@ public static class ParagraphProcessor
         return builder.ToString();
     }
 
-    private static async Task<BatchResult> ExecuteWorkBatchAsync(WorkBatch batch, LlmClient llmClient, IRunLogger? logger, ConcurrentDictionary<string, string>? cache, AdaptiveConcurrency? concurrency, CancellationToken cancellationToken)
+    private static async Task<BatchResult> ExecuteWorkBatchAsync(WorkBatch batch, LlmClient llmClient, IRunLogger? logger, ConcurrentDictionary<string, string>? cache, AdaptiveConcurrency? concurrency, string batchPrompt, CancellationToken cancellationToken)
     {
         var results = new Dictionary<int, string>();
 
@@ -248,7 +248,7 @@ public static class ParagraphProcessor
             return new BatchResult(batch, results);
         }
 
-        var request = BuildBatchRequest(batch.Items);
+        var request = BuildBatchRequest(batch.Items, batchPrompt);
         string response;
         try
         {
@@ -366,11 +366,13 @@ public static class ParagraphProcessor
         }
     }
 
-    private static string BuildBatchRequest(List<ParagraphItem> items)
+    private static string BuildBatchRequest(List<ParagraphItem> items, string batchPrompt)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("Correct only the text inside the tags. Return the response with the exact same tags and IDs.");
-        builder.AppendLine("No extra lines outside the tags.");
+        var normalizedPrompt = string.IsNullOrWhiteSpace(batchPrompt)
+            ? "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
+            : batchPrompt.Trim();
+        builder.AppendLine(normalizedPrompt);
         builder.AppendLine();
 
         foreach (var item in items)

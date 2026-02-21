@@ -20,6 +20,7 @@ const DEFAULT_DOCX_SETTINGS = {
 
 const DEFAULT_PROMPT_EN = 'Correct the following text while maintaining the style and tone.';
 const DEFAULT_SYSTEM_PROMPT_EN = 'Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.';
+const DEFAULT_BATCH_PROMPT_EN = 'Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.';
 
 function App() {
   const [lang] = useState(detectLanguage());
@@ -66,6 +67,7 @@ function App() {
     model: 'gpt-4',
     custom_prompt: t('settings.prompt.default', lang),
     system_prompt: t('settings.system_prompt.value', lang),
+    batch_prompt: t('settings.docx.batch_prompt', lang),
     temperature: 0.0,
     provider_keys: {
       openai: null,
@@ -121,6 +123,15 @@ function App() {
           updated = { ...updated, system_prompt: t('settings.system_prompt.value', lang) };
           changed = true;
         }
+        if (!loaded.batch_prompt || loaded.batch_prompt === DEFAULT_BATCH_PROMPT_EN) {
+          updated = { ...updated, batch_prompt: t('settings.docx.batch_prompt', lang) };
+          changed = true;
+        }
+      }
+
+      if (!updated.batch_prompt) {
+        updated = { ...updated, batch_prompt: t('settings.docx.batch_prompt', lang) };
+        changed = true;
       }
 
       if (changed) {

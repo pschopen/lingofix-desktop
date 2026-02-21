@@ -332,6 +332,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Batching',
     en: 'Batching',
   },
+  'settings.docx.batch_prompt': {
+    de: 'Korrigiere nur den Text innerhalb der Tags. Gib die Antwort mit exakt denselben Tags und IDs zurück.\nKeine zusätzlichen Zeilen außerhalb der Tags.',
+    en: 'Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.',
+  },
   'settings.docx.batch_max_chars': {
     de: 'Max. Zeichen pro Batch',
     en: 'Max chars per batch',

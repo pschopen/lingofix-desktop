@@ -26,6 +26,21 @@ const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
+
+fn default_custom_prompt() -> String {
+    "Correct the following text while maintaining the style and tone.".to_string()
+}
+
+fn default_system_prompt() -> String {
+    "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences."
+        .to_string()
+}
+
+fn default_batch_prompt() -> String {
+    "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
+        .to_string()
+}
+
 const KNOWN_PROVIDERS: [&str; 7] = [
     "openai",
     "ollama",
@@ -88,8 +103,12 @@ struct FrontendSettings {
     api_url: String,
     api_key: Option<String>,
     model: String,
+    #[serde(default = "default_custom_prompt")]
     custom_prompt: String,
+    #[serde(default = "default_system_prompt")]
     system_prompt: String,
+    #[serde(default = "default_batch_prompt")]
+    batch_prompt: String,
     temperature: f64,
     provider_keys: HashMap<String, Option<String>>,
     docx: DocxSettings,
@@ -110,8 +129,9 @@ impl Default for FrontendSettings {
             api_url: "https://api.openai.com/v1".into(),
             api_key: None,
             model: "gpt-4".into(),
-            custom_prompt: "Correct the following text while maintaining the style and tone.".into(),
-            system_prompt: "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.".into(),
+            custom_prompt: default_custom_prompt(),
+            system_prompt: default_system_prompt(),
+            batch_prompt: default_batch_prompt(),
             temperature: 0.0,
             provider_keys: HashMap::new(),
             docx: DocxSettings::default(),

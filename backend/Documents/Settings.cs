@@ -13,6 +13,8 @@ public sealed class Settings
     public string Prompt { get; set; } = "Correct the following text while maintaining the style and tone.";
     public string SystemPrompt { get; set; } =
         "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
+    public string BatchPrompt { get; set; } =
+        "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.";
     public string CompareMode { get; set; } = "diff-engine";
     public double Temperature { get; set; } = 0.0;
     public bool EnableBatching { get; set; } = true;
@@ -76,6 +78,9 @@ public sealed class Settings
             SystemPrompt = string.IsNullOrWhiteSpace(payload.SystemPrompt)
                 ? "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences."
                 : payload.SystemPrompt,
+            BatchPrompt = string.IsNullOrWhiteSpace(payload.BatchPrompt)
+                ? "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
+                : payload.BatchPrompt,
             Temperature = payload.Temperature,
             CompareMode = string.IsNullOrWhiteSpace(payload.Docx.CompareMode) ? "diff-engine" : payload.Docx.CompareMode,
             EnableBatching = payload.Docx.EnableBatching,
@@ -118,6 +123,9 @@ internal sealed class FrontendSettingsPayload
 
     [JsonPropertyName("system_prompt")]
     public string SystemPrompt { get; set; } = "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
+
+    [JsonPropertyName("batch_prompt")]
+    public string BatchPrompt { get; set; } = "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.";
 
     [JsonPropertyName("temperature")]
     public double Temperature { get; set; }
