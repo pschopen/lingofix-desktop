@@ -208,8 +208,7 @@ public sealed class LlmClient
 
             if (response.IsSuccessStatusCode)
             {
-                var parsed = JsonSerializer.Deserialize<ChatCompletionsResponse>(responseBody, JsonOptions.Default);
-                var result = parsed?.Choices?.FirstOrDefault()?.Message?.Content;
+                var result = ExtractCompletionText(responseBody);
                 return SanitizeCorrection(result);
             }
 
@@ -315,6 +314,161 @@ public sealed class LlmClient
         {
             return false;
         }
+    }
+
+    private static string ExtractCompletionText(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            var root = doc.RootElement;
+
+            if (TryExtractTextFromChoices(root, out var textFromChoices))
+            {
+                return textFromChoices;
+            }
+
+            if (TryExtractTextFromOutput(root, out var textFromOutput))
+            {
+                return textFromOutput;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return string.Empty;
+    }
+
+    private static bool TryExtractTextFromChoices(JsonElement root, out string text)
+    {
+        text = string.Empty;
+        if (!root.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var firstChoice = choices.EnumerateArray().FirstOrDefault();
+        if (firstChoice.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (firstChoice.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object)
+        {
+            if (message.TryGetProperty("content", out var content))
+            {
+                if (TryReadContentElement(content, out text))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (firstChoice.TryGetProperty("text", out var legacyText) && legacyText.ValueKind == JsonValueKind.String)
+        {
+            text = legacyText.GetString() ?? string.Empty;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractTextFromOutput(JsonElement root, out string text)
+    {
+        text = string.Empty;
+
+        if (root.TryGetProperty("output_text", out var outputText) && outputText.ValueKind == JsonValueKind.String)
+        {
+            text = outputText.GetString() ?? string.Empty;
+            return true;
+        }
+
+        if (!root.TryGetProperty("output", out var output) || output.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var parts = new List<string>();
+        foreach (var item in output.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!item.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var contentItem in content.EnumerateArray())
+            {
+                if (TryReadContentElement(contentItem, out var segment) && !string.IsNullOrEmpty(segment))
+                {
+                    parts.Add(segment);
+                }
+            }
+        }
+
+        text = string.Concat(parts);
+        return parts.Count > 0;
+    }
+
+    private static bool TryReadContentElement(JsonElement content, out string text)
+    {
+        text = string.Empty;
+
+        if (content.ValueKind == JsonValueKind.String)
+        {
+            text = content.GetString() ?? string.Empty;
+            return true;
+        }
+
+        if (content.ValueKind == JsonValueKind.Array)
+        {
+            var parts = new List<string>();
+            foreach (var item in content.EnumerateArray())
+            {
+                if (TryReadContentElement(item, out var segment) && !string.IsNullOrEmpty(segment))
+                {
+                    parts.Add(segment);
+                }
+            }
+
+            text = string.Concat(parts);
+            return parts.Count > 0;
+        }
+
+        if (content.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (content.TryGetProperty("text", out var directText) && directText.ValueKind == JsonValueKind.String)
+        {
+            text = directText.GetString() ?? string.Empty;
+            return true;
+        }
+
+        if (content.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.String)
+        {
+            text = value.GetString() ?? string.Empty;
+            return true;
+        }
+
+        if (content.TryGetProperty("content", out var nestedContent) && TryReadContentElement(nestedContent, out var nestedText))
+        {
+            text = nestedText;
+            return true;
+        }
+
+        return false;
     }
 }
 

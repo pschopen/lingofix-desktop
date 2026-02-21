@@ -430,7 +430,11 @@ public static class TrackChangesGenerator
         foreach (var run in paragraph.Descendants<Run>())
         {
             var referenceElements = run.Descendants<OpenXmlElement>()
-                .Where(e => e is FootnoteReference || e is EndnoteReference || e is FootnoteReferenceMark || e is EndnoteReferenceMark)
+                .Where(e => e is FootnoteReference ||
+                            e is EndnoteReference ||
+                            e is FootnoteReferenceMark ||
+                            e is EndnoteReferenceMark ||
+                            e is CommentReference)
                 .ToList();
 
             if (referenceElements.Count > 0)

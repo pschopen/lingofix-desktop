@@ -226,16 +226,37 @@ public static class LingofixRunner
                 logger.Info("Copied corrected file (no track changes)");
             }
 
-            CommentPreserver.PreserveOriginalComments(tempOriginalPath, tempOutputPath, logger);
+            if (compareMode != CompareModeKind.Word)
+            {
+                CommentPreserver.PreserveOriginalComments(tempOriginalPath, tempOutputPath, logger);
+            }
+            else
+            {
+                logger.Info("Skipping comment-preserver in Word compare mode.");
+            }
 
             try
             {
-                DocxIntegrityValidator.Validate(tempOriginalPath, tempOutputPath);
+                if (compareMode == CompareModeKind.Word)
+                {
+                    DocxIntegrityValidator.ValidateForWordCompare(tempOriginalPath, tempOutputPath);
+                }
+                else
+                {
+                    DocxIntegrityValidator.Validate(tempOriginalPath, tempOutputPath);
+                }
                 logger.Info("DOCX integrity checks passed.");
             }
             catch (Exception ex)
             {
-                logger.Warning($"Integrity check warning: {ex.Message} The output file will still be provided.");
+                if (compareMode == CompareModeKind.Word)
+                {
+                    logger.Warning($"Integrity check warning (Word compare mode): {ex.Message} The output file will still be provided.");
+                }
+                else
+                {
+                    logger.Warning($"Integrity check warning: {ex.Message} The output file will still be provided.");
+                }
             }
 
             PathUtils.PromoteTempToFinal(tempOutputPath, finalOutputPath);
