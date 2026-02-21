@@ -2,6 +2,26 @@ namespace Lingofix.Backend.Documents;
 
 public static class PathUtils
 {
+    public static string BuildWordCompareWorkspace(string inputPath)
+    {
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (string.IsNullOrWhiteSpace(appData))
+        {
+            appData = Path.Combine(Path.GetTempPath(), "Lingofix");
+        }
+
+        var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(inputPath)))
+            .ToLowerInvariant();
+        var workspace = Path.Combine(appData, "Lingofix", "compare", key);
+        Directory.CreateDirectory(workspace);
+        return workspace;
+    }
+
+    public static string BuildWordCompareFilePath(string inputPath, string fileName)
+    {
+        return Path.Combine(BuildWordCompareWorkspace(inputPath), fileName);
+    }
+
     public static string NormalizeInputPath(string input)
     {
         if (string.IsNullOrWhiteSpace(input))

@@ -8,7 +8,6 @@ namespace Lingofix.Backend.Documents;
 public static class TrackChangesGenerator
 {
     private static readonly TimeSpan ExternalCompareTimeout = TimeSpan.FromMinutes(20);
-    private const string KeepTempArtifactsEnv = "LINGOFIX_KEEP_TEMP_ARTIFACTS";
 
     public static void GenerateParagraphCompare(string originalPath, string correctedPath, string outputPath, string author)
     {
@@ -624,50 +623,21 @@ public static class TrackChangesGenerator
 
     public static void GenerateWithWord(string originalPath, string correctedPath, string outputPath, string author)
     {
-        var compareTempDir = Path.Combine(Path.GetTempPath(), "Lingofix", "compare");
-        Directory.CreateDirectory(compareTempDir);
-        var tempOriginalPath = Path.Combine(compareTempDir, $"orig_{Guid.NewGuid():N}{Path.GetExtension(originalPath)}");
-
-        File.Copy(originalPath, tempOriginalPath, overwrite: true);
-
-        try
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                RunWordCompareMac(tempOriginalPath, correctedPath, outputPath, author);
-                RejectFormattingChanges(outputPath);
-                return;
-            }
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                RunWordCompareWindows(tempOriginalPath, correctedPath, outputPath, author);
-                RejectFormattingChanges(outputPath);
-                return;
-            }
-
-            throw new PlatformNotSupportedException("Word comparison is not supported on this operating system.");
+            RunWordCompareMac(originalPath, correctedPath, outputPath, author);
+            RejectFormattingChanges(outputPath);
+            return;
         }
-        finally
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            try
-            {
-                if (!ShouldKeepTempArtifacts() && File.Exists(tempOriginalPath))
-                {
-                    File.Delete(tempOriginalPath);
-                }
-            }
-            catch
-            {
-            }
+            RunWordCompareWindows(originalPath, correctedPath, outputPath, author);
+            RejectFormattingChanges(outputPath);
+            return;
         }
-    }
 
-    private static bool ShouldKeepTempArtifacts()
-    {
-        var value = Environment.GetEnvironmentVariable(KeepTempArtifactsEnv);
-        return string.Equals(value, "1", StringComparison.Ordinal) ||
-               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+        throw new PlatformNotSupportedException("Word comparison is not supported on this operating system.");
     }
 
     private static void RejectFormattingChanges(string documentPath)

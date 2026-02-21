@@ -40,6 +40,8 @@ public static class LingofixRunner
         }
 
         var settings = options.Settings ?? throw new ArgumentNullException(nameof(options.Settings));
+        var compareMode = options.CompareModeOverride ?? Settings.NormalizeCompareMode(settings.CompareMode);
+        var isWordCompare = compareMode == CompareModeKind.Word;
         var apiKey = Settings.ResolveApiKey(settings.ApiKey);
         var isOllama = string.Equals(settings.Provider, "ollama", StringComparison.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(apiKey) && !isOllama)
@@ -50,11 +52,18 @@ public static class LingofixRunner
         var trackOutputPath = PathUtils.BuildOutputPath(normalizedInputPath, "_lingofix");
         var correctedOutputPath = PathUtils.BuildOutputPath(normalizedInputPath, "_corrected");
         var finalOutputPath = trackOutputPath;
-        var tempOutputPath = PathUtils.BuildTempOutputPath(trackOutputPath);
-        var tempOriginalPath = Path.Combine(Path.GetTempPath(), "Lingofix", $"orig_{Guid.NewGuid():N}{Path.GetExtension(normalizedInputPath)}");
+        var tempOutputPath = isWordCompare
+            ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "output.docx")
+            : PathUtils.BuildTempOutputPath(trackOutputPath);
+        var tempOriginalPath = isWordCompare
+            ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "original.docx")
+            : Path.Combine(Path.GetTempPath(), "Lingofix", $"orig_{Guid.NewGuid():N}{Path.GetExtension(normalizedInputPath)}");
         CopyReadableSnapshot(normalizedInputPath, tempOriginalPath);
         var checkpoint = ProcessingCheckpointStore.Load(normalizedInputPath, logger);
-        var correctedPath = checkpoint?.CorrectedPath ?? PathUtils.BuildTempCorrectedPath(normalizedInputPath);
+        var correctedPath = checkpoint?.CorrectedPath
+            ?? (isWordCompare
+                ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "corrected.docx")
+                : PathUtils.BuildTempCorrectedPath(normalizedInputPath));
         var completedLabels = new HashSet<string>(checkpoint?.CompletedLabels ?? [], StringComparer.Ordinal);
         var completedBatchesByLabel = checkpoint?.CompletedBatchesByLabel is null
             ? new Dictionary<string, int>(StringComparer.Ordinal)
@@ -192,7 +201,6 @@ public static class LingofixRunner
             }
 
             logger.Progress(85, "Generating comparison...");
-            var compareMode = options.CompareModeOverride ?? Settings.NormalizeCompareMode(settings.CompareMode);
             try
             {
                 if (compareMode == CompareModeKind.Word)

@@ -35,6 +35,12 @@ const PROVIDER_LABELS: Record<Provider, string> = {
 
 type TabType = 'general' | 'docx' | 'advanced';
 
+interface WordCompareAccessStatus {
+  ok: boolean;
+  message: string;
+  details: string;
+}
+
 export function SettingsModal({
   isOpen,
   onClose,
@@ -48,12 +54,17 @@ export function SettingsModal({
   const [models, setModels] = useState<string[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string>('');
+  const [isCheckingWordAccess, setIsCheckingWordAccess] = useState(false);
+  const [wordAccessStatus, setWordAccessStatus] = useState<WordCompareAccessStatus | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setFormData(settings);
+      setWordAccessStatus(null);
     }
   }, [isOpen, settings]);
+
+  const isMac = navigator.userAgent.toLowerCase().includes('mac');
 
   const handleFetchModels = async () => {
     if (!formData.api_url) {
@@ -127,6 +138,22 @@ export function SettingsModal({
       }
     }
     onSave(formData);
+  };
+
+  const handleWordAccessCheck = async () => {
+    setIsCheckingWordAccess(true);
+    try {
+      const status = await invoke<WordCompareAccessStatus>('check_word_compare_access');
+      setWordAccessStatus(status);
+    } catch (error) {
+      setWordAccessStatus({
+        ok: false,
+        message: t('settings.docx.word_check.failed', lang),
+        details: String(error),
+      });
+    } finally {
+      setIsCheckingWordAccess(false);
+    }
   };
 
   const handleClose = () => {
@@ -310,6 +337,31 @@ export function SettingsModal({
                     <option value="word">{t('settings.docx.compare_mode.word', lang)}</option>
                   </SelectField>
                 </FieldGroup>
+
+                {isMac && formData.docx.compare_mode === 'word' && (
+                  <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/70' : 'border-surface-200 bg-surface-50'}`}>
+                    <p className={`text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
+                      {t('settings.docx.word_check.hint', lang)}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleWordAccessCheck}
+                      disabled={isCheckingWordAccess}
+                      className="btn-secondary !mt-2 !text-base"
+                    >
+                      {isCheckingWordAccess ? (
+                        <Loader2 className="animate-spin" size={14} />
+                      ) : null}
+                      {t('settings.docx.word_check.button', lang)}
+                    </button>
+                    {wordAccessStatus && (
+                      <p className={`mt-2 text-sm whitespace-pre-wrap ${wordAccessStatus.ok ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {wordAccessStatus.message}
+                        {wordAccessStatus.details ? `\n${wordAccessStatus.details}` : ''}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Batching */}
                 <ToggleRow

@@ -25,6 +25,7 @@ const BACKEND_KEEP_TEMP_ENV: &str = "LINGOFIX_KEEP_TEMP_ARTIFACTS";
 const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
+const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const KNOWN_PROVIDERS: [&str; 7] = [
     "openai",
     "ollama",
@@ -93,6 +94,13 @@ struct FrontendSettings {
     provider_keys: HashMap<String, Option<String>>,
     docx: DocxSettings,
     font_size: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WordCompareAccessStatus {
+    ok: bool,
+    message: String,
+    details: String,
 }
 
 impl Default for FrontendSettings {
@@ -1124,6 +1132,86 @@ fn combine_backend_error(message: &str, stderr: &str) -> String {
 }
 
 #[tauri::command]
+fn check_word_compare_access() -> Result<WordCompareAccessStatus, String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        return Ok(WordCompareAccessStatus {
+            ok: true,
+            message: "Word compare access check is only required on macOS.".to_string(),
+            details: String::new(),
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let workspace = mac_word_compare_workspace_dir().map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&workspace).map_err(|e| format!("failed to create workspace: {e}"))?;
+
+        let probe = workspace.join("access-probe.txt");
+        std::fs::write(&probe, b"ok").map_err(|e| format!("failed to write probe file: {e}"))?;
+        let read_back = std::fs::read_to_string(&probe).map_err(|e| format!("failed to read probe file: {e}"))?;
+        let _ = std::fs::remove_file(&probe);
+
+        if read_back.trim() != "ok" {
+            return Ok(WordCompareAccessStatus {
+                ok: false,
+                message: "Workspace probe failed.".to_string(),
+                details: format!("Unexpected probe content in {}", workspace.display()),
+            });
+        }
+
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg("tell application \"Microsoft Word\" to get name")
+            .output()
+            .map_err(|e| format!("failed to run osascript: {e}"))?;
+
+        if output.status.success() {
+            return Ok(WordCompareAccessStatus {
+                ok: true,
+                message: "Word compare setup is ready.".to_string(),
+                details: format!("Workspace: {}", workspace.display()),
+            });
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let mut details = if !stderr.is_empty() { stderr } else { stdout };
+        if details.is_empty() {
+            details = format!("osascript exited with status {}", output.status);
+        }
+
+        let permission_hint = if details.contains("-1743") || details.to_lowercase().contains("not authorized") {
+            format!(
+                "Allow Lingofix to control Microsoft Word in {}.",
+                AUTOMATION_SETTINGS_PATH
+            )
+        } else {
+            format!(
+                "Check Microsoft Word installation and grant access in {}.",
+                AUTOMATION_SETTINGS_PATH
+            )
+        };
+
+        Ok(WordCompareAccessStatus {
+            ok: false,
+            message: "Word compare access is not ready yet.".to_string(),
+            details: format!("{permission_hint}\n\n{details}"),
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_word_compare_workspace_dir() -> anyhow::Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME is not set")?;
+    Ok(PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join("Lingofix")
+        .join("compare"))
+}
+
+#[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
     let canonical = normalize_existing_path(&path).map_err(|e| e.to_string())?;
     let folder = if canonical.is_dir() {
@@ -1295,6 +1383,7 @@ fn main() {
             cancel_correction,
             correct_docx,
             cancel_docx,
+            check_word_compare_access,
             open_folder,
             get_file_size,
             save_temp_docx
