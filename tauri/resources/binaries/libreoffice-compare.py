@@ -61,9 +61,9 @@ def run_compare(host: str, port: int, original_path: str, corrected_path: str, o
             _prop("Hidden", True),
             _prop("ReadOnly", False),
         )
-        document = desktop.loadComponentFromURL(original_url, "_blank", 0, load_args)
+        document = desktop.loadComponentFromURL(corrected_url, "_blank", 0, load_args)
         if document is None:
-            return _fail("LibreOffice UNO compare failed: could not load original document.")
+            return _fail("LibreOffice UNO compare failed: could not load corrected document.")
 
         frame = document.getCurrentController().getFrame()
         dispatcher = smgr.createInstanceWithContext("com.sun.star.frame.DispatchHelper", ctx)
@@ -73,7 +73,7 @@ def run_compare(host: str, port: int, original_path: str, corrected_path: str, o
             ".uno:CompareDocuments",
             "",
             0,
-            (_prop("URL", corrected_url),),
+            (_prop("URL", original_url),),
         )
 
         store_args = (
