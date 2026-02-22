@@ -361,6 +361,14 @@ export function SettingsModal({
                   </SelectField>
                 </FieldGroup>
 
+                {formData.docx.compare_mode === 'openxml' && (
+                  <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-amber-800/60 bg-amber-950/30' : 'border-amber-200 bg-amber-50'}`}>
+                    <p className={`text-sm ${isDarkMode ? 'text-amber-200' : 'text-amber-800'}`}>
+                      {t('settings.docx.openxml.warning', lang)}
+                    </p>
+                  </div>
+                )}
+
                 {(formData.docx.compare_mode === 'word-native' || formData.docx.compare_mode === 'libreoffice-uno') && (
                   <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/70' : 'border-surface-200 bg-surface-50'}`}>
                     <p className={`text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>

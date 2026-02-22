@@ -315,8 +315,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'General',
   },
   'settings.tab.docx': {
-    de: 'Docx',
-    en: 'Docx',
+    de: 'Dokumente',
+    en: 'Documents',
   },
   'settings.tab.advanced': {
     de: 'Erweitert',
@@ -339,6 +339,10 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.docx.compare_mode.libreoffice_uno': {
     de: 'LibreOffice UNO (nativ, soffice)',
     en: 'LibreOffice UNO (native, soffice)',
+  },
+  'settings.docx.openxml.warning': {
+    de: 'OpenXML bietet keine volle Kompatibilitaet fuer ODT-Dateien. Bei ODT koennen Track Changes in LibreOffice unvollstaendig angezeigt oder verloren gehen.',
+    en: 'OpenXML does not provide full compatibility for ODT files. For ODT, tracked changes may appear incomplete or be lost in LibreOffice.',
   },
   'settings.docx.word_check.hint': {
     de: 'Prüfen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen für diesen Modus setzen kann.',
