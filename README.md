@@ -54,6 +54,7 @@ These commands publish the .NET backend as self-contained binaries and bundle th
 - macOS ARM64 app bundle target: `npm run build:app:mac:arm64`
 - macOS x64 app bundle target: `npm run build:app:mac:x64`
 - Windows installer build (includes win-x64 backend binary): `npm run build:app:win`
+- Linux AppImage build (includes linux-x64 backend binary): `npm run build:app:linux`
 
 You can also prepare backend binaries directly:
 
@@ -68,6 +69,7 @@ GitHub Actions workflow `Desktop Bundles` builds distributable artifacts for:
 - macOS ARM64 (`.app` zipped)
 - macOS x64 (`.app` zipped)
 - Windows x64 (NSIS `.exe` installer)
+- Linux x64 (AppImage)
 
 You can run it manually from the Actions tab via `workflow_dispatch`.
 
@@ -87,14 +89,19 @@ This creates a GitHub Release with:
 - `Lingofix-Desktop-v0.2.0-macos-arm64.zip`
 - `Lingofix-Desktop-v0.2.0-macos-x64.zip`
 - `Lingofix-Desktop-v0.2.0-windows-x64.exe`
+- `Lingofix-Desktop-v0.2.0-linux-x64.AppImage`
 
 Release notes are generated automatically from GitHub.
 
-## macOS Startup and Signing Notes
+## macOS Startup
 
-- Unsigned/ad-hoc signed apps can start slower on macOS and may show a blank window longer during initial verification.
-- For production distribution, sign and notarize `Lingofix.app` with an Apple Developer ID certificate.
-- Local testing build:
+If macOS blocks the app (unidentified developer):
+
+1. Open **System Settings** > **Privacy & Security**.
+2. Click **Allow Anyway** next to the blocked app message.
+3. Open the app again and confirm with **Open**.
+
+The app should now launch normally.
 
 ```bash
 npm run build:app:mac

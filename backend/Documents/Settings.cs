@@ -48,6 +48,11 @@ public sealed class Settings
             return CompareModeKind.Word;
         }
 
+        if (string.Equals(raw, "libreoffice", StringComparison.OrdinalIgnoreCase))
+        {
+            return CompareModeKind.LibreOffice;
+        }
+
         return CompareModeKind.DiffEngine;
     }
 

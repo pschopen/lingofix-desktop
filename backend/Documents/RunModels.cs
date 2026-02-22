@@ -3,7 +3,8 @@ namespace Lingofix.Backend.Documents;
 public sealed record RunOptions(
     string InputPath,
     Settings Settings,
-    CompareModeKind? CompareModeOverride = null);
+    CompareModeKind? CompareModeOverride = null,
+    bool AcceptExistingTrackChanges = false);
 
 public sealed record RunResult(
     string OutputPath,
