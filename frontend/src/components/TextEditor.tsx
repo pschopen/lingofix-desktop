@@ -34,6 +34,11 @@ export function TextEditor({
 }: TextEditorProps) {
   const [isDragging, setIsDragging] = useState(false);
 
+  const isSupportedOfficeFile = useCallback((nameOrPath: string): boolean => {
+    const lower = nameOrPath.toLowerCase();
+    return lower.endsWith('.docx') || lower.endsWith('.odt');
+  }, []);
+
   const normalizeDroppedPath = useCallback((raw: string | undefined | null): string | null => {
     if (!raw) return null;
     const trimmed = raw.trim();
@@ -79,7 +84,7 @@ export function TextEditor({
   }, [normalizeDroppedPath]);
 
   const importBrowserFile = useCallback(async (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.docx')) {
+    if (!isSupportedOfficeFile(file.name)) {
       return;
     }
 
@@ -102,7 +107,7 @@ export function TextEditor({
     });
 
     onDocxFile({ name: file.name, path, size: file.size });
-  }, [normalizeDroppedPath, onDocxFile]);
+  }, [isSupportedOfficeFile, normalizeDroppedPath, onDocxFile]);
 
   // Drag and drop handling with visual feedback
   useEffect(() => {
@@ -114,7 +119,7 @@ export function TextEditor({
       const paths = event.payload.paths;
       if (paths && paths.length > 0) {
         const filePath = paths[0];
-        if (filePath.toLowerCase().endsWith('.docx')) {
+        if (isSupportedOfficeFile(filePath)) {
           const fileName = filePath.split(/[/\\]/).pop() || 'document.docx';
           try {
             const size = await invoke<number>('get_file_size', { path: filePath });
@@ -143,7 +148,7 @@ export function TextEditor({
       setIsDragging(false);
 
       const droppedPath = extractPathFromDropEvent(event);
-      if (droppedPath && droppedPath.toLowerCase().endsWith('.docx')) {
+      if (droppedPath && isSupportedOfficeFile(droppedPath)) {
         const fileName = droppedPath.split(/[/\\]/).pop() || 'document.docx';
         try {
           const size = await invoke<number>('get_file_size', { path: droppedPath });
@@ -181,14 +186,14 @@ export function TextEditor({
       window.removeEventListener('dragleave', handleDomDragLeave);
       window.removeEventListener('drop', handleDomDrop);
     };
-  }, [extractPathFromDropEvent, importBrowserFile, onDocxFile]);
+  }, [extractPathFromDropEvent, importBrowserFile, isSupportedOfficeFile, onDocxFile]);
 
   const handlePickFile = async () => {
     if (isCorrecting) return;
     try {
       const selected = await open({
         multiple: false,
-        filters: [{ name: 'Word Document', extensions: ['docx'] }],
+        filters: [{ name: 'Word/OpenDocument', extensions: ['docx', 'odt'] }],
       });
 
       if (selected && typeof selected === 'string') {
@@ -203,7 +208,7 @@ export function TextEditor({
       } else {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.docx';
+        input.accept = '.docx,.odt';
         input.onchange = async () => {
           const file = input.files?.[0];
           if (!file) {

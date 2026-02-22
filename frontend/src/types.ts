@@ -1,7 +1,7 @@
 export type Provider = 'openai' | 'ollama' | 'openrouter' | 'huggingface' | 'google' | 'custom' | 'mistral';
 
 export interface DocxSettings {
-  compare_mode: 'diff-engine' | 'word';
+  compare_mode: 'diff-engine' | 'word' | 'libreoffice';
   enable_batching: boolean;
   batch_max_chars: number;
   batch_max_paragraphs: number;
@@ -20,6 +20,7 @@ export interface Settings {
   custom_prompt: string;
   system_prompt: string;
   batch_prompt: string;
+  auto_check_updates: boolean;
   temperature: number;
   provider_keys: Record<Provider, string | null>;
   docx: DocxSettings;

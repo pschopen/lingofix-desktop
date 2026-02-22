@@ -91,11 +91,11 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Could not load settings.',
   },
   'error.empty_result': {
-    de: 'Die Korrektur lieferte keinen Text. Bitte pruefen Sie API-Key, Modell und Provider in den Einstellungen.',
+    de: 'Die Korrektur lieferte keinen Text. Bitte prüfen Sie API-Key, Modell und Provider in den Einstellungen.',
     en: 'The correction returned no text. Please verify API key, model, and provider settings.',
   },
   'error.no_changes': {
-    de: 'Das Modell hat keine Aenderungen vorgenommen. Der Text ist moeglicherweise bereits fehlerfrei.',
+    de: 'Das Modell hat keine Änderungen vorgenommen. Der Text ist möglicherweise bereits fehlerfrei.',
     en: 'The model made no changes. The text may already be error-free.',
   },
   'error.text_too_short': {
@@ -211,8 +211,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Remove file',
   },
   'editor.docxHint': {
-    de: 'Klicken Sie auf "Korrigieren" um die DOCX-Datei zu korrigieren',
-    en: 'Click "Correct" to correct the DOCX file',
+    de: 'Klicken Sie auf "Korrigieren" um die DOCX/ODT-Datei zu korrigieren',
+    en: 'Click "Correct" to correct the DOCX/ODT file',
   },
   'editor.browse': {
     de: 'Oder klicken, um eine Datei auszuwählen',
@@ -223,12 +223,12 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Drop here',
   },
   'editor.dropDocx': {
-    de: 'DOCX-Datei hier ablegen',
-    en: 'Drop DOCX file here',
+    de: 'DOCX/ODT-Datei hier ablegen',
+    en: 'Drop DOCX/ODT file here',
   },
   'editor.dropDocxHint': {
-    de: 'Ziehen Sie eine .docx-Datei in diesen Bereich',
-    en: 'Drag a .docx file into this area',
+    de: 'Ziehen Sie eine .docx- oder .odt-Datei in diesen Bereich',
+    en: 'Drag a .docx or .odt file into this area',
   },
 
   // App.tsx - Docx
@@ -276,6 +276,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Noch keine Logs.',
     en: 'No logs yet.',
   },
+  'docx.logs.compare_fallback_manual_hint': {
+    de: 'Korrigierte Datei ohne Track Changes bereitgestellt. Sie können den Vergleich manuell in Ihrer Office-Anwendung durchführen.',
+    en: 'Returned corrected file without track changes. You can run the comparison manually in your office application.',
+  },
   'docx.cancelled': {
     de: 'DOCX-Verarbeitung wurde gestoppt.',
     en: 'DOCX processing was stopped.',
@@ -283,6 +287,26 @@ const translations: Record<string, Record<Language, string>> = {
   'docx.warning': {
     de: 'Hinweis',
     en: 'Notice',
+  },
+  'docx.diff_mode.accept_existing.title': {
+    de: 'Vorhandene Änderungen gefunden',
+    en: 'Existing changes detected',
+  },
+  'docx.diff_mode.accept_existing.message': {
+    de: 'Im Diff-Modus kann die Korrektur nur fortgesetzt werden, wenn Lingofix vorab alle vorhandenen Track Changes automatisch akzeptiert.\n\nMöchten Sie fortfahren?',
+    en: 'In diff mode, correction can continue only if Lingofix automatically accepts all existing track changes before correction.\n\nDo you want to continue?',
+  },
+  'docx.diff_mode.accept_existing.cancel': {
+    de: 'Abbrechen',
+    en: 'Cancel',
+  },
+  'docx.diff_mode.accept_existing.continue': {
+    de: 'Fortfahren',
+    en: 'Continue',
+  },
+  'docx.diff_mode.accept_existing.cancelled': {
+    de: 'DOCX-Korrektur im Diff-Modus wurde abgebrochen.',
+    en: 'DOCX correction in diff mode was cancelled.',
   },
 
   // Settings Modal - Tabs
@@ -312,17 +336,37 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Word (MS Word erforderlich)',
     en: 'Word (requires MS Word)',
   },
+  'settings.docx.compare_mode.libreoffice': {
+    de: 'LibreOffice (soffice)',
+    en: 'LibreOffice (soffice)',
+  },
   'settings.docx.word_check.hint': {
-    de: 'Pruefen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen fuer diesen Modus setzen kann.',
+    de: 'Prüfen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen für diesen Modus setzen kann.',
     en: 'Run this one-time Word access check so macOS can grant permissions for this mode.',
   },
+  'settings.docx.word_check.hint_non_macos': {
+    de: 'Prüfen Sie die Word-Verfügbarkeit für diesen Modus.',
+    en: 'Check Word availability for this mode.',
+  },
   'settings.docx.word_check.button': {
-    de: 'Word-Zugriff pruefen',
+    de: 'Word-Zugriff prüfen',
     en: 'Check Word access',
   },
+  'settings.docx.libreoffice_check.hint': {
+    de: 'Prüfen Sie, ob LibreOffice (soffice) für diesen Modus verfügbar ist.',
+    en: 'Check whether LibreOffice (soffice) is available for this mode.',
+  },
+  'settings.docx.libreoffice_check.button': {
+    de: 'LibreOffice-Zugriff prüfen',
+    en: 'Check LibreOffice access',
+  },
   'settings.docx.word_check.failed': {
-    de: 'Word-Zugriff konnte nicht geprueft werden.',
+    de: 'Word-Zugriff konnte nicht geprüft werden.',
     en: 'Could not verify Word access.',
+  },
+  'settings.docx.compare_check.failed': {
+    de: 'Vergleichsmodus konnte nicht geprüft werden.',
+    en: 'Could not verify compare mode access.',
   },
   'settings.temperature': {
     de: 'Temperature',
@@ -381,6 +425,42 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.font_size.xxl': {
     de: 'Riesig',
     en: 'Huge',
+  },
+  'settings.auto_check_updates': {
+    de: 'Update-Prüfung',
+    en: 'Update checks',
+  },
+  'settings.auto_check_updates.hint': {
+    de: 'Beim Start und danach einmal täglich nach neuen Versionen suchen.',
+    en: 'Check for new versions at startup and then once per day.',
+  },
+  'settings.auto_check_updates.toggle': {
+    de: 'Automatisch nach Updates suchen',
+    en: 'Automatically check for updates',
+  },
+  'settings.check_updates': {
+    de: 'Auf Updates prüfen',
+    en: 'Check for updates',
+  },
+  'update.available': {
+    de: 'Neue Version verfügbar',
+    en: 'New version available',
+  },
+  'update.available.message': {
+    de: 'Version {version} ist verfügbar. Laden Sie das Update auf GitHub herunter.',
+    en: 'Version {version} is available. Download the update on GitHub.',
+  },
+  'update.download': {
+    de: 'Update herunterladen',
+    en: 'Download update',
+  },
+  'update.none': {
+    de: 'Keine neue Version verfügbar.',
+    en: 'No new version available.',
+  },
+  'update.check_failed': {
+    de: 'Update-Prüfung derzeit nicht möglich.',
+    en: 'Update check is currently unavailable.',
   },
 };
 
