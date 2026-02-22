@@ -243,11 +243,6 @@ public static class LingofixRunner
                     logger.Info("Track changes generated with Diff Engine");
                 }
             }
-            catch (Exception ex) when (isExternalCompare)
-            {
-                logger.Error($"{compareMode} comparison failed: {ex.Message}");
-                logger.Info("Returning corrected file without generated track changes. You can run the document comparison manually in your office application.");
-            }
             catch (Exception ex)
             {
                 logger.Error($"Comparison step failed ({compareMode}): {ex.Message}");
