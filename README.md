@@ -92,9 +92,6 @@ Release notes are generated automatically from GitHub.
 
 ## macOS Startup
 
-
-**macOS: App Blocked?**
-
 If macOS blocks the app (unidentified developer):
 
 1. Open **System Settings** > **Privacy & Security**.
