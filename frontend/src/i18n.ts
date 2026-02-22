@@ -91,11 +91,11 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Could not load settings.',
   },
   'error.empty_result': {
-    de: 'Die Korrektur lieferte keinen Text. Bitte pruefen Sie API-Key, Modell und Provider in den Einstellungen.',
+    de: 'Die Korrektur lieferte keinen Text. Bitte prüfen Sie API-Key, Modell und Provider in den Einstellungen.',
     en: 'The correction returned no text. Please verify API key, model, and provider settings.',
   },
   'error.no_changes': {
-    de: 'Das Modell hat keine Aenderungen vorgenommen. Der Text ist moeglicherweise bereits fehlerfrei.',
+    de: 'Das Modell hat keine Änderungen vorgenommen. Der Text ist möglicherweise bereits fehlerfrei.',
     en: 'The model made no changes. The text may already be error-free.',
   },
   'error.text_too_short': {
@@ -289,11 +289,11 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Notice',
   },
   'docx.diff_mode.accept_existing.title': {
-    de: 'Vorhandene Aenderungen gefunden',
+    de: 'Vorhandene Änderungen gefunden',
     en: 'Existing changes detected',
   },
   'docx.diff_mode.accept_existing.message': {
-    de: 'Im Diff-Modus kann die Korrektur nur fortgesetzt werden, wenn Lingofix vorab alle vorhandenen Track Changes automatisch akzeptiert.\n\nMoechten Sie fortfahren?',
+    de: 'Im Diff-Modus kann die Korrektur nur fortgesetzt werden, wenn Lingofix vorab alle vorhandenen Track Changes automatisch akzeptiert.\n\nMöchten Sie fortfahren?',
     en: 'In diff mode, correction can continue only if Lingofix automatically accepts all existing track changes before correction.\n\nDo you want to continue?',
   },
   'docx.diff_mode.accept_existing.cancel': {
@@ -341,7 +341,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'LibreOffice (soffice)',
   },
   'settings.docx.word_check.hint': {
-    de: 'Pruefen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen fuer diesen Modus setzen kann.',
+    de: 'Prüfen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen für diesen Modus setzen kann.',
     en: 'Run this one-time Word access check so macOS can grant permissions for this mode.',
   },
   'settings.docx.word_check.hint_non_macos': {
@@ -349,7 +349,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Check Word availability for this mode.',
   },
   'settings.docx.word_check.button': {
-    de: 'Word-Zugriff pruefen',
+    de: 'Word-Zugriff prüfen',
     en: 'Check Word access',
   },
   'settings.docx.libreoffice_check.hint': {
@@ -365,7 +365,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Could not verify Word access.',
   },
   'settings.docx.compare_check.failed': {
-    de: 'Vergleichsmodus konnte nicht geprueft werden.',
+    de: 'Vergleichsmodus konnte nicht geprüft werden.',
     en: 'Could not verify compare mode access.',
   },
   'settings.temperature': {
