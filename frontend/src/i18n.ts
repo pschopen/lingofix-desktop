@@ -332,17 +332,37 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Word (MS Word erforderlich)',
     en: 'Word (requires MS Word)',
   },
+  'settings.docx.compare_mode.libreoffice': {
+    de: 'LibreOffice (soffice)',
+    en: 'LibreOffice (soffice)',
+  },
   'settings.docx.word_check.hint': {
     de: 'Pruefen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen fuer diesen Modus setzen kann.',
     en: 'Run this one-time Word access check so macOS can grant permissions for this mode.',
+  },
+  'settings.docx.word_check.hint_non_macos': {
+    de: 'Pruefen Sie die Word-Verfuegbarkeit fuer diesen Modus.',
+    en: 'Check Word availability for this mode.',
   },
   'settings.docx.word_check.button': {
     de: 'Word-Zugriff pruefen',
     en: 'Check Word access',
   },
+  'settings.docx.libreoffice_check.hint': {
+    de: 'Pruefen Sie, ob LibreOffice (soffice) fuer diesen Modus verfuegbar ist.',
+    en: 'Check whether LibreOffice (soffice) is available for this mode.',
+  },
+  'settings.docx.libreoffice_check.button': {
+    de: 'LibreOffice-Zugriff pruefen',
+    en: 'Check LibreOffice access',
+  },
   'settings.docx.word_check.failed': {
     de: 'Word-Zugriff konnte nicht geprueft werden.',
     en: 'Could not verify Word access.',
+  },
+  'settings.docx.compare_check.failed': {
+    de: 'Vergleichsmodus konnte nicht geprueft werden.',
+    en: 'Could not verify compare mode access.',
   },
   'settings.temperature': {
     de: 'Temperature',

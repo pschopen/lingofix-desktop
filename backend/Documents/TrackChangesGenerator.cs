@@ -8,6 +8,8 @@ namespace Lingofix.Backend.Documents;
 public static class TrackChangesGenerator
 {
     private static readonly TimeSpan ExternalCompareTimeout = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan LibreOfficeProbeTimeout = TimeSpan.FromSeconds(15);
+    private const string SOfficePathEnv = "LINGOFIX_SOFFICE_PATH";
     private const string WordprocessingNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     private static readonly HashSet<string> RemoveRevisionElements = new(StringComparer.Ordinal)
     {
@@ -774,6 +776,12 @@ public static class TrackChangesGenerator
         throw new PlatformNotSupportedException("Word comparison is not supported on this operating system.");
     }
 
+    public static void GenerateWithLibreOffice(string originalPath, string correctedPath, string outputPath, string author)
+    {
+        EnsureLibreOfficeAvailable();
+        GenerateParagraphCompare(originalPath, correctedPath, outputPath, author);
+    }
+
     private static void RejectFormattingChanges(string documentPath)
     {
         using var doc = WordprocessingDocument.Open(documentPath, true);
@@ -1222,6 +1230,117 @@ if ($null -ne $lastError) {
             
             throw new InvalidOperationException(errorMsg.Trim());
         }
+    }
+
+    private static void EnsureLibreOfficeAvailable()
+    {
+        var candidates = ResolveLibreOfficeCandidates().ToList();
+        var failures = new List<string>();
+
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = candidate,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                psi.ArgumentList.Add("--version");
+
+                using var proc = System.Diagnostics.Process.Start(psi);
+                if (proc is null)
+                {
+                    failures.Add($"{candidate}: process could not be started");
+                    continue;
+                }
+
+                if (!proc.WaitForExit((int)LibreOfficeProbeTimeout.TotalMilliseconds))
+                {
+                    try
+                    {
+                        proc.Kill(entireProcessTree: true);
+                    }
+                    catch
+                    {
+                    }
+
+                    failures.Add($"{candidate}: probe timed out");
+                    continue;
+                }
+
+                if (proc.ExitCode == 0)
+                {
+                    return;
+                }
+
+                var stderr = proc.StandardError.ReadToEnd().Trim();
+                var stdout = proc.StandardOutput.ReadToEnd().Trim();
+                var details = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                failures.Add(string.IsNullOrWhiteSpace(details)
+                    ? $"{candidate}: exit code {proc.ExitCode}"
+                    : $"{candidate}: {details}");
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{candidate}: {ex.Message}");
+            }
+        }
+
+        var attempted = failures.Count == 0
+            ? "no executable candidates"
+            : string.Join(Environment.NewLine, failures);
+        throw new InvalidOperationException(
+            $"LibreOffice comparison requires LibreOffice (soffice), but no usable installation was found.\n" +
+            $"Install LibreOffice and retry, or set {SOfficePathEnv} to the absolute soffice path.\n\n" +
+            $"Details:\n{attempted}");
+    }
+
+    private static IEnumerable<string> ResolveLibreOfficeCandidates()
+    {
+        var yieldReturnList = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            var candidate = value.Trim();
+            if (!Path.IsPathFullyQualified(candidate) || File.Exists(candidate))
+            {
+                if (seen.Add(candidate))
+                {
+                    yieldReturnList.Add(candidate);
+                }
+            }
+        }
+
+        Add(Environment.GetEnvironmentVariable(SOfficePathEnv));
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            Add("/Applications/LibreOffice.app/Contents/MacOS/soffice");
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            Add("C:/Program Files/LibreOffice/program/soffice.exe");
+            Add("C:/Program Files (x86)/LibreOffice/program/soffice.exe");
+            Add("soffice.exe");
+        }
+        else
+        {
+            Add("/usr/bin/soffice");
+            Add("/usr/local/bin/soffice");
+            Add("soffice");
+        }
+
+        return yieldReturnList;
     }
 
 }

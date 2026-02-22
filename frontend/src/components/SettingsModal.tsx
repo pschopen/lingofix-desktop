@@ -35,7 +35,7 @@ const PROVIDER_LABELS: Record<Provider, string> = {
 
 type TabType = 'general' | 'docx' | 'advanced';
 
-interface WordCompareAccessStatus {
+interface CompareAccessStatus {
   ok: boolean;
   message: string;
   details: string;
@@ -54,13 +54,13 @@ export function SettingsModal({
   const [models, setModels] = useState<string[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string>('');
-  const [isCheckingWordAccess, setIsCheckingWordAccess] = useState(false);
-  const [wordAccessStatus, setWordAccessStatus] = useState<WordCompareAccessStatus | null>(null);
+  const [isCheckingCompareAccess, setIsCheckingCompareAccess] = useState(false);
+  const [compareAccessStatus, setCompareAccessStatus] = useState<CompareAccessStatus | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setFormData(settings);
-      setWordAccessStatus(null);
+      setCompareAccessStatus(null);
     }
   }, [isOpen, settings]);
 
@@ -140,19 +140,23 @@ export function SettingsModal({
     onSave(formData);
   };
 
-  const handleWordAccessCheck = async () => {
-    setIsCheckingWordAccess(true);
+  const handleCompareAccessCheck = async () => {
+    setIsCheckingCompareAccess(true);
+    const command = formData.docx.compare_mode === 'libreoffice'
+      ? 'check_libreoffice_compare_access'
+      : 'check_word_compare_access';
+
     try {
-      const status = await invoke<WordCompareAccessStatus>('check_word_compare_access');
-      setWordAccessStatus(status);
+      const status = await invoke<CompareAccessStatus>(command);
+      setCompareAccessStatus(status);
     } catch (error) {
-      setWordAccessStatus({
+      setCompareAccessStatus({
         ok: false,
-        message: t('settings.docx.word_check.failed', lang),
+        message: t('settings.docx.compare_check.failed', lang),
         details: String(error),
       });
     } finally {
-      setIsCheckingWordAccess(false);
+      setIsCheckingCompareAccess(false);
     }
   };
 
@@ -330,34 +334,41 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.docx.compare_mode', lang)} isDarkMode={isDarkMode}>
                   <SelectField
                     value={formData.docx.compare_mode}
-                    onChange={(e) => handleDocxSettingChange('compare_mode', e.target.value as 'diff-engine' | 'word')}
+                    onChange={(e) => handleDocxSettingChange('compare_mode', e.target.value as 'diff-engine' | 'word' | 'libreoffice')}
                     isDarkMode={isDarkMode}
                   >
                     <option value="diff-engine">{t('settings.docx.compare_mode.diff', lang)}</option>
                     <option value="word">{t('settings.docx.compare_mode.word', lang)}</option>
+                    <option value="libreoffice">{t('settings.docx.compare_mode.libreoffice', lang)}</option>
                   </SelectField>
                 </FieldGroup>
 
-                {isMac && formData.docx.compare_mode === 'word' && (
+                {(formData.docx.compare_mode === 'word' || formData.docx.compare_mode === 'libreoffice') && (
                   <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/70' : 'border-surface-200 bg-surface-50'}`}>
                     <p className={`text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
-                      {t('settings.docx.word_check.hint', lang)}
+                      {formData.docx.compare_mode === 'libreoffice'
+                        ? t('settings.docx.libreoffice_check.hint', lang)
+                        : isMac
+                          ? t('settings.docx.word_check.hint', lang)
+                          : t('settings.docx.word_check.hint_non_macos', lang)}
                     </p>
                     <button
                       type="button"
-                      onClick={handleWordAccessCheck}
-                      disabled={isCheckingWordAccess}
+                      onClick={handleCompareAccessCheck}
+                      disabled={isCheckingCompareAccess}
                       className="btn-secondary !mt-2 !text-base"
                     >
-                      {isCheckingWordAccess ? (
+                      {isCheckingCompareAccess ? (
                         <Loader2 className="animate-spin" size={14} />
                       ) : null}
-                      {t('settings.docx.word_check.button', lang)}
+                      {formData.docx.compare_mode === 'libreoffice'
+                        ? t('settings.docx.libreoffice_check.button', lang)
+                        : t('settings.docx.word_check.button', lang)}
                     </button>
-                    {wordAccessStatus && (
-                      <p className={`mt-2 text-sm whitespace-pre-wrap ${wordAccessStatus.ok ? 'text-emerald-600' : 'text-amber-600'}`}>
-                        {wordAccessStatus.message}
-                        {wordAccessStatus.details ? `\n${wordAccessStatus.details}` : ''}
+                    {compareAccessStatus && (
+                      <p className={`mt-2 text-sm whitespace-pre-wrap ${compareAccessStatus.ok ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {compareAccessStatus.message}
+                        {compareAccessStatus.details ? `\n${compareAccessStatus.details}` : ''}
                       </p>
                     )}
                   </div>

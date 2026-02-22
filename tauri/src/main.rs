@@ -1592,6 +1592,65 @@ fn check_word_compare_access() -> Result<WordCompareAccessStatus, String> {
     }
 }
 
+#[tauri::command]
+fn check_libreoffice_compare_access() -> Result<WordCompareAccessStatus, String> {
+    let candidates = resolve_soffice_candidates();
+    let mut failures = Vec::new();
+
+    for candidate in candidates {
+        let mut command = std::process::Command::new(&candidate);
+        command.arg("--version");
+
+        match command.output() {
+            Ok(output) => {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let version = if stdout.is_empty() {
+                        "LibreOffice detected".to_string()
+                    } else {
+                        stdout
+                    };
+
+                    return Ok(WordCompareAccessStatus {
+                        ok: true,
+                        message: "LibreOffice compare setup is ready.".to_string(),
+                        details: format!("{}\nExecutable: {}", version, candidate.display()),
+                    });
+                }
+
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let reason = if stderr.is_empty() { stdout } else { stderr };
+                failures.push(if reason.is_empty() {
+                    format!("{}: exited with {}", candidate.display(), output.status)
+                } else {
+                    format!("{}: {}", candidate.display(), reason)
+                });
+            }
+            Err(err) => {
+                failures.push(format!("{}: {}", candidate.display(), err));
+            }
+        }
+    }
+
+    let details = if failures.is_empty() {
+        "No soffice candidates available.".to_string()
+    } else {
+        failures.join("\n")
+    };
+
+    Ok(WordCompareAccessStatus {
+        ok: false,
+        message: "LibreOffice compare access is not ready yet.".to_string(),
+        details: format!(
+            "Install LibreOffice and retry: {}\nOptional: set {} to the absolute soffice path.\n\n{}",
+            LIBREOFFICE_DOWNLOAD_URL,
+            SOFFICE_PATH_ENV,
+            details
+        ),
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn mac_word_compare_workspace_dir() -> anyhow::Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME is not set")?;
@@ -1778,6 +1837,7 @@ fn main() {
             correct_docx,
             cancel_docx,
             check_word_compare_access,
+            check_libreoffice_compare_access,
             inspect_docx_track_changes,
             open_folder,
             get_file_size,

@@ -42,6 +42,8 @@ public static class LingofixRunner
         var settings = options.Settings ?? throw new ArgumentNullException(nameof(options.Settings));
         var compareMode = options.CompareModeOverride ?? Settings.NormalizeCompareMode(settings.CompareMode);
         var isWordCompare = compareMode == CompareModeKind.Word;
+        var isLibreOfficeCompare = compareMode == CompareModeKind.LibreOffice;
+        var isExternalCompare = isWordCompare || isLibreOfficeCompare;
         var canAcceptExistingTrackChanges = options.AcceptExistingTrackChanges;
         var apiKey = Settings.ResolveApiKey(settings.ApiKey);
         var isOllama = string.Equals(settings.Provider, "ollama", StringComparison.OrdinalIgnoreCase);
@@ -53,16 +55,16 @@ public static class LingofixRunner
         var trackOutputPath = PathUtils.BuildOutputPath(normalizedInputPath, "_lingofix");
         var correctedOutputPath = PathUtils.BuildOutputPath(normalizedInputPath, "_corrected");
         var finalOutputPath = trackOutputPath;
-        var tempOutputPath = isWordCompare
+        var tempOutputPath = isExternalCompare
             ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "output.docx")
             : PathUtils.BuildTempOutputPath(trackOutputPath);
-        var tempOriginalPath = isWordCompare
+        var tempOriginalPath = isExternalCompare
             ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "original.docx")
             : Path.Combine(Path.GetTempPath(), "Lingofix", $"orig_{Guid.NewGuid():N}{Path.GetExtension(normalizedInputPath)}");
         CopyReadableSnapshot(normalizedInputPath, tempOriginalPath);
         var checkpoint = ProcessingCheckpointStore.Load(normalizedInputPath, logger);
         var correctedPath = checkpoint?.CorrectedPath
-            ?? (isWordCompare
+            ?? (isExternalCompare
                 ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "corrected.docx")
                 : PathUtils.BuildTempCorrectedPath(normalizedInputPath));
         var completedLabels = new HashSet<string>(checkpoint?.CompletedLabels ?? [], StringComparer.Ordinal);
@@ -228,6 +230,12 @@ public static class LingofixRunner
                     trackCreated = true;
                     logger.Info("Track changes generated with Word");
                 }
+                else if (compareMode == CompareModeKind.LibreOffice)
+                {
+                    TrackChangesGenerator.GenerateWithLibreOffice(tempOriginalPath, correctedPath, tempOutputPath, "Lingofix");
+                    trackCreated = true;
+                    logger.Info("Track changes generated with LibreOffice");
+                }
                 else
                 {
                     TrackChangesGenerator.GenerateParagraphCompare(tempOriginalPath, correctedPath, tempOutputPath, "Lingofix");
@@ -235,9 +243,9 @@ public static class LingofixRunner
                     logger.Info("Track changes generated with Diff Engine");
                 }
             }
-            catch (Exception ex) when (compareMode == CompareModeKind.Word)
+            catch (Exception ex) when (isExternalCompare)
             {
-                logger.Error($"Word comparison failed: {ex.Message}");
+                logger.Error($"{compareMode} comparison failed: {ex.Message}");
                 logger.Info("Returning corrected file without generated track changes.");
             }
             catch (Exception ex)
@@ -253,18 +261,18 @@ public static class LingofixRunner
                 logger.Info("Copied corrected file (no track changes)");
             }
 
-            if (compareMode != CompareModeKind.Word)
+            if (!isExternalCompare)
             {
                 CommentPreserver.PreserveOriginalComments(tempOriginalPath, tempOutputPath, logger);
             }
             else
             {
-                logger.Info("Skipping comment-preserver in Word compare mode.");
+                logger.Info("Skipping comment-preserver in external compare mode.");
             }
 
             try
             {
-                if (compareMode == CompareModeKind.Word)
+                if (isExternalCompare)
                 {
                     DocxIntegrityValidator.ValidateForWordCompare(tempOriginalPath, tempOutputPath);
                 }
@@ -276,9 +284,9 @@ public static class LingofixRunner
             }
             catch (Exception ex)
             {
-                if (compareMode == CompareModeKind.Word)
+                if (isExternalCompare)
                 {
-                    logger.Warning($"Integrity check warning (Word compare mode): {ex.Message} The output file will still be provided.");
+                    logger.Warning($"Integrity check warning (external compare mode): {ex.Message} The output file will still be provided.");
                 }
                 else
                 {
