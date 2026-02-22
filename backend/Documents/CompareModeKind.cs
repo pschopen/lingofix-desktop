@@ -2,7 +2,7 @@ namespace Lingofix.Backend.Documents;
 
 public enum CompareModeKind
 {
-    DiffEngine,
+    OpenXml,
     Word,
     LibreOffice
 }

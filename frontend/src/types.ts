@@ -1,7 +1,7 @@
 export type Provider = 'openai' | 'ollama' | 'openrouter' | 'huggingface' | 'google' | 'custom' | 'mistral';
 
 export interface DocxSettings {
-  compare_mode: 'diff-engine' | 'word' | 'libreoffice';
+  compare_mode: 'openxml' | 'word-native' | 'libreoffice-uno';
   enable_batching: boolean;
   batch_max_chars: number;
   batch_max_paragraphs: number;

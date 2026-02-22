@@ -107,7 +107,7 @@ struct DocxSettings {
 impl Default for DocxSettings {
     fn default() -> Self {
         Self {
-            compare_mode: "diff-engine".into(),
+            compare_mode: "openxml".into(),
             enable_batching: true,
             batch_max_chars: 50_000,
             batch_max_paragraphs: 100,
@@ -1102,6 +1102,7 @@ async fn run_docx_processor(
         let mut final_output = output_path.ok_or_else(|| anyhow!("No output path from DOCX processor"))?;
 
         if source_kind == OfficeInputKind::Odt {
+            let is_openxml_mode = settings.docx.compare_mode.eq_ignore_ascii_case("openxml");
             let output_suffix = Path::new(&final_output)
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -1114,29 +1115,42 @@ async fn run_docx_processor(
                 })
                 .unwrap_or("_lingofix");
             let naming_source = original_path.unwrap_or(source_input_path);
-            let target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Odt)?;
-            match convert_docx_to_odt(Path::new(&final_output), &target).await {
-                Ok(()) => {
-                    final_output = target.to_string_lossy().to_string();
-                }
-                Err(conversion_error) => {
-                    let fallback_docx_target = build_output_path(
-                        Path::new(naming_source),
-                        output_suffix,
-                        OfficeInputKind::Docx,
-                    )?;
-                    tokio::fs::copy(&final_output, &fallback_docx_target).await?;
-                    final_output = fallback_docx_target.to_string_lossy().to_string();
-                    let _ = app.emit(
-                        "docx_log",
-                        json!({
-                            "level": "warning",
-                            "message": format!(
-                                "ODT re-conversion failed; returning DOCX fallback: {}",
-                                conversion_error
-                            )
-                        }),
-                    );
+            if is_openxml_mode {
+                let docx_target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Docx)?;
+                tokio::fs::copy(&final_output, &docx_target).await?;
+                final_output = docx_target.to_string_lossy().to_string();
+                let _ = app.emit(
+                    "docx_log",
+                    json!({
+                        "level": "warning",
+                        "message": "ODT re-conversion skipped for OpenXML mode; returning DOCX output for validation."
+                    }),
+                );
+            } else {
+                let target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Odt)?;
+                match convert_docx_to_odt(Path::new(&final_output), &target).await {
+                    Ok(()) => {
+                        final_output = target.to_string_lossy().to_string();
+                    }
+                    Err(conversion_error) => {
+                        let fallback_docx_target = build_output_path(
+                            Path::new(naming_source),
+                            output_suffix,
+                            OfficeInputKind::Docx,
+                        )?;
+                        tokio::fs::copy(&final_output, &fallback_docx_target).await?;
+                        final_output = fallback_docx_target.to_string_lossy().to_string();
+                        let _ = app.emit(
+                            "docx_log",
+                            json!({
+                                "level": "warning",
+                                "message": format!(
+                                    "ODT re-conversion failed; returning DOCX fallback: {}",
+                                    conversion_error
+                                )
+                            }),
+                        );
+                    }
                 }
             }
         } else if let Some(original) = original_path {
@@ -1697,6 +1711,58 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+fn open_path_in_system_explorer(path: &Path, reveal_file: bool) -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        let mut command = std::process::Command::new("explorer");
+        if reveal_file {
+            command.arg("/select,").arg(path);
+        } else {
+            command.arg(path);
+        }
+        command.spawn().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    if cfg!(target_os = "macos") {
+        let mut command = std::process::Command::new("open");
+        if reveal_file {
+            command.arg("-R");
+        }
+        command.arg(path).spawn().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let target = if reveal_file {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    std::process::Command::new("xdg-open")
+        .arg(target)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_temp_lingofix_folder() -> Result<(), String> {
+    let temp_dir = std::env::temp_dir().join("Lingofix");
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+    open_path_in_system_explorer(&temp_dir, false)
+}
+
+#[tauri::command]
+fn open_settings_json(app: AppHandle) -> Result<(), String> {
+    let settings = settings_path(&app).map_err(|e| e.to_string())?;
+    if !settings.exists() {
+        let defaults = encrypt_settings_secrets(sanitize_settings_for_disk(FrontendSettings::default()));
+        let content = serde_json::to_string_pretty(&defaults).map_err(|e| e.to_string())?;
+        std::fs::write(&settings, content).map_err(|e| e.to_string())?;
+    }
+
+    open_path_in_system_explorer(&settings, true)
+}
+
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     let parsed = reqwest::Url::parse(url.trim()).map_err(|e| e.to_string())?;
@@ -1881,6 +1947,8 @@ fn main() {
             check_libreoffice_compare_access,
             inspect_docx_track_changes,
             open_folder,
+            open_temp_lingofix_folder,
+            open_settings_json,
             open_external_url,
             get_app_version,
             get_file_size,

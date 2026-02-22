@@ -778,8 +778,9 @@ public static class TrackChangesGenerator
 
     public static void GenerateWithLibreOffice(string originalPath, string correctedPath, string outputPath, string author)
     {
-        EnsureLibreOfficeAvailable();
-        GenerateParagraphCompare(originalPath, correctedPath, outputPath, author);
+        var sofficePath = ResolveUsableLibreOfficeExecutable();
+        LibreOfficeUnoCompareRunner.GenerateWithUno(sofficePath, originalPath, correctedPath, outputPath, author, ExternalCompareTimeout);
+        RejectFormattingChanges(outputPath);
     }
 
     private static void RejectFormattingChanges(string documentPath)
@@ -1232,7 +1233,7 @@ if ($null -ne $lastError) {
         }
     }
 
-    private static void EnsureLibreOfficeAvailable()
+    private static string ResolveUsableLibreOfficeExecutable()
     {
         var candidates = ResolveLibreOfficeCandidates().ToList();
         var failures = new List<string>();
@@ -1274,7 +1275,7 @@ if ($null -ne $lastError) {
 
                 if (proc.ExitCode == 0)
                 {
-                    return;
+                    return candidate;
                 }
 
                 var stderr = proc.StandardError.ReadToEnd().Trim();
