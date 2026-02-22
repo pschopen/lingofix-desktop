@@ -12,7 +12,8 @@ const repoRoot = resolve(__dirname, '..');
 const backendProject = join(repoRoot, 'backend', 'Lingofix.Backend.csproj');
 const tauriBinariesDir = join(repoRoot, 'tauri', 'binaries');
 const tauriResourcesDir = join(repoRoot, 'tauri', 'resources');
-const backendScript = join(repoRoot, 'backend', 'Resources', 'word-compare.scpt');
+const wordCompareScript = join(repoRoot, 'backend', 'Resources', 'word-compare.scpt');
+const libreOfficeCompareScript = join(repoRoot, 'backend', 'Resources', 'libreoffice-compare.py');
 
 const ridConfig = {
   'osx-arm64': {
@@ -86,21 +87,35 @@ for (const target of targets) {
   console.log(`  target: ${targetBinary}`);
 }
 
-if (!existsSync(backendScript)) {
-  fail(`Script file not found: ${backendScript}`);
+if (!existsSync(wordCompareScript)) {
+  fail(`Script file not found: ${wordCompareScript}`);
 }
 
-const scriptTargets = [
+if (!existsSync(libreOfficeCompareScript)) {
+  fail(`Script file not found: ${libreOfficeCompareScript}`);
+}
+
+const wordScriptTargets = [
   join(tauriResourcesDir, 'word-compare.scpt'),
   join(tauriResourcesDir, 'binaries', 'word-compare.scpt'),
 ];
 
-for (const scriptTarget of scriptTargets) {
-  copyFileSync(backendScript, scriptTarget);
+for (const scriptTarget of wordScriptTargets) {
+  copyFileSync(wordCompareScript, scriptTarget);
   chmodSync(scriptTarget, 0o644);
 }
 
-console.log('Copied AppleScript resource files.');
+const libreOfficeScriptTargets = [
+  join(tauriResourcesDir, 'libreoffice-compare.py'),
+  join(tauriResourcesDir, 'binaries', 'libreoffice-compare.py'),
+];
+
+for (const scriptTarget of libreOfficeScriptTargets) {
+  copyFileSync(libreOfficeCompareScript, scriptTarget);
+  chmodSync(scriptTarget, 0o644);
+}
+
+console.log('Copied compare resource files.');
 
 function parseTargets(argv) {
   const flag = argv.find((arg) => arg.startsWith('--targets='));

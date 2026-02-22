@@ -60,12 +60,14 @@ export function SettingsModal({
   const [compareAccessStatus, setCompareAccessStatus] = useState<CompareAccessStatus | null>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updateCheckMessage, setUpdateCheckMessage] = useState('');
+  const [systemPathMessage, setSystemPathMessage] = useState('');
 
   useEffect(() => {
     if (isOpen) {
       setFormData(settings);
       setCompareAccessStatus(null);
       setUpdateCheckMessage('');
+      setSystemPathMessage('');
     }
   }, [isOpen, settings]);
 
@@ -147,7 +149,7 @@ export function SettingsModal({
 
   const handleCompareAccessCheck = async () => {
     setIsCheckingCompareAccess(true);
-    const command = formData.docx.compare_mode === 'libreoffice'
+    const command = formData.docx.compare_mode === 'libreoffice-uno'
       ? 'check_libreoffice_compare_access'
       : 'check_word_compare_access';
 
@@ -180,6 +182,24 @@ export function SettingsModal({
       setUpdateCheckMessage(String(error));
     } finally {
       setIsCheckingUpdates(false);
+    }
+  };
+
+  const handleOpenTempFolder = async () => {
+    setSystemPathMessage('');
+    try {
+      await invoke('open_temp_lingofix_folder');
+    } catch (error) {
+      setSystemPathMessage(`${t('settings.system_paths.open_failed', lang)}: ${error}`);
+    }
+  };
+
+  const handleOpenSettingsJson = async () => {
+    setSystemPathMessage('');
+    try {
+      await invoke('open_settings_json');
+    } catch (error) {
+      setSystemPathMessage(`${t('settings.system_paths.open_failed', lang)}: ${error}`);
     }
   };
 
@@ -352,19 +372,27 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.docx.compare_mode', lang)} isDarkMode={isDarkMode}>
                   <SelectField
                     value={formData.docx.compare_mode}
-                    onChange={(e) => handleDocxSettingChange('compare_mode', e.target.value as 'diff-engine' | 'word' | 'libreoffice')}
+                    onChange={(e) => handleDocxSettingChange('compare_mode', e.target.value as 'openxml' | 'word-native' | 'libreoffice-uno')}
                     isDarkMode={isDarkMode}
                   >
-                    <option value="diff-engine">{t('settings.docx.compare_mode.diff', lang)}</option>
-                    <option value="word">{t('settings.docx.compare_mode.word', lang)}</option>
-                    <option value="libreoffice">{t('settings.docx.compare_mode.libreoffice', lang)}</option>
+                    <option value="openxml">{t('settings.docx.compare_mode.openxml', lang)}</option>
+                    <option value="word-native">{t('settings.docx.compare_mode.word_native', lang)}</option>
+                    <option value="libreoffice-uno">{t('settings.docx.compare_mode.libreoffice_uno', lang)}</option>
                   </SelectField>
                 </FieldGroup>
 
-                {(formData.docx.compare_mode === 'word' || formData.docx.compare_mode === 'libreoffice') && (
+                {formData.docx.compare_mode === 'openxml' && (
+                  <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-amber-800/60 bg-amber-950/30' : 'border-amber-200 bg-amber-50'}`}>
+                    <p className={`text-sm ${isDarkMode ? 'text-amber-200' : 'text-amber-800'}`}>
+                      {t('settings.docx.openxml.warning', lang)}
+                    </p>
+                  </div>
+                )}
+
+                {(formData.docx.compare_mode === 'word-native' || formData.docx.compare_mode === 'libreoffice-uno') && (
                   <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/70' : 'border-surface-200 bg-surface-50'}`}>
                     <p className={`text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
-                      {formData.docx.compare_mode === 'libreoffice'
+                      {formData.docx.compare_mode === 'libreoffice-uno'
                         ? t('settings.docx.libreoffice_check.hint', lang)
                         : isMac
                           ? t('settings.docx.word_check.hint', lang)
@@ -379,7 +407,7 @@ export function SettingsModal({
                       {isCheckingCompareAccess ? (
                         <Loader2 className="animate-spin" size={14} />
                       ) : null}
-                      {formData.docx.compare_mode === 'libreoffice'
+                      {formData.docx.compare_mode === 'libreoffice-uno'
                         ? t('settings.docx.libreoffice_check.button', lang)
                         : t('settings.docx.word_check.button', lang)}
                     </button>
@@ -500,6 +528,36 @@ export function SettingsModal({
                     {updateCheckMessage && (
                       <p className={`mt-2 text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
                         {updateCheckMessage}
+                      </p>
+                    )}
+                  </FieldGroup>
+                </div>
+
+                <div className={`pt-2 mt-1 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
+                  <FieldGroup
+                    label={t('settings.system_paths', lang)}
+                    hint={t('settings.system_paths.hint', lang)}
+                    isDarkMode={isDarkMode}
+                  >
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleOpenTempFolder}
+                        className="btn-secondary !text-base"
+                      >
+                        {t('settings.system_paths.temp_folder', lang)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenSettingsJson}
+                        className="btn-secondary !text-base"
+                      >
+                        {t('settings.system_paths.settings_json', lang)}
+                      </button>
+                    </div>
+                    {systemPathMessage && (
+                      <p className="mt-2 text-sm text-amber-600">
+                        {systemPathMessage}
                       </p>
                     )}
                   </FieldGroup>

@@ -9,7 +9,7 @@ import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
 
 const DEFAULT_DOCX_SETTINGS = {
-  compare_mode: 'diff-engine' as const,
+  compare_mode: 'openxml' as const,
   enable_batching: true,
   batch_max_chars: 50000,
   batch_max_paragraphs: 100,
@@ -442,7 +442,7 @@ function App() {
       if (!docxFile.path) return;
 
       try {
-        if (settings.docx.compare_mode === 'diff-engine') {
+        if (settings.docx.compare_mode === 'openxml') {
           const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
             filePath: docxFile.path,
           });

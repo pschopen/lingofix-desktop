@@ -15,7 +15,7 @@ public sealed class Settings
         "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
     public string BatchPrompt { get; set; } =
         "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.";
-    public string CompareMode { get; set; } = "diff-engine";
+    public string CompareMode { get; set; } = "openxml";
     public double Temperature { get; set; } = 0.0;
     public bool EnableBatching { get; set; } = true;
     public int BatchMaxChars { get; set; } = 50000;
@@ -43,17 +43,17 @@ public sealed class Settings
 
     public static CompareModeKind NormalizeCompareMode(string? raw)
     {
-        if (string.Equals(raw, "word", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(raw, "word-native", StringComparison.OrdinalIgnoreCase))
         {
             return CompareModeKind.Word;
         }
 
-        if (string.Equals(raw, "libreoffice", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(raw, "libreoffice-uno", StringComparison.OrdinalIgnoreCase))
         {
             return CompareModeKind.LibreOffice;
         }
 
-        return CompareModeKind.DiffEngine;
+        return CompareModeKind.OpenXml;
     }
 
     public static Settings FromFrontendJson(string json)
@@ -87,7 +87,7 @@ public sealed class Settings
                 ? "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
                 : payload.BatchPrompt,
             Temperature = payload.Temperature,
-            CompareMode = string.IsNullOrWhiteSpace(payload.Docx.CompareMode) ? "diff-engine" : payload.Docx.CompareMode,
+            CompareMode = string.IsNullOrWhiteSpace(payload.Docx.CompareMode) ? "openxml" : payload.Docx.CompareMode,
             EnableBatching = payload.Docx.EnableBatching,
             BatchMaxChars = payload.Docx.BatchMaxChars,
             BatchMaxParagraphs = payload.Docx.BatchMaxParagraphs,
@@ -142,7 +142,7 @@ internal sealed class FrontendSettingsPayload
 internal sealed class FrontendDocxSettingsPayload
 {
     [JsonPropertyName("compare_mode")]
-    public string CompareMode { get; set; } = "diff-engine";
+    public string CompareMode { get; set; } = "openxml";
 
     [JsonPropertyName("enable_batching")]
     public bool EnableBatching { get; set; } = true;

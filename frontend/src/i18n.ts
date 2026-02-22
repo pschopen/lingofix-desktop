@@ -315,8 +315,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'General',
   },
   'settings.tab.docx': {
-    de: 'Docx',
-    en: 'Docx',
+    de: 'Dokumente',
+    en: 'Documents',
   },
   'settings.tab.advanced': {
     de: 'Erweitert',
@@ -328,17 +328,21 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Vergleichsmodus',
     en: 'Compare mode',
   },
-  'settings.docx.compare_mode.diff': {
-    de: 'Diff-Engine (integriert)',
-    en: 'Diff-Engine (built-in)',
+  'settings.docx.compare_mode.openxml': {
+    de: 'OpenXML (integriert)',
+    en: 'OpenXML (built-in)',
   },
-  'settings.docx.compare_mode.word': {
-    de: 'Word (MS Word erforderlich)',
-    en: 'Word (requires MS Word)',
+  'settings.docx.compare_mode.word_native': {
+    de: 'Word (nativ, MS Word erforderlich)',
+    en: 'Word (native, requires MS Word)',
   },
-  'settings.docx.compare_mode.libreoffice': {
-    de: 'LibreOffice (soffice)',
-    en: 'LibreOffice (soffice)',
+  'settings.docx.compare_mode.libreoffice_uno': {
+    de: 'LibreOffice UNO (nativ, soffice)',
+    en: 'LibreOffice UNO (native, soffice)',
+  },
+  'settings.docx.openxml.warning': {
+    de: 'OpenXML bietet keine odt.-Kompatibilität. Auch bei docx.-Dateien kann es zu Veränderungen im Layout kommen. Word wird für docx.-Dateien, LibreOffice für odt.-Dateien empfohlen.',
+    en: 'OpenXML does not offer odt compatibility. Even with docx files, there may be changes in layout. Word is recommended for docx files, LibreOffice for odt files.',
   },
   'settings.docx.word_check.hint': {
     de: 'Prüfen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen für diesen Modus setzen kann.',
@@ -441,6 +445,26 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.check_updates': {
     de: 'Auf Updates prüfen',
     en: 'Check for updates',
+  },
+  'settings.system_paths': {
+    de: 'Systempfade',
+    en: 'System paths',
+  },
+  'settings.system_paths.hint': {
+    de: 'Temp-Ordner und settings.json direkt im Dateiexplorer öffnen.',
+    en: 'Open the temp folder and settings.json directly in your file explorer.',
+  },
+  'settings.system_paths.temp_folder': {
+    de: 'Temp-Ordner öffnen',
+    en: 'Open temp folder',
+  },
+  'settings.system_paths.settings_json': {
+    de: 'settings.json öffnen',
+    en: 'Open settings.json',
+  },
+  'settings.system_paths.open_failed': {
+    de: 'Konnte Pfad nicht öffnen',
+    en: 'Could not open path',
   },
   'update.available': {
     de: 'Neue Version verfügbar',
