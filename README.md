@@ -90,11 +90,18 @@ This creates a GitHub Release with:
 
 Release notes are generated automatically from GitHub.
 
-## macOS Startup and Signing Notes
+## macOS Startup
 
-- Unsigned/ad-hoc signed apps can start slower on macOS and may show a blank window longer during initial verification.
-- For production distribution, sign and notarize `Lingofix.app` with an Apple Developer ID certificate.
-- Local testing build:
+
+**macOS: App Blocked?**
+
+If macOS blocks the app (unidentified developer):
+
+1. Open **System Settings** > **Privacy & Security**.
+2. Click **Allow Anyway** next to the blocked app message.
+3. Open the app again and confirm with **Open**.
+
+The app should now launch normally.
 
 ```bash
 npm run build:app:mac
