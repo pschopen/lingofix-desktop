@@ -56,6 +56,16 @@ These commands publish the .NET backend as self-contained binaries and bundle th
 - Windows installer build (includes win-x64 backend binary): `npm run build:app:win`
 - Linux AppImage build (includes linux-x64 backend binary): `npm run build:app:linux`
 
+### Linux Graphics Compatibility
+
+The Linux desktop bundle enables WebKitGTK graphics workarounds by default to reduce white-screen startup issues on some Wayland/EGL driver combinations (for example on Fedora/Arch setups).
+
+If you need to disable these workarounds for troubleshooting, start the app with:
+
+```bash
+LINGOFIX_LINUX_GRAPHICS_WORKAROUNDS=0 ./Lingofix-Desktop-*.AppImage
+```
+
 You can also prepare backend binaries directly:
 
 ```bash
