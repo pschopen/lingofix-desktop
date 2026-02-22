@@ -277,7 +277,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'No logs yet.',
   },
   'docx.logs.compare_fallback_manual_hint': {
-    de: 'Korrigierte Datei ohne Track Changes bereitgestellt. Sie koennen den Vergleich manuell in Ihrer Office-Anwendung durchfuehren.',
+    de: 'Korrigierte Datei ohne Track Changes bereitgestellt. Sie können den Vergleich manuell in Ihrer Office-Anwendung durchführen.',
     en: 'Returned corrected file without track changes. You can run the comparison manually in your office application.',
   },
   'docx.cancelled': {
@@ -345,7 +345,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Run this one-time Word access check so macOS can grant permissions for this mode.',
   },
   'settings.docx.word_check.hint_non_macos': {
-    de: 'Pruefen Sie die Word-Verfuegbarkeit fuer diesen Modus.',
+    de: 'Prüfen Sie die Word-Verfügbarkeit für diesen Modus.',
     en: 'Check Word availability for this mode.',
   },
   'settings.docx.word_check.button': {
@@ -353,15 +353,15 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Check Word access',
   },
   'settings.docx.libreoffice_check.hint': {
-    de: 'Pruefen Sie, ob LibreOffice (soffice) fuer diesen Modus verfuegbar ist.',
+    de: 'Prüfen Sie, ob LibreOffice (soffice) für diesen Modus verfügbar ist.',
     en: 'Check whether LibreOffice (soffice) is available for this mode.',
   },
   'settings.docx.libreoffice_check.button': {
-    de: 'LibreOffice-Zugriff pruefen',
+    de: 'LibreOffice-Zugriff prüfen',
     en: 'Check LibreOffice access',
   },
   'settings.docx.word_check.failed': {
-    de: 'Word-Zugriff konnte nicht geprueft werden.',
+    de: 'Word-Zugriff konnte nicht geprüft werden.',
     en: 'Could not verify Word access.',
   },
   'settings.docx.compare_check.failed': {
