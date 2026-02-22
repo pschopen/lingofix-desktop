@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke, listen } from './lib/bridge';
-import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal } from 'lucide-react';
+import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal, ExternalLink } from 'lucide-react';
 import { TextEditor } from './components/TextEditor';
 import { SettingsModal } from './components/SettingsModal';
 import { Settings, FontSize } from './types';
@@ -22,6 +22,41 @@ const DEFAULT_PROMPT_EN = 'Correct the following text while maintaining the styl
 const DEFAULT_SYSTEM_PROMPT_EN = 'Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.';
 const DEFAULT_BATCH_PROMPT_EN = 'Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.';
 const DOCX_COMPARE_FALLBACK_MANUAL_HINT = 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.';
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_CHECK_STORAGE_KEY = 'lingofix.last_update_check_at';
+const GITHUB_LATEST_RELEASE_API = 'https://api.github.com/repos/pschopen/Lingofix/releases/latest';
+const GITHUB_RELEASES_PAGE = 'https://github.com/pschopen/Lingofix/releases';
+
+type UpdateNotice = {
+  version: string;
+  url: string;
+};
+
+type UpdateCheckResult = {
+  status: 'update-available' | 'up-to-date' | 'error';
+  message: string;
+};
+
+function parseVersionParts(raw: string): number[] {
+  const normalized = raw.trim().replace(/^v/i, '').split('-')[0];
+  return normalized
+    .split('.')
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
+}
+
+function compareVersions(a: string, b: string): number {
+  const left = parseVersionParts(a);
+  const right = parseVersionParts(b);
+  const len = Math.max(left.length, right.length);
+  for (let i = 0; i < len; i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l > r) return 1;
+    if (l < r) return -1;
+  }
+  return 0;
+}
 
 function App() {
   const [lang] = useState(detectLanguage());
@@ -70,6 +105,7 @@ function App() {
     custom_prompt: t('settings.prompt.default', lang),
     system_prompt: t('settings.system_prompt.value', lang),
     batch_prompt: t('settings.docx.batch_prompt', lang),
+    auto_check_updates: true,
     temperature: 0.0,
     provider_keys: {
       openai: null,
@@ -83,6 +119,8 @@ function App() {
     docx: DEFAULT_DOCX_SETTINGS,
     font_size: 'default' as FontSize,
   });
+  const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
+  const shownUpdateVersionRef = useRef<string | null>(null);
 
   // Apply font-size CSS custom property to document root
   useEffect(() => {
@@ -136,6 +174,11 @@ function App() {
         changed = true;
       }
 
+      if (typeof updated.auto_check_updates !== 'boolean') {
+        updated = { ...updated, auto_check_updates: true };
+        changed = true;
+      }
+
       if (changed) {
         await invoke('save_settings', { settings: updated });
       }
@@ -146,6 +189,90 @@ function App() {
       setError(t('error.load_settings', lang));
     }
   }, [lang, setError]);
+
+  const runUpdateCheck = useCallback(async ({ manual = false, force = false }: { manual?: boolean; force?: boolean } = {}): Promise<UpdateCheckResult> => {
+    if (!manual && !settings.auto_check_updates) {
+      return { status: 'up-to-date', message: t('update.none', lang) };
+    }
+
+    if (!force) {
+      try {
+        const lastCheckRaw = window.localStorage.getItem(UPDATE_CHECK_STORAGE_KEY);
+        const lastCheck = lastCheckRaw ? Number.parseInt(lastCheckRaw, 10) : 0;
+        if (Number.isFinite(lastCheck) && lastCheck > 0 && Date.now() - lastCheck < UPDATE_CHECK_INTERVAL_MS) {
+          return { status: 'up-to-date', message: t('update.none', lang) };
+        }
+      } catch {
+        // ignore localStorage read errors
+      }
+    }
+
+    try {
+      window.localStorage.setItem(UPDATE_CHECK_STORAGE_KEY, String(Date.now()));
+    } catch {
+      // ignore localStorage write errors
+    }
+
+    try {
+      const currentVersion = await invoke<string>('get_app_version');
+      const response = await fetch(GITHUB_LATEST_RELEASE_API, {
+        headers: { Accept: 'application/vnd.github+json' },
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const release = await response.json() as { tag_name?: string; html_url?: string };
+      const remoteVersion = release.tag_name?.trim() || '';
+      const releaseUrl = release.html_url?.trim() || GITHUB_RELEASES_PAGE;
+
+      if (!remoteVersion) {
+        throw new Error('Missing release version');
+      }
+
+      const hasUpdate = compareVersions(remoteVersion, currentVersion) > 0;
+      if (hasUpdate) {
+        if (shownUpdateVersionRef.current !== remoteVersion || manual) {
+          shownUpdateVersionRef.current = remoteVersion;
+          setUpdateNotice({ version: remoteVersion, url: releaseUrl });
+        }
+
+        return {
+          status: 'update-available',
+          message: t('update.available.message', lang).replace('{version}', remoteVersion),
+        };
+      }
+
+      return {
+        status: 'up-to-date',
+        message: t('update.none', lang),
+      };
+    } catch (error) {
+      console.warn('Update check failed:', error);
+      return {
+        status: 'error',
+        message: t('update.check_failed', lang),
+      };
+    }
+  }, [lang, settings.auto_check_updates]);
+
+  const handleManualUpdateCheck = useCallback(async (): Promise<UpdateCheckResult> => {
+    const result = await runUpdateCheck({ manual: true, force: true });
+    if (result.status !== 'update-available') {
+      setInfoMessage(result.message);
+    }
+    return result;
+  }, [runUpdateCheck]);
+
+  const handleOpenUpdateUrl = useCallback(async (url: string) => {
+    try {
+      await invoke('open_external_url', { url });
+    } catch (error) {
+      setInfoMessage(String(error));
+    }
+  }, []);
 
   useEffect(() => {
     loadSettings();
@@ -246,6 +373,21 @@ function App() {
     setIsStreaming,
     setShowDiff,
   ]);
+
+  useEffect(() => {
+    if (!settings.auto_check_updates) {
+      return;
+    }
+
+    void runUpdateCheck();
+    const intervalId = window.setInterval(() => {
+      void runUpdateCheck();
+    }, UPDATE_CHECK_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [runUpdateCheck, settings.auto_check_updates]);
 
   // Auto-scroll to bottom of logs
   useEffect(() => {
@@ -735,6 +877,45 @@ function App() {
             </div>
           )}
 
+          {updateNotice && (
+            <div className={`px-5 py-3 border-b flex items-start gap-3 animate-slide-up ${
+              isDarkMode
+                ? 'bg-sky-900/20 border-sky-800/40'
+                : 'bg-sky-50/90 border-sky-100'
+            }`}>
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                isDarkMode ? 'bg-sky-900/30' : 'bg-sky-100'
+              }`}>
+                <AlertCircle size={16} className={isDarkMode ? 'text-sky-300' : 'text-sky-700'} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className={`text-sm font-medium ${isDarkMode ? 'text-sky-200' : 'text-sky-900'}`}>
+                  {t('update.available', lang)}
+                </span>
+                <p className={`text-sm mt-0.5 break-words ${isDarkMode ? 'text-sky-300/90' : 'text-sky-800/90'}`}>
+                  {t('update.available.message', lang).replace('{version}', updateNotice.version)}
+                </p>
+                <button
+                  onClick={() => handleOpenUpdateUrl(updateNotice.url)}
+                  className={`btn-ghost !px-2.5 !py-1.5 !mt-2 !text-sm ${
+                    isDarkMode
+                      ? '!text-sky-300 hover:!bg-sky-900/30'
+                      : '!text-sky-700 hover:!bg-sky-100'
+                  }`}
+                >
+                  <ExternalLink size={14} />
+                  {t('update.download', lang)}
+                </button>
+              </div>
+              <button
+                onClick={() => setUpdateNotice(null)}
+                className="btn-ghost !p-1.5 !rounded-lg flex-shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
           {infoMessage && (
             <div className={`px-5 py-3 border-b flex items-start gap-3 animate-slide-up ${
               isDarkMode
@@ -788,6 +969,7 @@ function App() {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSave={handleSaveSettings}
+        onCheckUpdates={handleManualUpdateCheck}
         lang={lang}
         isDarkMode={isDarkMode}
       />

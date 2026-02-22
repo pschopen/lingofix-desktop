@@ -426,6 +426,42 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Riesig',
     en: 'Huge',
   },
+  'settings.auto_check_updates': {
+    de: 'Update-Prüfung',
+    en: 'Update checks',
+  },
+  'settings.auto_check_updates.hint': {
+    de: 'Beim Start und danach einmal täglich nach neuen Versionen suchen.',
+    en: 'Check for new versions at startup and then once per day.',
+  },
+  'settings.auto_check_updates.toggle': {
+    de: 'Automatisch nach Updates suchen',
+    en: 'Automatically check for updates',
+  },
+  'settings.check_updates': {
+    de: 'Auf Updates prüfen',
+    en: 'Check for updates',
+  },
+  'update.available': {
+    de: 'Neue Version verfügbar',
+    en: 'New version available',
+  },
+  'update.available.message': {
+    de: 'Version {version} ist verfügbar. Laden Sie das Update auf GitHub herunter.',
+    en: 'Version {version} is available. Download the update on GitHub.',
+  },
+  'update.download': {
+    de: 'Update herunterladen',
+    en: 'Download update',
+  },
+  'update.none': {
+    de: 'Keine neue Version verfügbar.',
+    en: 'No new version available.',
+  },
+  'update.check_failed': {
+    de: 'Update-Prüfung derzeit nicht möglich.',
+    en: 'Update check is currently unavailable.',
+  },
 };
 
 // Translate function

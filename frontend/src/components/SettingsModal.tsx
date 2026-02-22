@@ -9,6 +9,7 @@ interface SettingsModalProps {
   onClose: () => void;
   settings: Settings;
   onSave: (settings: Settings) => void;
+  onCheckUpdates: () => Promise<{ status: 'update-available' | 'up-to-date' | 'error'; message: string }>;
   lang: Language;
   isDarkMode?: boolean;
 }
@@ -46,6 +47,7 @@ export function SettingsModal({
   onClose,
   settings,
   onSave,
+  onCheckUpdates,
   lang,
   isDarkMode = false,
 }: SettingsModalProps) {
@@ -56,11 +58,14 @@ export function SettingsModal({
   const [modelError, setModelError] = useState<string>('');
   const [isCheckingCompareAccess, setIsCheckingCompareAccess] = useState(false);
   const [compareAccessStatus, setCompareAccessStatus] = useState<CompareAccessStatus | null>(null);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [updateCheckMessage, setUpdateCheckMessage] = useState('');
 
   useEffect(() => {
     if (isOpen) {
       setFormData(settings);
       setCompareAccessStatus(null);
+      setUpdateCheckMessage('');
     }
   }, [isOpen, settings]);
 
@@ -163,6 +168,19 @@ export function SettingsModal({
   const handleClose = () => {
     setModelError('');
     onClose();
+  };
+
+  const handleCheckUpdates = async () => {
+    setIsCheckingUpdates(true);
+    setUpdateCheckMessage('');
+    try {
+      const result = await onCheckUpdates();
+      setUpdateCheckMessage(result.message);
+    } catch (error) {
+      setUpdateCheckMessage(String(error));
+    } finally {
+      setIsCheckingUpdates(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -457,6 +475,35 @@ export function SettingsModal({
                     className={`textarea !text-base h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
                   />
                 </FieldGroup>
+
+                <div className={`pt-2 mt-1 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
+                  <FieldGroup
+                    label={t('settings.auto_check_updates', lang)}
+                    hint={t('settings.auto_check_updates.hint', lang)}
+                    isDarkMode={isDarkMode}
+                  >
+                    <ToggleRow
+                      label={t('settings.auto_check_updates.toggle', lang)}
+                      checked={formData.auto_check_updates}
+                      onChange={() => setFormData({ ...formData, auto_check_updates: !formData.auto_check_updates })}
+                      isDarkMode={isDarkMode}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCheckUpdates}
+                      disabled={isCheckingUpdates}
+                      className="btn-secondary !mt-2 !text-base"
+                    >
+                      {isCheckingUpdates ? <Loader2 className="animate-spin" size={14} /> : null}
+                      {t('settings.check_updates', lang)}
+                    </button>
+                    {updateCheckMessage && (
+                      <p className={`mt-2 text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
+                        {updateCheckMessage}
+                      </p>
+                    )}
+                  </FieldGroup>
+                </div>
               </>
             )}
           </div>

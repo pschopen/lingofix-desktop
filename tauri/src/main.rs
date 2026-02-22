@@ -43,6 +43,10 @@ fn default_batch_prompt() -> String {
         .to_string()
 }
 
+fn default_auto_check_updates() -> bool {
+    true
+}
+
 const KNOWN_PROVIDERS: [&str; 7] = [
     "openai",
     "ollama",
@@ -126,6 +130,8 @@ struct FrontendSettings {
     system_prompt: String,
     #[serde(default = "default_batch_prompt")]
     batch_prompt: String,
+    #[serde(default = "default_auto_check_updates")]
+    auto_check_updates: bool,
     temperature: f64,
     provider_keys: HashMap<String, Option<String>>,
     docx: DocxSettings,
@@ -155,6 +161,7 @@ impl Default for FrontendSettings {
             custom_prompt: default_custom_prompt(),
             system_prompt: default_system_prompt(),
             batch_prompt: default_batch_prompt(),
+            auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
             provider_keys: HashMap::new(),
             docx: DocxSettings::default(),
@@ -1691,6 +1698,40 @@ fn open_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|e| e.to_string())?;
+    let scheme = parsed.scheme().to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err("only http and https URLs are allowed".to_string());
+    }
+
+    let target = parsed.to_string();
+    if cfg!(target_os = "windows") {
+        std::process::Command::new("explorer")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    } else {
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
 fn get_file_size(path: String) -> Result<u64, String> {
     let safe_path = normalize_office_input_path(&path)
         .map_err(|e| e.to_string())?
@@ -1840,6 +1881,8 @@ fn main() {
             check_libreoffice_compare_access,
             inspect_docx_track_changes,
             open_folder,
+            open_external_url,
+            get_app_version,
             get_file_size,
             save_temp_docx
         ])

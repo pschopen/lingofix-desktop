@@ -20,6 +20,7 @@ export interface Settings {
   custom_prompt: string;
   system_prompt: string;
   batch_prompt: string;
+  auto_check_updates: boolean;
   temperature: number;
   provider_keys: Record<Provider, string | null>;
   docx: DocxSettings;
