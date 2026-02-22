@@ -1495,10 +1495,16 @@ fn current_sidecar_triple() -> &'static str {
     "x86_64-pc-windows-msvc"
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn current_sidecar_triple() -> &'static str {
+    "x86_64-unknown-linux-gnu"
+}
+
 #[cfg(not(any(
     all(target_os = "macos", target_arch = "aarch64"),
     all(target_os = "macos", target_arch = "x86_64"),
-    all(target_os = "windows", target_arch = "x86_64")
+    all(target_os = "windows", target_arch = "x86_64"),
+    all(target_os = "linux", target_arch = "x86_64")
 )))]
 fn current_sidecar_triple() -> &'static str {
     ""

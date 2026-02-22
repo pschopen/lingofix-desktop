@@ -33,9 +33,15 @@ const ridConfig = {
     targetName: 'lingofix-backend-x86_64-pc-windows-msvc.exe',
     executable: false,
   },
+  'linux-x64': {
+    rid: 'linux-x64',
+    sourceName: 'lingofix-backend',
+    targetName: 'lingofix-backend-x86_64-unknown-linux-gnu',
+    executable: true,
+  },
 };
 
-const defaultTargets = ['osx-arm64', 'osx-x64', 'win-x64'];
+const defaultTargets = ['osx-arm64', 'osx-x64', 'win-x64', 'linux-x64'];
 const targets = parseTargets(process.argv.slice(2));
 
 mkdirSync(tauriBinariesDir, { recursive: true });
