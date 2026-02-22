@@ -1926,8 +1926,54 @@ fn uuid_like() -> String {
     Uuid::new_v4().simple().to_string()
 }
 
+#[cfg(target_os = "linux")]
+fn apply_linux_graphics_workarounds() {
+    if let Ok(override_value) = std::env::var("LINGOFIX_LINUX_GRAPHICS_WORKAROUNDS") {
+        let normalized = override_value.trim().to_ascii_lowercase();
+        if normalized == "0" || normalized == "false" || normalized == "no" || normalized == "off" {
+            eprintln!("Lingofix Linux graphics workarounds disabled by env override");
+            return;
+        }
+    }
+
+    let session_type = std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".to_string());
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap_or_default();
+    let x11_display = std::env::var("DISPLAY").unwrap_or_default();
+
+    eprintln!(
+        "Lingofix Linux display env: session={}, WAYLAND_DISPLAY={}, DISPLAY={}",
+        session_type,
+        if wayland_display.is_empty() {
+            "<empty>"
+        } else {
+            "<set>"
+        },
+        if x11_display.is_empty() {
+            "<empty>"
+        } else {
+            "<set>"
+        }
+    );
+
+    if wayland_display.is_empty() && x11_display.is_empty() {
+        eprintln!(
+            "Lingofix warning: no WAYLAND_DISPLAY or DISPLAY is set; GUI startup may fail"
+        );
+    }
+
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
+}
+
 fn main() {
     clear_temp_lingofix_dir();
+
+    #[cfg(target_os = "linux")]
+    apply_linux_graphics_workarounds();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
