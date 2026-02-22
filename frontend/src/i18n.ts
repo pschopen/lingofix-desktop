@@ -211,8 +211,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Remove file',
   },
   'editor.docxHint': {
-    de: 'Klicken Sie auf "Korrigieren" um die DOCX-Datei zu korrigieren',
-    en: 'Click "Correct" to correct the DOCX file',
+    de: 'Klicken Sie auf "Korrigieren" um die DOCX/ODT-Datei zu korrigieren',
+    en: 'Click "Correct" to correct the DOCX/ODT file',
   },
   'editor.browse': {
     de: 'Oder klicken, um eine Datei auszuwählen',
@@ -223,12 +223,12 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Drop here',
   },
   'editor.dropDocx': {
-    de: 'DOCX-Datei hier ablegen',
-    en: 'Drop DOCX file here',
+    de: 'DOCX/ODT-Datei hier ablegen',
+    en: 'Drop DOCX/ODT file here',
   },
   'editor.dropDocxHint': {
-    de: 'Ziehen Sie eine .docx-Datei in diesen Bereich',
-    en: 'Drag a .docx file into this area',
+    de: 'Ziehen Sie eine .docx- oder .odt-Datei in diesen Bereich',
+    en: 'Drag a .docx or .odt file into this area',
   },
 
   // App.tsx - Docx

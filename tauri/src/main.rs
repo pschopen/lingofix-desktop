@@ -19,10 +19,11 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-const MAX_DOCX_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
+const MAX_OFFICE_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
 const BACKEND_API_KEY_ENV: &str = "LINGOFIX_RUNTIME_API_KEY";
 const BACKEND_KEEP_TEMP_ENV: &str = "LINGOFIX_KEEP_TEMP_ARTIFACTS";
 const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
+const SOFFICE_PATH_ENV: &str = "LINGOFIX_SOFFICE_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
@@ -63,6 +64,21 @@ fn normalize_provider(provider: &str) -> String {
         trimmed.to_ascii_lowercase()
     } else {
         "openai".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OfficeInputKind {
+    Docx,
+    Odt,
+}
+
+impl OfficeInputKind {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Docx => "docx",
+            Self::Odt => "odt",
+        }
     }
 }
 
@@ -302,7 +318,16 @@ fn resolve_provider_key(settings: &FrontendSettings) -> Option<String> {
         .filter(|v| !v.trim().is_empty())
 }
 
-fn normalize_docx_path(path: &str) -> anyhow::Result<PathBuf> {
+fn office_input_kind(path: &Path) -> Option<OfficeInputKind> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "docx" => Some(OfficeInputKind::Docx),
+        "odt" => Some(OfficeInputKind::Odt),
+        _ => None,
+    }
+}
+
+fn normalize_office_input_path(path: &str) -> anyhow::Result<(PathBuf, OfficeInputKind)> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("path is empty"));
@@ -317,15 +342,10 @@ fn normalize_docx_path(path: &str) -> anyhow::Result<PathBuf> {
         return Err(anyhow!("path is not a file"));
     }
 
-    let ext = canonical
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
-    if !ext.eq_ignore_ascii_case("docx") {
-        return Err(anyhow!("only .docx files are allowed"));
-    }
+    let kind = office_input_kind(&canonical)
+        .ok_or_else(|| anyhow!("only .docx and .odt files are allowed"))?;
 
-    Ok(canonical)
+    Ok((canonical, kind))
 }
 
 fn normalize_existing_path(path: &str) -> anyhow::Result<PathBuf> {
@@ -815,14 +835,36 @@ async fn correct_docx(
     accept_existing_track_changes: Option<bool>,
     settings: FrontendSettings,
 ) -> Result<(), String> {
-    let input_path = normalize_docx_path(&file_path).map_err(|e| e.to_string())?;
+    let (input_path, input_kind) = normalize_office_input_path(&file_path).map_err(|e| e.to_string())?;
     let input_path_str = input_path.to_string_lossy().to_string();
     let original_normalized = match original_path.as_deref() {
         Some(value) if !value.trim().is_empty() => {
-            Some(normalize_docx_path(value).map_err(|e| e.to_string())?.to_string_lossy().to_string())
+            Some(
+                normalize_office_input_path(value)
+                    .map_err(|e| e.to_string())?
+                    .0
+                    .to_string_lossy()
+                    .to_string(),
+            )
         }
         _ => None,
     };
+
+    let mut converted_docx_temp_path: Option<PathBuf> = None;
+    let backend_input_path = if input_kind == OfficeInputKind::Odt {
+        let converted = convert_office_file_to(
+            &input_path,
+            OfficeInputKind::Docx,
+            "ODT input conversion failed",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        converted_docx_temp_path = Some(converted.clone());
+        converted
+    } else {
+        input_path.clone()
+    };
+    let backend_input_path_str = backend_input_path.to_string_lossy().to_string();
 
     let mut effective_settings = settings;
     effective_settings.api_key = resolve_provider_key(&effective_settings);
@@ -841,12 +883,22 @@ async fn correct_docx(
     let result = run_docx_processor(
         &app,
         &cancel_flag,
+        &backend_input_path_str,
         &input_path_str,
+        input_kind,
         original_normalized.as_deref(),
         accept_existing_track_changes.unwrap_or(false),
         &effective_settings,
     )
     .await;
+
+    if let Some(path) = converted_docx_temp_path {
+        if let Some(parent) = path.parent() {
+            let _ = tokio::fs::remove_dir_all(parent).await;
+        } else {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+    }
 
     {
         let mut guard = state.docx.lock().await;
@@ -859,7 +911,9 @@ async fn correct_docx(
 async fn run_docx_processor(
     app: &AppHandle,
     cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
-    file_path: &str,
+    backend_input_path: &str,
+    source_input_path: &str,
+    source_kind: OfficeInputKind,
     original_path: Option<&str>,
     accept_existing_track_changes: bool,
     settings: &FrontendSettings,
@@ -884,7 +938,11 @@ async fn run_docx_processor(
     let run_result = async {
         let (mut cmd, launch_mode) = if let Some(backend_bin) = resolve_bundled_backend_executable(app) {
             let mut command = Command::new(&backend_bin);
-            command.arg("--input").arg(file_path).arg("--settings-path").arg(&settings_temp);
+            command
+                .arg("--input")
+                .arg(backend_input_path)
+                .arg("--settings-path")
+                .arg(&settings_temp);
             if accept_existing_track_changes {
                 command.arg("--accept-existing-track-changes");
             }
@@ -914,7 +972,7 @@ async fn run_docx_processor(
                 .arg(project)
                 .arg("--")
                 .arg("--input")
-                .arg(file_path)
+                .arg(backend_input_path)
                 .arg("--settings-path")
                 .arg(&settings_temp);
             if accept_existing_track_changes {
@@ -1034,8 +1092,47 @@ async fn run_docx_processor(
         }
 
         let mut final_output = output_path.ok_or_else(|| anyhow!("No output path from DOCX processor"))?;
-        if let Some(original) = original_path {
-            let input = PathBuf::from(file_path);
+
+        if source_kind == OfficeInputKind::Odt {
+            let output_suffix = Path::new(&final_output)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|stem| {
+                    if stem.ends_with("_corrected") {
+                        "_corrected"
+                    } else {
+                        "_lingofix"
+                    }
+                })
+                .unwrap_or("_lingofix");
+            let naming_source = original_path.unwrap_or(source_input_path);
+            let target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Odt)?;
+            match convert_docx_to_odt(Path::new(&final_output), &target).await {
+                Ok(()) => {
+                    final_output = target.to_string_lossy().to_string();
+                }
+                Err(conversion_error) => {
+                    let fallback_docx_target = build_output_path(
+                        Path::new(naming_source),
+                        output_suffix,
+                        OfficeInputKind::Docx,
+                    )?;
+                    tokio::fs::copy(&final_output, &fallback_docx_target).await?;
+                    final_output = fallback_docx_target.to_string_lossy().to_string();
+                    let _ = app.emit(
+                        "docx_log",
+                        json!({
+                            "level": "warning",
+                            "message": format!(
+                                "ODT re-conversion failed; returning DOCX fallback: {}",
+                                conversion_error
+                            )
+                        }),
+                    );
+                }
+            }
+        } else if let Some(original) = original_path {
+            let input = PathBuf::from(source_input_path);
             let temp_base = std::env::temp_dir().join("Lingofix").join("uploads");
             if input.starts_with(temp_base) && Path::new(original).exists() {
                 let output_suffix = Path::new(&final_output)
@@ -1043,10 +1140,10 @@ async fn run_docx_processor(
                     .and_then(|s| s.to_str())
                     .map(|stem| if stem.ends_with("_corrected") { "_corrected" } else { "_lingofix" })
                     .unwrap_or("_lingofix");
-                let target = build_output_path(Path::new(original), output_suffix)?;
+                let target = build_output_path(Path::new(original), output_suffix, OfficeInputKind::Docx)?;
                 tokio::fs::copy(&final_output, &target).await?;
                 let _ = tokio::fs::remove_file(&final_output).await;
-                let _ = tokio::fs::remove_file(file_path).await;
+                let _ = tokio::fs::remove_file(backend_input_path).await;
                 final_output = target.to_string_lossy().to_string();
             }
         }
@@ -1069,11 +1166,34 @@ async fn run_docx_processor(
 
 #[tauri::command]
 async fn inspect_docx_track_changes(app: AppHandle, file_path: String) -> Result<DocxTrackChangesInspection, String> {
-    let input_path = normalize_docx_path(&file_path).map_err(|e| e.to_string())?;
-    let input_path_str = input_path.to_string_lossy().to_string();
+    let (input_path, input_kind) = normalize_office_input_path(&file_path).map_err(|e| e.to_string())?;
+    let mut converted_docx_temp_path: Option<PathBuf> = None;
+    let backend_input_path = if input_kind == OfficeInputKind::Odt {
+        let converted = convert_office_file_to(
+            &input_path,
+            OfficeInputKind::Docx,
+            "ODT input conversion for track-changes inspection failed",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        converted_docx_temp_path = Some(converted.clone());
+        converted
+    } else {
+        input_path
+    };
+
+    let input_path_str = backend_input_path.to_string_lossy().to_string();
     let has_track_changes = inspect_docx_track_changes_via_backend(&app, &input_path_str)
         .await
         .map_err(|e| e.to_string())?;
+
+    if let Some(path) = converted_docx_temp_path {
+        if let Some(parent) = path.parent() {
+            let _ = tokio::fs::remove_dir_all(parent).await;
+        } else {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+    }
 
     Ok(DocxTrackChangesInspection { has_track_changes })
 }
@@ -1217,6 +1337,124 @@ fn resolve_dotnet_path() -> Option<PathBuf> {
     ];
 
     candidates.into_iter().find(|path| path.is_file())
+}
+
+fn resolve_soffice_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(from_env) = std::env::var(SOFFICE_PATH_ENV)
+        .ok()
+        .map(|v| PathBuf::from(v.trim()))
+        .filter(|v| !v.as_os_str().is_empty())
+    {
+        candidates.push(from_env);
+    }
+
+    if cfg!(target_os = "macos") {
+        candidates.push(PathBuf::from("/Applications/LibreOffice.app/Contents/MacOS/soffice"));
+    }
+
+    if cfg!(target_os = "windows") {
+        candidates.push(PathBuf::from("C:/Program Files/LibreOffice/program/soffice.exe"));
+        candidates.push(PathBuf::from("C:/Program Files (x86)/LibreOffice/program/soffice.exe"));
+        candidates.push(PathBuf::from("soffice.exe"));
+    } else {
+        candidates.push(PathBuf::from("/usr/bin/soffice"));
+        candidates.push(PathBuf::from("/usr/local/bin/soffice"));
+        candidates.push(PathBuf::from("soffice"));
+    }
+
+    candidates
+}
+
+async fn convert_office_file_to(
+    input_path: &Path,
+    target_kind: OfficeInputKind,
+    error_prefix: &str,
+) -> anyhow::Result<PathBuf> {
+    const SOFFICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+    let input_kind = office_input_kind(input_path)
+        .ok_or_else(|| anyhow!("unsupported input file extension"))?;
+    if input_kind == target_kind {
+        return Ok(input_path.to_path_buf());
+    }
+
+    let stem = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow!("invalid input filename"))?;
+
+    let conversion_dir = std::env::temp_dir()
+        .join("Lingofix")
+        .join("conversions")
+        .join(uuid_like());
+    tokio::fs::create_dir_all(&conversion_dir).await?;
+
+    let staged_input = conversion_dir.join(format!("source.{}", input_kind.extension()));
+    tokio::fs::copy(input_path, &staged_input).await?;
+
+    let mut failures = Vec::new();
+    for candidate in resolve_soffice_candidates() {
+        let mut cmd = Command::new(&candidate);
+        cmd.arg("--headless")
+            .arg("--convert-to")
+            .arg(target_kind.extension())
+            .arg("--outdir")
+            .arg(&conversion_dir)
+            .arg(&staged_input)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let output = match tokio::time::timeout(SOFFICE_TIMEOUT, cmd.output()).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(err)) => {
+                failures.push(format!("{}: {}", candidate.display(), err));
+                continue;
+            }
+            Err(_) => {
+                failures.push(format!("{}: timed out", candidate.display()));
+                continue;
+            }
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let converted_staged = conversion_dir.join(format!("source.{}", target_kind.extension()));
+
+        if output.status.success() && converted_staged.exists() {
+            let converted_output = conversion_dir.join(format!("{stem}.{}", target_kind.extension()));
+            tokio::fs::copy(&converted_staged, &converted_output).await?;
+            let _ = tokio::fs::remove_file(&converted_staged).await;
+            return Ok(converted_output);
+        }
+
+        let mut reason = format!("{}: exit status {}", candidate.display(), output.status);
+        if !stderr.is_empty() {
+            reason.push_str(&format!("; stderr: {stderr}"));
+        }
+        if !stdout.is_empty() {
+            reason.push_str(&format!("; stdout: {stdout}"));
+        }
+        failures.push(reason);
+    }
+
+    let details = failures.join("\n");
+    Err(anyhow!(
+        "{error_prefix}. LibreOffice (soffice) was not found or failed to convert this file.\nInstall LibreOffice and ensure `soffice` is available in PATH or set `{SOFFICE_PATH_ENV}`.\n\nDetails:\n{details}"
+    ))
+}
+
+async fn convert_docx_to_odt(input_docx: &Path, output_odt: &Path) -> anyhow::Result<()> {
+    let converted = convert_office_file_to(input_docx, OfficeInputKind::Odt, "ODT output conversion failed").await?;
+    if let Some(parent) = output_odt.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::copy(&converted, output_odt).await?;
+    if let Some(parent) = converted.parent() {
+        let _ = tokio::fs::remove_dir_all(parent).await;
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -1376,7 +1614,9 @@ fn open_folder(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn get_file_size(path: String) -> Result<u64, String> {
-    let safe_path = normalize_docx_path(&path).map_err(|e| e.to_string())?;
+    let safe_path = normalize_office_input_path(&path)
+        .map_err(|e| e.to_string())?
+        .0;
     let meta = std::fs::metadata(safe_path).map_err(|e| e.to_string())?;
     Ok(meta.len())
 }
@@ -1387,10 +1627,10 @@ async fn save_temp_docx(name: String, base64: String) -> Result<String, String> 
     if bytes.is_empty() {
         return Err("file payload is empty".to_string());
     }
-    if bytes.len() > MAX_DOCX_UPLOAD_BYTES {
+    if bytes.len() > MAX_OFFICE_UPLOAD_BYTES {
         return Err(format!(
             "file too large (max {} MB)",
-            MAX_DOCX_UPLOAD_BYTES / (1024 * 1024)
+            MAX_OFFICE_UPLOAD_BYTES / (1024 * 1024)
         ));
     }
 
@@ -1398,8 +1638,9 @@ async fn save_temp_docx(name: String, base64: String) -> Result<String, String> 
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("document.docx");
-    if !safe_name.to_ascii_lowercase().ends_with(".docx") {
-        return Err("only .docx uploads are allowed".to_string());
+    let lower_name = safe_name.to_ascii_lowercase();
+    if !(lower_name.ends_with(".docx") || lower_name.ends_with(".odt")) {
+        return Err("only .docx and .odt uploads are allowed".to_string());
     }
 
     let dir = std::env::temp_dir().join("Lingofix").join("uploads");
@@ -1443,13 +1684,13 @@ fn remove_markdown(text: &str) -> String {
     result.trim().to_string()
 }
 
-fn build_output_path(input: &Path, suffix: &str) -> anyhow::Result<PathBuf> {
+fn build_output_path(input: &Path, suffix: &str, extension: OfficeInputKind) -> anyhow::Result<PathBuf> {
     let stem = input
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| anyhow!("invalid input filename"))?;
     let parent = input.parent().ok_or_else(|| anyhow!("invalid input parent"))?;
-    Ok(parent.join(format!("{stem}{suffix}.docx")))
+    Ok(parent.join(format!("{stem}{suffix}.{}", extension.extension())))
 }
 
 fn workspace_root() -> anyhow::Result<PathBuf> {
