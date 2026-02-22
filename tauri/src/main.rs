@@ -1102,6 +1102,7 @@ async fn run_docx_processor(
         let mut final_output = output_path.ok_or_else(|| anyhow!("No output path from DOCX processor"))?;
 
         if source_kind == OfficeInputKind::Odt {
+            let is_diff_engine_mode = settings.docx.compare_mode.eq_ignore_ascii_case("diff-engine");
             let output_suffix = Path::new(&final_output)
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -1114,29 +1115,42 @@ async fn run_docx_processor(
                 })
                 .unwrap_or("_lingofix");
             let naming_source = original_path.unwrap_or(source_input_path);
-            let target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Odt)?;
-            match convert_docx_to_odt(Path::new(&final_output), &target).await {
-                Ok(()) => {
-                    final_output = target.to_string_lossy().to_string();
-                }
-                Err(conversion_error) => {
-                    let fallback_docx_target = build_output_path(
-                        Path::new(naming_source),
-                        output_suffix,
-                        OfficeInputKind::Docx,
-                    )?;
-                    tokio::fs::copy(&final_output, &fallback_docx_target).await?;
-                    final_output = fallback_docx_target.to_string_lossy().to_string();
-                    let _ = app.emit(
-                        "docx_log",
-                        json!({
-                            "level": "warning",
-                            "message": format!(
-                                "ODT re-conversion failed; returning DOCX fallback: {}",
-                                conversion_error
-                            )
-                        }),
-                    );
+            if is_diff_engine_mode {
+                let docx_target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Docx)?;
+                tokio::fs::copy(&final_output, &docx_target).await?;
+                final_output = docx_target.to_string_lossy().to_string();
+                let _ = app.emit(
+                    "docx_log",
+                    json!({
+                        "level": "warning",
+                        "message": "ODT re-conversion skipped for diff-engine mode; returning DOCX output for validation."
+                    }),
+                );
+            } else {
+                let target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Odt)?;
+                match convert_docx_to_odt(Path::new(&final_output), &target).await {
+                    Ok(()) => {
+                        final_output = target.to_string_lossy().to_string();
+                    }
+                    Err(conversion_error) => {
+                        let fallback_docx_target = build_output_path(
+                            Path::new(naming_source),
+                            output_suffix,
+                            OfficeInputKind::Docx,
+                        )?;
+                        tokio::fs::copy(&final_output, &fallback_docx_target).await?;
+                        final_output = fallback_docx_target.to_string_lossy().to_string();
+                        let _ = app.emit(
+                            "docx_log",
+                            json!({
+                                "level": "warning",
+                                "message": format!(
+                                    "ODT re-conversion failed; returning DOCX fallback: {}",
+                                    conversion_error
+                                )
+                            }),
+                        );
+                    }
                 }
             }
         } else if let Some(original) = original_path {
