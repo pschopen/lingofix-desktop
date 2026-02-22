@@ -21,6 +21,7 @@ const DEFAULT_DOCX_SETTINGS = {
 const DEFAULT_PROMPT_EN = 'Correct the following text while maintaining the style and tone.';
 const DEFAULT_SYSTEM_PROMPT_EN = 'Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.';
 const DEFAULT_BATCH_PROMPT_EN = 'Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.';
+const DOCX_COMPARE_FALLBACK_MANUAL_HINT = 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.';
 
 function App() {
   const [lang] = useState(detectLanguage());
@@ -413,6 +414,13 @@ function App() {
     });
   };
 
+  const localizeDocxLogMessage = useCallback((message: string) => {
+    if (message === DOCX_COMPARE_FALLBACK_MANUAL_HINT) {
+      return t('docx.logs.compare_fallback_manual_hint', lang);
+    }
+    return message;
+  }, [lang]);
+
   return (
     <div className={`h-screen flex flex-col transition-colors duration-200 ${isDarkMode ? 'bg-surface-900 text-surface-50' : 'bg-surface-50 text-surface-900'}`}>
       {/* === Header === */}
@@ -648,7 +656,7 @@ function App() {
                     }`}>
                       {log.level}
                     </span>
-                    <span className="break-all">{log.message}</span>
+                    <span className="break-all">{localizeDocxLogMessage(log.message)}</span>
                   </div>
                 ))}
                 <div ref={logsEndRef} />

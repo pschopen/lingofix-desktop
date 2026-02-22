@@ -276,6 +276,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Noch keine Logs.',
     en: 'No logs yet.',
   },
+  'docx.logs.compare_fallback_manual_hint': {
+    de: 'Korrigierte Datei ohne Track Changes bereitgestellt. Sie koennen den Vergleich manuell in Ihrer Office-Anwendung durchfuehren.',
+    en: 'Returned corrected file without track changes. You can run the comparison manually in your office application.',
+  },
   'docx.cancelled': {
     de: 'DOCX-Verarbeitung wurde gestoppt.',
     en: 'DOCX processing was stopped.',

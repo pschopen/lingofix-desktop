@@ -246,7 +246,7 @@ public static class LingofixRunner
             catch (Exception ex) when (isExternalCompare)
             {
                 logger.Error($"{compareMode} comparison failed: {ex.Message}");
-                logger.Info("Returning corrected file without generated track changes.");
+                logger.Info("Returning corrected file without generated track changes. You can run the document comparison manually in your office application.");
             }
             catch (Exception ex)
             {
