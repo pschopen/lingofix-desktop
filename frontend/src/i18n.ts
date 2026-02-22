@@ -446,6 +446,26 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Auf Updates prüfen',
     en: 'Check for updates',
   },
+  'settings.system_paths': {
+    de: 'Systempfade',
+    en: 'System paths',
+  },
+  'settings.system_paths.hint': {
+    de: 'Temp-Ordner und settings.json direkt im Dateiexplorer öffnen.',
+    en: 'Open the temp folder and settings.json directly in your file explorer.',
+  },
+  'settings.system_paths.temp_folder': {
+    de: 'Temp-Ordner öffnen',
+    en: 'Open temp folder',
+  },
+  'settings.system_paths.settings_json': {
+    de: 'settings.json öffnen',
+    en: 'Open settings.json',
+  },
+  'settings.system_paths.open_failed': {
+    de: 'Konnte Pfad nicht öffnen',
+    en: 'Could not open path',
+  },
   'update.available': {
     de: 'Neue Version verfügbar',
     en: 'New version available',

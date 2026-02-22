@@ -1711,6 +1711,58 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+fn open_path_in_system_explorer(path: &Path, reveal_file: bool) -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        let mut command = std::process::Command::new("explorer");
+        if reveal_file {
+            command.arg("/select,").arg(path);
+        } else {
+            command.arg(path);
+        }
+        command.spawn().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    if cfg!(target_os = "macos") {
+        let mut command = std::process::Command::new("open");
+        if reveal_file {
+            command.arg("-R");
+        }
+        command.arg(path).spawn().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let target = if reveal_file {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    std::process::Command::new("xdg-open")
+        .arg(target)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_temp_lingofix_folder() -> Result<(), String> {
+    let temp_dir = std::env::temp_dir().join("Lingofix");
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+    open_path_in_system_explorer(&temp_dir, false)
+}
+
+#[tauri::command]
+fn open_settings_json(app: AppHandle) -> Result<(), String> {
+    let settings = settings_path(&app).map_err(|e| e.to_string())?;
+    if !settings.exists() {
+        let defaults = encrypt_settings_secrets(sanitize_settings_for_disk(FrontendSettings::default()));
+        let content = serde_json::to_string_pretty(&defaults).map_err(|e| e.to_string())?;
+        std::fs::write(&settings, content).map_err(|e| e.to_string())?;
+    }
+
+    open_path_in_system_explorer(&settings, true)
+}
+
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     let parsed = reqwest::Url::parse(url.trim()).map_err(|e| e.to_string())?;
@@ -1895,6 +1947,8 @@ fn main() {
             check_libreoffice_compare_access,
             inspect_docx_track_changes,
             open_folder,
+            open_temp_lingofix_folder,
+            open_settings_json,
             open_external_url,
             get_app_version,
             get_file_size,

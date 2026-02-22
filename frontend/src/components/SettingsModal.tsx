@@ -60,12 +60,14 @@ export function SettingsModal({
   const [compareAccessStatus, setCompareAccessStatus] = useState<CompareAccessStatus | null>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updateCheckMessage, setUpdateCheckMessage] = useState('');
+  const [systemPathMessage, setSystemPathMessage] = useState('');
 
   useEffect(() => {
     if (isOpen) {
       setFormData(settings);
       setCompareAccessStatus(null);
       setUpdateCheckMessage('');
+      setSystemPathMessage('');
     }
   }, [isOpen, settings]);
 
@@ -180,6 +182,24 @@ export function SettingsModal({
       setUpdateCheckMessage(String(error));
     } finally {
       setIsCheckingUpdates(false);
+    }
+  };
+
+  const handleOpenTempFolder = async () => {
+    setSystemPathMessage('');
+    try {
+      await invoke('open_temp_lingofix_folder');
+    } catch (error) {
+      setSystemPathMessage(`${t('settings.system_paths.open_failed', lang)}: ${error}`);
+    }
+  };
+
+  const handleOpenSettingsJson = async () => {
+    setSystemPathMessage('');
+    try {
+      await invoke('open_settings_json');
+    } catch (error) {
+      setSystemPathMessage(`${t('settings.system_paths.open_failed', lang)}: ${error}`);
     }
   };
 
@@ -508,6 +528,36 @@ export function SettingsModal({
                     {updateCheckMessage && (
                       <p className={`mt-2 text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
                         {updateCheckMessage}
+                      </p>
+                    )}
+                  </FieldGroup>
+                </div>
+
+                <div className={`pt-2 mt-1 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
+                  <FieldGroup
+                    label={t('settings.system_paths', lang)}
+                    hint={t('settings.system_paths.hint', lang)}
+                    isDarkMode={isDarkMode}
+                  >
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleOpenTempFolder}
+                        className="btn-secondary !text-base"
+                      >
+                        {t('settings.system_paths.temp_folder', lang)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenSettingsJson}
+                        className="btn-secondary !text-base"
+                      >
+                        {t('settings.system_paths.settings_json', lang)}
+                      </button>
+                    </div>
+                    {systemPathMessage && (
+                      <p className="mt-2 text-sm text-amber-600">
+                        {systemPathMessage}
                       </p>
                     )}
                   </FieldGroup>
