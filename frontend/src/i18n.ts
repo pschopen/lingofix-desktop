@@ -341,8 +341,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'LibreOffice UNO (native, soffice)',
   },
   'settings.docx.openxml.warning': {
-    de: 'OpenXML bietet keine volle Kompatibilitaet fuer ODT-Dateien. Bei ODT koennen Track Changes in LibreOffice unvollstaendig angezeigt oder verloren gehen.',
-    en: 'OpenXML does not provide full compatibility for ODT files. For ODT, tracked changes may appear incomplete or be lost in LibreOffice.',
+    de: 'OpenXML bietet keine odt.-Kompatibilität. Auch bei docx.-Dateien kann es zu Veränderungen im Layout kommen. Word wird für docx.-Dateien, LibreOffice für odt.-Dateien empfohlen.',
+    en: 'OpenXML does not offer odt compatibility. Even with docx files, there may be changes in layout. Word is recommended for docx files, LibreOffice for odt files.',
   },
   'settings.docx.word_check.hint': {
     de: 'Prüfen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen für diesen Modus setzen kann.',
