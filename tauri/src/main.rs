@@ -122,6 +122,12 @@ struct WordCompareAccessStatus {
     details: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DocxTrackChangesInspection {
+    has_track_changes: bool,
+}
+
 impl Default for FrontendSettings {
     fn default() -> Self {
         Self {
@@ -806,6 +812,7 @@ async fn correct_docx(
     state: State<'_, CancellationState>,
     file_path: String,
     original_path: Option<String>,
+    accept_existing_track_changes: Option<bool>,
     settings: FrontendSettings,
 ) -> Result<(), String> {
     let input_path = normalize_docx_path(&file_path).map_err(|e| e.to_string())?;
@@ -836,6 +843,7 @@ async fn correct_docx(
         &cancel_flag,
         &input_path_str,
         original_normalized.as_deref(),
+        accept_existing_track_changes.unwrap_or(false),
         &effective_settings,
     )
     .await;
@@ -853,6 +861,7 @@ async fn run_docx_processor(
     cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
     file_path: &str,
     original_path: Option<&str>,
+    accept_existing_track_changes: bool,
     settings: &FrontendSettings,
 ) -> anyhow::Result<()> {
     const DOCX_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3 * 60 * 60);
@@ -876,6 +885,9 @@ async fn run_docx_processor(
         let (mut cmd, launch_mode) = if let Some(backend_bin) = resolve_bundled_backend_executable(app) {
             let mut command = Command::new(&backend_bin);
             command.arg("--input").arg(file_path).arg("--settings-path").arg(&settings_temp);
+            if accept_existing_track_changes {
+                command.arg("--accept-existing-track-changes");
+            }
             if let Some(parent) = backend_bin.parent() {
                 command.current_dir(parent);
             }
@@ -905,6 +917,9 @@ async fn run_docx_processor(
                 .arg(file_path)
                 .arg("--settings-path")
                 .arg(&settings_temp);
+            if accept_existing_track_changes {
+                command.arg("--accept-existing-track-changes");
+            }
             (command, launch)
         };
 
@@ -1050,6 +1065,105 @@ async fn run_docx_processor(
 
     let _ = tokio::fs::remove_file(&settings_temp).await;
     run_result
+}
+
+#[tauri::command]
+async fn inspect_docx_track_changes(app: AppHandle, file_path: String) -> Result<DocxTrackChangesInspection, String> {
+    let input_path = normalize_docx_path(&file_path).map_err(|e| e.to_string())?;
+    let input_path_str = input_path.to_string_lossy().to_string();
+    let has_track_changes = inspect_docx_track_changes_via_backend(&app, &input_path_str)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(DocxTrackChangesInspection { has_track_changes })
+}
+
+async fn inspect_docx_track_changes_via_backend(app: &AppHandle, file_path: &str) -> anyhow::Result<bool> {
+    const INSPECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+    let (mut cmd, launch_mode) = if let Some(backend_bin) = resolve_bundled_backend_executable(app) {
+        let mut command = Command::new(&backend_bin);
+        command
+            .arg("--input")
+            .arg(file_path)
+            .arg("--inspect-track-changes");
+        if let Some(parent) = backend_bin.parent() {
+            command.current_dir(parent);
+        }
+        (
+            command,
+            format!("bundled backend executable ({})", backend_bin.display()),
+        )
+    } else {
+        let project = workspace_root()?.join("backend").join("Lingofix.Backend.csproj");
+        let dotnet = resolve_dotnet_path();
+        let dotnet_cmd = dotnet
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("dotnet"));
+        let launch = if let Some(path) = dotnet {
+            format!("dotnet run via {}", path.display())
+        } else {
+            "dotnet run via PATH".to_string()
+        };
+
+        let mut command = Command::new(dotnet_cmd);
+        command
+            .arg("run")
+            .arg("--project")
+            .arg(project)
+            .arg("--")
+            .arg("--input")
+            .arg(file_path)
+            .arg("--inspect-track-changes");
+        (command, launch)
+    };
+
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = tokio::time::timeout(INSPECT_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| anyhow!("DOCX inspection timed out"))?
+        .with_context(|| format!("failed to start DOCX inspector ({launch_mode})"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        let message = combine_backend_error("DOCX track-changes inspection failed", &stderr);
+        return Err(anyhow!(message));
+    }
+
+    for line in stdout.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            if value
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                == "track_changes_inspection"
+            {
+                let has_track_changes = value
+                    .get("hasTrackChanges")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                return Ok(has_track_changes);
+            }
+        }
+    }
+
+    Err(anyhow!("DOCX inspector returned no track-changes result"))
 }
 
 fn resolve_bundled_backend_executable(app: &AppHandle) -> Option<PathBuf> {
@@ -1404,6 +1518,7 @@ fn main() {
             correct_docx,
             cancel_docx,
             check_word_compare_access,
+            inspect_docx_track_changes,
             open_folder,
             get_file_size,
             save_temp_docx

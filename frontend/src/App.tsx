@@ -25,6 +25,7 @@ const DEFAULT_BATCH_PROMPT_EN = 'Correct only the text inside the tags. Return t
 function App() {
   const [lang] = useState(detectLanguage());
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [showDiffModeConsent, setShowDiffModeConsent] = useState(false);
   const {
     text,
     setText,
@@ -264,29 +265,55 @@ function App() {
 
   const handleDocxFile = useCallback((file: { name: string; path: string; size: number; originalPath?: string } | null) => {
     setDocxSelection(file);
+    setShowDiffModeConsent(false);
   }, [setDocxSelection]);
+
+  const startDocxCorrection = useCallback(async (acceptExistingTrackChanges: boolean) => {
+    if (!docxFile?.path) {
+      return;
+    }
+
+    setIsCorrecting(true);
+    setDocxProgress({ percent: 0, message: t('docx.processing', lang) });
+    resetDocxRunState();
+    setError(null);
+    setInfoMessage(null);
+
+    try {
+      await invoke('correct_docx', {
+        filePath: docxFile.path,
+        originalPath: docxFile.originalPath,
+        acceptExistingTrackChanges,
+        settings,
+      });
+    } catch (error) {
+      console.error('DOCX correction failed:', error);
+      setError(String(error));
+      setIsCorrecting(false);
+      setDocxProgress(null);
+    }
+  }, [docxFile, lang, resetDocxRunState, setDocxProgress, setError, setInfoMessage, setIsCorrecting, settings]);
 
   const handleCorrect = useCallback(async () => {
     if (docxFile) {
       if (!docxFile.path) return;
-      
-      setIsCorrecting(true);
-      setDocxProgress({ percent: 0, message: t('docx.processing', lang) });
-      resetDocxRunState();
-      setError(null);
-      setInfoMessage(null);
-      
+
       try {
-        await invoke('correct_docx', {
-          filePath: docxFile.path,
-          originalPath: docxFile.originalPath,
-          settings,
-        });
+        if (settings.docx.compare_mode === 'diff-engine') {
+          const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
+            filePath: docxFile.path,
+          });
+
+          if (inspection.hasTrackChanges) {
+            setShowDiffModeConsent(true);
+            return;
+          }
+        }
+
+        await startDocxCorrection(false);
       } catch (error) {
-        console.error('DOCX correction failed:', error);
+        console.error('DOCX pre-check failed:', error);
         setError(String(error));
-        setIsCorrecting(false);
-        setDocxProgress(null);
       }
       return;
     }
@@ -314,20 +341,29 @@ function App() {
   }, [
     docxFile,
     lang,
-    resetDocxRunState,
-    setDocxProgress,
     setError,
     setInfoMessage,
-    setIsCorrecting,
     setIsStreaming,
     setShowDiff,
     settings,
+    startDocxCorrection,
     text,
   ]);
+
+  const handleDiffModeConsentContinue = useCallback(async () => {
+    setShowDiffModeConsent(false);
+    await startDocxCorrection(true);
+  }, [startDocxCorrection]);
+
+  const handleDiffModeConsentCancel = useCallback(() => {
+    setShowDiffModeConsent(false);
+    setInfoMessage(t('docx.diff_mode.accept_existing.cancelled', lang));
+  }, [lang]);
 
   const handleNew = () => {
     clearAll();
     setDocxSelection(null);
+    setShowDiffModeConsent(false);
   };
 
   const handleReject = () => {
@@ -747,6 +783,51 @@ function App() {
         lang={lang}
         isDarkMode={isDarkMode}
       />
+
+      {/* === Diff Mode Consent Modal === */}
+      {showDiffModeConsent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
+          <div className={`card w-full max-w-xl mx-4 animate-scale-in ${
+            isDarkMode ? '!bg-surface-800 !border-surface-700' : ''
+          }`}>
+            <div className="flex items-start gap-4 p-6">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                isDarkMode ? 'bg-amber-900/30' : 'bg-amber-50'
+              }`}>
+                <AlertTriangle className={`w-5 h-5 ${isDarkMode ? 'text-amber-300' : 'text-amber-600'}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
+                  {t('docx.diff_mode.accept_existing.title', lang)}
+                </h3>
+                <p className={`mt-2 text-sm whitespace-pre-wrap leading-relaxed ${
+                  isDarkMode ? 'text-surface-300' : 'text-surface-600'
+                }`}>
+                  {t('docx.diff_mode.accept_existing.message', lang)}
+                </p>
+              </div>
+            </div>
+            <div className={`px-6 py-4 border-t rounded-b-2xl flex justify-end gap-2 ${
+              isDarkMode
+                ? 'bg-surface-900/50 border-surface-700'
+                : 'bg-surface-50 border-surface-100'
+            }`}>
+              <button
+                onClick={handleDiffModeConsentCancel}
+                className="btn-secondary !text-base"
+              >
+                {t('docx.diff_mode.accept_existing.cancel', lang)}
+              </button>
+              <button
+                onClick={handleDiffModeConsentContinue}
+                className="btn-primary !text-base"
+              >
+                {t('docx.diff_mode.accept_existing.continue', lang)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* === Error Modal === */}
       {error && (

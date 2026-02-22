@@ -8,6 +8,67 @@ namespace Lingofix.Backend.Documents;
 public static class TrackChangesGenerator
 {
     private static readonly TimeSpan ExternalCompareTimeout = TimeSpan.FromMinutes(20);
+    private const string WordprocessingNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    private static readonly HashSet<string> RemoveRevisionElements = new(StringComparer.Ordinal)
+    {
+        "del",
+        "delText",
+        "moveFrom",
+        "moveFromRun",
+        "moveFromRangeStart",
+        "moveFromRangeEnd"
+    };
+
+    private static readonly HashSet<string> UnwrapRevisionElements = new(StringComparer.Ordinal)
+    {
+        "ins",
+        "moveTo",
+        "moveToRun"
+    };
+
+    private static readonly HashSet<string> PropertyChangeElements = new(StringComparer.Ordinal)
+    {
+        "rPrChange",
+        "pPrChange",
+        "tblPrChange",
+        "trPrChange",
+        "tcPrChange",
+        "sectPrChange",
+        "numPrChange"
+    };
+
+    private static readonly HashSet<string> RevisionMarkerElements = new(StringComparer.Ordinal)
+    {
+        "ins",
+        "del",
+        "delText",
+        "moveFrom",
+        "moveTo",
+        "moveFromRangeStart",
+        "moveFromRangeEnd",
+        "moveToRangeStart",
+        "moveToRangeEnd",
+        "rPrChange",
+        "pPrChange",
+        "tblPrChange",
+        "trPrChange",
+        "tcPrChange",
+        "sectPrChange",
+        "numPrChange"
+    };
+
+    public static bool ContainsTrackedChanges(string documentPath)
+    {
+        using var doc = WordprocessingDocument.Open(documentPath, false);
+        return ContainsTrackedChanges(doc);
+    }
+
+    public static void AcceptAllTrackedChanges(string documentPath)
+    {
+        using var doc = WordprocessingDocument.Open(documentPath, true);
+        AcceptAllTrackedChanges(doc);
+        doc.Save();
+    }
 
     public static void GenerateParagraphCompare(string originalPath, string correctedPath, string outputPath, string author)
     {
@@ -111,6 +172,79 @@ public static class TrackChangesGenerator
 
         settings.AppendChild(new TrackRevisions());
         settings.Save();
+    }
+
+    private static bool ContainsTrackedChanges(WordprocessingDocument doc)
+    {
+        foreach (var root in EnumerateRevisionRoots(doc))
+        {
+            if (root.Descendants<TrackChangeType>().Any())
+            {
+                return true;
+            }
+
+            if (root.Descendants().Any(IsTrackedChangeElement))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void AcceptAllTrackedChanges(WordprocessingDocument doc)
+    {
+        foreach (var root in EnumerateRevisionRoots(doc))
+        {
+            AcceptTrackedChangesInSubtree(root);
+        }
+    }
+
+    private static void AcceptTrackedChangesInSubtree(OpenXmlElement root)
+    {
+        foreach (var child in root.ChildElements.ToList())
+        {
+            AcceptTrackedChangesInSubtree(child);
+        }
+
+        if (!IsWordprocessingElement(root))
+        {
+            return;
+        }
+
+        if (PropertyChangeElements.Contains(root.LocalName))
+        {
+            root.Remove();
+            return;
+        }
+
+        if (RemoveRevisionElements.Contains(root.LocalName))
+        {
+            root.Remove();
+            return;
+        }
+
+        if (UnwrapRevisionElements.Contains(root.LocalName))
+        {
+            var children = root.ChildElements.ToList();
+            foreach (var child in children)
+            {
+                child.Remove();
+                root.InsertBeforeSelf(child);
+            }
+
+            root.Remove();
+        }
+    }
+
+    private static bool IsTrackedChangeElement(OpenXmlElement element)
+    {
+        return IsWordprocessingElement(element) && RevisionMarkerElements.Contains(element.LocalName);
+    }
+
+    private static bool IsWordprocessingElement(OpenXmlElement element)
+    {
+        return string.Equals(element.NamespaceUri, WordprocessingNamespace, StringComparison.Ordinal);
     }
 
     private static int GetNextRevisionId(WordprocessingDocument doc)

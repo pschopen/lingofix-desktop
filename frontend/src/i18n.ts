@@ -284,6 +284,26 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Hinweis',
     en: 'Notice',
   },
+  'docx.diff_mode.accept_existing.title': {
+    de: 'Vorhandene Aenderungen gefunden',
+    en: 'Existing changes detected',
+  },
+  'docx.diff_mode.accept_existing.message': {
+    de: 'Im Diff-Modus kann die Korrektur nur fortgesetzt werden, wenn Lingofix vorab alle vorhandenen Track Changes automatisch akzeptiert.\n\nMoechten Sie fortfahren?',
+    en: 'In diff mode, correction can continue only if Lingofix automatically accepts all existing track changes before correction.\n\nDo you want to continue?',
+  },
+  'docx.diff_mode.accept_existing.cancel': {
+    de: 'Abbrechen',
+    en: 'Cancel',
+  },
+  'docx.diff_mode.accept_existing.continue': {
+    de: 'Fortfahren',
+    en: 'Continue',
+  },
+  'docx.diff_mode.accept_existing.cancelled': {
+    de: 'DOCX-Korrektur im Diff-Modus wurde abgebrochen.',
+    en: 'DOCX correction in diff mode was cancelled.',
+  },
 
   // Settings Modal - Tabs
   'settings.tab.general': {

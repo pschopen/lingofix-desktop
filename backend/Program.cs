@@ -16,7 +16,7 @@ internal static class Program
 
         try
         {
-            var (input, settingsPath) = ParseArgs(args);
+            var (input, settingsPath, inspectTrackChanges, acceptExistingTrackChanges) = ParseArgs(args);
             if (string.IsNullOrWhiteSpace(input))
             {
                 EmitError("Missing --input argument");
@@ -29,10 +29,25 @@ internal static class Program
                 return 1;
             }
 
+            if (inspectTrackChanges)
+            {
+                var hasTrackChanges = TrackChangesGenerator.ContainsTrackedChanges(input);
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    type = "track_changes_inspection",
+                    hasTrackChanges
+                }));
+                return 0;
+            }
+
             var settings = await LoadSettings(settingsPath);
             var logger = new JsonLogger();
             var result = await LingofixRunner.RunAsync(
-                new RunOptions(input, settings, Settings.NormalizeCompareMode(settings.CompareMode)),
+                new RunOptions(
+                    input,
+                    settings,
+                    Settings.NormalizeCompareMode(settings.CompareMode),
+                    acceptExistingTrackChanges),
                 logger,
                 cts.Token);
 
@@ -69,10 +84,12 @@ internal static class Program
         return Settings.FromFrontendJson(text);
     }
 
-    private static (string? input, string? settingsPath) ParseArgs(string[] args)
+    private static (string? input, string? settingsPath, bool inspectTrackChanges, bool acceptExistingTrackChanges) ParseArgs(string[] args)
     {
         string? input = null;
         string? settingsPath = null;
+        var inspectTrackChanges = false;
+        var acceptExistingTrackChanges = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -88,9 +105,20 @@ internal static class Program
                 settingsPath = args[++i];
                 continue;
             }
+
+            if (arg == "--inspect-track-changes")
+            {
+                inspectTrackChanges = true;
+                continue;
+            }
+
+            if (arg == "--accept-existing-track-changes")
+            {
+                acceptExistingTrackChanges = true;
+            }
         }
 
-        return (input, settingsPath);
+        return (input, settingsPath, inspectTrackChanges, acceptExistingTrackChanges);
     }
 
     private static void EmitError(string message)

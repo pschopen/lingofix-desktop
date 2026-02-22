@@ -42,6 +42,7 @@ public static class LingofixRunner
         var settings = options.Settings ?? throw new ArgumentNullException(nameof(options.Settings));
         var compareMode = options.CompareModeOverride ?? Settings.NormalizeCompareMode(settings.CompareMode);
         var isWordCompare = compareMode == CompareModeKind.Word;
+        var canAcceptExistingTrackChanges = options.AcceptExistingTrackChanges;
         var apiKey = Settings.ResolveApiKey(settings.ApiKey);
         var isOllama = string.Equals(settings.Provider, "ollama", StringComparison.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(apiKey) && !isOllama)
@@ -89,6 +90,24 @@ public static class LingofixRunner
         var keepTempArtifacts = ShouldKeepTempArtifacts();
         try
         {
+            if (compareMode == CompareModeKind.DiffEngine)
+            {
+                var hasTrackedChanges = TrackChangesGenerator.ContainsTrackedChanges(tempOriginalPath);
+                if (hasTrackedChanges)
+                {
+                    if (!canAcceptExistingTrackChanges)
+                    {
+                        throw new InvalidOperationException(
+                            "Diff mode requires accepting all existing track changes first. Start again and confirm that Lingofix may automatically accept existing changes before correction.");
+                    }
+
+                    logger.Warning("Diff mode detected existing track changes. Lingofix is accepting all existing changes before correction.");
+                    TrackChangesGenerator.AcceptAllTrackedChanges(tempOriginalPath);
+                    TrackChangesGenerator.AcceptAllTrackedChanges(correctedPath);
+                    logger.Info("Existing track changes were accepted automatically before correction.");
+                }
+            }
+
             DocxCoverageReport coverage;
 
             using (var doc = WordprocessingDocument.Open(correctedPath, true))
