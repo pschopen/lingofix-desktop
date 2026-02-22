@@ -27,6 +27,7 @@ const SOFFICE_PATH_ENV: &str = "LINGOFIX_SOFFICE_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
+const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
 
 fn default_custom_prompt() -> String {
     "Correct the following text while maintaining the style and tone.".to_string()
@@ -1394,8 +1395,11 @@ async fn convert_office_file_to(
     let staged_input = conversion_dir.join(format!("source.{}", input_kind.extension()));
     tokio::fs::copy(input_path, &staged_input).await?;
 
+    let candidates = resolve_soffice_candidates();
+    let total_candidates = candidates.len();
+    let mut not_found_failures = 0usize;
     let mut failures = Vec::new();
-    for candidate in resolve_soffice_candidates() {
+    for candidate in candidates {
         let mut cmd = Command::new(&candidate);
         cmd.arg("--headless")
             .arg("--convert-to")
@@ -1409,6 +1413,9 @@ async fn convert_office_file_to(
         let output = match tokio::time::timeout(SOFFICE_TIMEOUT, cmd.output()).await {
             Ok(Ok(result)) => result,
             Ok(Err(err)) => {
+                if err.kind() == std::io::ErrorKind::NotFound {
+                    not_found_failures += 1;
+                }
                 failures.push(format!("{}: {}", candidate.display(), err));
                 continue;
             }
@@ -1439,9 +1446,15 @@ async fn convert_office_file_to(
         failures.push(reason);
     }
 
+    if total_candidates > 0 && not_found_failures == total_candidates {
+        return Err(anyhow!(
+            "{error_prefix}.\nLibreOffice ist nicht installiert oder `soffice` wurde nicht gefunden.\nBitte installieren Sie zuerst LibreOffice:\n{LIBREOFFICE_DOWNLOAD_URL}\n\nOptional: setze `{SOFFICE_PATH_ENV}` auf den absoluten `soffice`-Pfad."
+        ));
+    }
+
     let details = failures.join("\n");
     Err(anyhow!(
-        "{error_prefix}. LibreOffice (soffice) was not found or failed to convert this file.\nInstall LibreOffice and ensure `soffice` is available in PATH or set `{SOFFICE_PATH_ENV}`.\n\nDetails:\n{details}"
+        "{error_prefix}. LibreOffice (soffice) failed to convert this file.\nInstall LibreOffice if needed: {LIBREOFFICE_DOWNLOAD_URL}\n\nDetails:\n{details}"
     ))
 }
 
