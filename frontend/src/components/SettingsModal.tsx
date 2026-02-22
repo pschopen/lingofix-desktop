@@ -147,7 +147,7 @@ export function SettingsModal({
 
   const handleCompareAccessCheck = async () => {
     setIsCheckingCompareAccess(true);
-    const command = formData.docx.compare_mode === 'libreoffice'
+    const command = formData.docx.compare_mode === 'libreoffice-uno'
       ? 'check_libreoffice_compare_access'
       : 'check_word_compare_access';
 
@@ -352,19 +352,19 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.docx.compare_mode', lang)} isDarkMode={isDarkMode}>
                   <SelectField
                     value={formData.docx.compare_mode}
-                    onChange={(e) => handleDocxSettingChange('compare_mode', e.target.value as 'diff-engine' | 'word' | 'libreoffice')}
+                    onChange={(e) => handleDocxSettingChange('compare_mode', e.target.value as 'openxml' | 'word-native' | 'libreoffice-uno')}
                     isDarkMode={isDarkMode}
                   >
-                    <option value="diff-engine">{t('settings.docx.compare_mode.diff', lang)}</option>
-                    <option value="word">{t('settings.docx.compare_mode.word', lang)}</option>
-                    <option value="libreoffice">{t('settings.docx.compare_mode.libreoffice', lang)}</option>
+                    <option value="openxml">{t('settings.docx.compare_mode.openxml', lang)}</option>
+                    <option value="word-native">{t('settings.docx.compare_mode.word_native', lang)}</option>
+                    <option value="libreoffice-uno">{t('settings.docx.compare_mode.libreoffice_uno', lang)}</option>
                   </SelectField>
                 </FieldGroup>
 
-                {(formData.docx.compare_mode === 'word' || formData.docx.compare_mode === 'libreoffice') && (
+                {(formData.docx.compare_mode === 'word-native' || formData.docx.compare_mode === 'libreoffice-uno') && (
                   <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/70' : 'border-surface-200 bg-surface-50'}`}>
                     <p className={`text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
-                      {formData.docx.compare_mode === 'libreoffice'
+                      {formData.docx.compare_mode === 'libreoffice-uno'
                         ? t('settings.docx.libreoffice_check.hint', lang)
                         : isMac
                           ? t('settings.docx.word_check.hint', lang)
@@ -379,7 +379,7 @@ export function SettingsModal({
                       {isCheckingCompareAccess ? (
                         <Loader2 className="animate-spin" size={14} />
                       ) : null}
-                      {formData.docx.compare_mode === 'libreoffice'
+                      {formData.docx.compare_mode === 'libreoffice-uno'
                         ? t('settings.docx.libreoffice_check.button', lang)
                         : t('settings.docx.word_check.button', lang)}
                     </button>

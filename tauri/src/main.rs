@@ -107,7 +107,7 @@ struct DocxSettings {
 impl Default for DocxSettings {
     fn default() -> Self {
         Self {
-            compare_mode: "diff-engine".into(),
+            compare_mode: "openxml".into(),
             enable_batching: true,
             batch_max_chars: 50_000,
             batch_max_paragraphs: 100,
@@ -1102,7 +1102,7 @@ async fn run_docx_processor(
         let mut final_output = output_path.ok_or_else(|| anyhow!("No output path from DOCX processor"))?;
 
         if source_kind == OfficeInputKind::Odt {
-            let is_diff_engine_mode = settings.docx.compare_mode.eq_ignore_ascii_case("diff-engine");
+            let is_openxml_mode = settings.docx.compare_mode.eq_ignore_ascii_case("openxml");
             let output_suffix = Path::new(&final_output)
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -1115,7 +1115,7 @@ async fn run_docx_processor(
                 })
                 .unwrap_or("_lingofix");
             let naming_source = original_path.unwrap_or(source_input_path);
-            if is_diff_engine_mode {
+            if is_openxml_mode {
                 let docx_target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Docx)?;
                 tokio::fs::copy(&final_output, &docx_target).await?;
                 final_output = docx_target.to_string_lossy().to_string();
@@ -1123,7 +1123,7 @@ async fn run_docx_processor(
                     "docx_log",
                     json!({
                         "level": "warning",
-                        "message": "ODT re-conversion skipped for diff-engine mode; returning DOCX output for validation."
+                        "message": "ODT re-conversion skipped for OpenXML mode; returning DOCX output for validation."
                     }),
                 );
             } else {

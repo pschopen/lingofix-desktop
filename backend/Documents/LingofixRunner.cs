@@ -92,7 +92,7 @@ public static class LingofixRunner
         var keepTempArtifacts = ShouldKeepTempArtifacts();
         try
         {
-            if (compareMode == CompareModeKind.DiffEngine)
+            if (compareMode == CompareModeKind.OpenXml)
             {
                 var hasTrackedChanges = TrackChangesGenerator.ContainsTrackedChanges(tempOriginalPath);
                 if (hasTrackedChanges)
@@ -240,7 +240,7 @@ public static class LingofixRunner
                 {
                     TrackChangesGenerator.GenerateParagraphCompare(tempOriginalPath, correctedPath, tempOutputPath, "Lingofix");
                     trackCreated = true;
-                    logger.Info("Track changes generated with Diff Engine");
+                    logger.Info("Track changes generated with OpenXML");
                 }
             }
             catch (Exception ex)

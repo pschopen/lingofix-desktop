@@ -328,17 +328,17 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Vergleichsmodus',
     en: 'Compare mode',
   },
-  'settings.docx.compare_mode.diff': {
-    de: 'Diff-Engine (integriert)',
-    en: 'Diff-Engine (built-in)',
+  'settings.docx.compare_mode.openxml': {
+    de: 'OpenXML (integriert)',
+    en: 'OpenXML (built-in)',
   },
-  'settings.docx.compare_mode.word': {
-    de: 'Word (MS Word erforderlich)',
-    en: 'Word (requires MS Word)',
+  'settings.docx.compare_mode.word_native': {
+    de: 'Word (nativ, MS Word erforderlich)',
+    en: 'Word (native, requires MS Word)',
   },
-  'settings.docx.compare_mode.libreoffice': {
-    de: 'LibreOffice (soffice)',
-    en: 'LibreOffice (soffice)',
+  'settings.docx.compare_mode.libreoffice_uno': {
+    de: 'LibreOffice UNO (nativ, soffice)',
+    en: 'LibreOffice UNO (native, soffice)',
   },
   'settings.docx.word_check.hint': {
     de: 'Prüfen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen für diesen Modus setzen kann.',
