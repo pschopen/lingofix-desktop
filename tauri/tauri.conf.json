@@ -35,7 +35,9 @@
     ],
     "resources": {
       "resources/word-compare.scpt": "word-compare.scpt",
-      "resources/binaries/word-compare.scpt": "binaries/word-compare.scpt"
+      "resources/binaries/word-compare.scpt": "binaries/word-compare.scpt",
+      "resources/libreoffice-compare.py": "libreoffice-compare.py",
+      "resources/binaries/libreoffice-compare.py": "binaries/libreoffice-compare.py"
     },
     "icon": [
       "icons/icon.icns",
