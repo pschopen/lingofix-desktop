@@ -22,12 +22,25 @@ internal static class LibreOfficeUnoCompareRunner
             throw new ArgumentException("Missing soffice executable path.", nameof(sofficePath));
         }
 
-        var pythonPath = ResolveLibreOfficePythonExecutable(sofficePath);
+        var effectiveSofficePath = ResolveSofficePathForHeadlessLaunch(sofficePath);
+        var pythonPath = ResolveLibreOfficePythonExecutable(effectiveSofficePath);
         var scriptPath = ResolveCompareScriptPath();
 
         var workspace = Path.Combine(Path.GetTempPath(), "Lingofix", "libreoffice-uno", Guid.NewGuid().ToString("N"));
         var userProfilePath = Path.Combine(workspace, "profile");
         Directory.CreateDirectory(userProfilePath);
+
+        var compareOriginalPath = originalPath;
+        var compareCorrectedPath = correctedPath;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
+            string.Equals(Path.GetExtension(originalPath), ".docx", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(Path.GetExtension(correctedPath), ".docx", StringComparison.OrdinalIgnoreCase))
+        {
+            var normalizedDir = Path.Combine(workspace, "normalized");
+            Directory.CreateDirectory(normalizedDir);
+            compareOriginalPath = RoundTripDocxForCompare(effectiveSofficePath, originalPath, normalizedDir, timeout);
+            compareCorrectedPath = RoundTripDocxForCompare(effectiveSofficePath, correctedPath, normalizedDir, timeout);
+        }
 
         var port = ReserveFreePort();
         var userProfileUri = new Uri(userProfilePath).AbsoluteUri;
@@ -38,10 +51,16 @@ internal static class LibreOfficeUnoCompareRunner
         {
             var sofficePsi = new ProcessStartInfo
             {
-                FileName = sofficePath,
+                FileName = effectiveSofficePath,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
             };
+            var sofficeWorkingDirectory = Path.GetDirectoryName(effectiveSofficePath);
+            if (!string.IsNullOrWhiteSpace(sofficeWorkingDirectory))
+            {
+                sofficePsi.WorkingDirectory = sofficeWorkingDirectory;
+            }
             sofficePsi.ArgumentList.Add("--headless");
             sofficePsi.ArgumentList.Add("--invisible");
             sofficePsi.ArgumentList.Add("--norestore");
@@ -62,7 +81,7 @@ internal static class LibreOfficeUnoCompareRunner
                 pythonPath,
                 scriptPath,
                 timeout,
-                ["compare", "127.0.0.1", port.ToString(), originalPath, correctedPath, outputPath, author]);
+                ["compare", "127.0.0.1", port.ToString(), compareOriginalPath, compareCorrectedPath, outputPath, author]);
 
             if (compareExitCode != 0)
             {
@@ -82,6 +101,111 @@ internal static class LibreOfficeUnoCompareRunner
             TryStopProcess(sofficeProcess);
             TryDeleteDirectory(workspace);
         }
+    }
+
+    private static string RoundTripDocxForCompare(string sofficePath, string inputPath, string outputDir, TimeSpan timeout)
+    {
+        Directory.CreateDirectory(outputDir);
+
+        var expectedOutput = Path.Combine(
+            outputDir,
+            Path.GetFileNameWithoutExtension(inputPath) + ".docx");
+
+        try
+        {
+            if (File.Exists(expectedOutput))
+            {
+                File.Delete(expectedOutput);
+            }
+        }
+        catch
+        {
+        }
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = sofficePath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+
+        var sofficeWorkingDirectory = Path.GetDirectoryName(sofficePath);
+        if (!string.IsNullOrWhiteSpace(sofficeWorkingDirectory))
+        {
+            psi.WorkingDirectory = sofficeWorkingDirectory;
+        }
+
+        psi.ArgumentList.Add("--headless");
+        psi.ArgumentList.Add("--convert-to");
+        psi.ArgumentList.Add("docx");
+        psi.ArgumentList.Add("--outdir");
+        psi.ArgumentList.Add(outputDir);
+        psi.ArgumentList.Add(inputPath);
+
+        using var proc = Process.Start(psi);
+        if (proc is null)
+        {
+            throw new InvalidOperationException($"Failed to start LibreOffice conversion process ({sofficePath}).");
+        }
+
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+
+        if (!proc.WaitForExit((int)timeout.TotalMilliseconds))
+        {
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+            }
+
+            throw new TimeoutException($"LibreOffice DOCX round-trip conversion timed out after {timeout.TotalSeconds:0} seconds.");
+        }
+
+        Task.WaitAll([stdoutTask, stderrTask]);
+        if (proc.ExitCode != 0)
+        {
+            var stderr = stderrTask.GetAwaiter().GetResult();
+            var stdout = stdoutTask.GetAwaiter().GetResult();
+            var details = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+            throw new InvalidOperationException($"LibreOffice DOCX round-trip conversion failed: {TrimForError(details)}");
+        }
+
+        if (!File.Exists(expectedOutput))
+        {
+            throw new FileNotFoundException(
+                $"LibreOffice DOCX round-trip conversion did not produce expected file: {expectedOutput}",
+                expectedOutput);
+        }
+
+        return expectedOutput;
+    }
+
+    private static string ResolveSofficePathForHeadlessLaunch(string sofficePath)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return sofficePath;
+        }
+
+        var trimmed = sofficePath.Trim();
+        var normalized = trimmed.Replace('\\', '/');
+        if (normalized.EndsWith("/soffice.com", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("soffice.com", StringComparison.OrdinalIgnoreCase))
+        {
+            var exeCandidate = trimmed[..^3] + "exe";
+            if (!Path.IsPathFullyQualified(exeCandidate) || File.Exists(exeCandidate))
+            {
+                return exeCandidate;
+            }
+        }
+
+        return trimmed;
     }
 
     private static void WaitForUnoBridge(string pythonPath, string scriptPath, int port, TimeSpan timeout, Process sofficeProcess)
@@ -133,7 +257,8 @@ internal static class LibreOfficeUnoCompareRunner
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
         };
 
         psi.ArgumentList.Add(scriptPath);
@@ -270,7 +395,8 @@ internal static class LibreOfficeUnoCompareRunner
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
                 };
                 psi.ArgumentList.Add("--version");
 
