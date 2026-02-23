@@ -1362,6 +1362,23 @@ fn resolve_dotnet_path() -> Option<PathBuf> {
 }
 
 fn resolve_soffice_candidates() -> Vec<PathBuf> {
+    fn add_soffice_candidate(candidates: &mut Vec<PathBuf>, candidate: PathBuf) {
+        if cfg!(target_os = "windows") {
+            let filename = candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+
+            if filename.eq_ignore_ascii_case("soffice.exe") {
+                let mut com_variant = candidate.clone();
+                com_variant.set_file_name("soffice.com");
+                candidates.push(com_variant);
+            }
+        }
+
+        candidates.push(candidate);
+    }
+
     let mut candidates = Vec::new();
 
     if let Some(from_env) = std::env::var(SOFFICE_PATH_ENV)
@@ -1369,21 +1386,30 @@ fn resolve_soffice_candidates() -> Vec<PathBuf> {
         .map(|v| PathBuf::from(v.trim()))
         .filter(|v| !v.as_os_str().is_empty())
     {
-        candidates.push(from_env);
+        add_soffice_candidate(&mut candidates, from_env);
     }
 
     if cfg!(target_os = "macos") {
-        candidates.push(PathBuf::from("/Applications/LibreOffice.app/Contents/MacOS/soffice"));
+        add_soffice_candidate(
+            &mut candidates,
+            PathBuf::from("/Applications/LibreOffice.app/Contents/MacOS/soffice"),
+        );
     }
 
     if cfg!(target_os = "windows") {
-        candidates.push(PathBuf::from("C:/Program Files/LibreOffice/program/soffice.exe"));
-        candidates.push(PathBuf::from("C:/Program Files (x86)/LibreOffice/program/soffice.exe"));
-        candidates.push(PathBuf::from("soffice.exe"));
+        add_soffice_candidate(
+            &mut candidates,
+            PathBuf::from("C:/Program Files/LibreOffice/program/soffice.exe"),
+        );
+        add_soffice_candidate(
+            &mut candidates,
+            PathBuf::from("C:/Program Files (x86)/LibreOffice/program/soffice.exe"),
+        );
+        add_soffice_candidate(&mut candidates, PathBuf::from("soffice.exe"));
     } else {
-        candidates.push(PathBuf::from("/usr/bin/soffice"));
-        candidates.push(PathBuf::from("/usr/local/bin/soffice"));
-        candidates.push(PathBuf::from("soffice"));
+        add_soffice_candidate(&mut candidates, PathBuf::from("/usr/bin/soffice"));
+        add_soffice_candidate(&mut candidates, PathBuf::from("/usr/local/bin/soffice"));
+        add_soffice_candidate(&mut candidates, PathBuf::from("soffice"));
     }
 
     candidates
@@ -1430,6 +1456,13 @@ async fn convert_office_file_to(
             .arg(&staged_input)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+        }
 
         let output = match tokio::time::timeout(SOFFICE_TIMEOUT, cmd.output()).await {
             Ok(Ok(result)) => result,
@@ -1621,6 +1654,13 @@ fn check_libreoffice_compare_access() -> Result<WordCompareAccessStatus, String>
     for candidate in candidates {
         let mut command = std::process::Command::new(&candidate);
         command.arg("--version");
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
 
         match command.output() {
             Ok(output) => {

@@ -41,6 +41,8 @@ backend/**/publish/
 tauri/target/
 tauri/gen/
 tauri/binaries/
+tauri/resources/libreoffice-compare.py
+tauri/resources/binaries/libreoffice-compare.py
 
 # Bundle / publish artifacts
 out/
