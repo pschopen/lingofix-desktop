@@ -98,17 +98,17 @@ def run_compare(host: str, port: int, original_path: str, corrected_path: str, o
         corrected_url = _to_file_url(corrected_path)
         output_url = _to_file_url(output_path)
 
-        document, original_load_error = _load_document_with_retry(desktop, original_url)
+        document, corrected_load_error = _load_document_with_retry(desktop, corrected_url)
         if document is None:
-            _, corrected_load_error = _load_document_with_retry(desktop, corrected_url)
+            _, original_load_error = _load_document_with_retry(desktop, original_url)
             corrected_exists = os.path.exists(corrected_path)
             original_exists = os.path.exists(original_path)
             corrected_size = os.path.getsize(corrected_path) if corrected_exists else -1
             original_size = os.path.getsize(original_path) if original_exists else -1
             return _fail(
-                "LibreOffice UNO compare failed: could not load original document for compare base. "
-                f"original load error: {original_load_error or 'unknown'}; "
+                "LibreOffice UNO compare failed: could not load corrected document for compare base. "
                 f"corrected load error: {corrected_load_error or 'unknown'}; "
+                f"original load error: {original_load_error or 'unknown'}; "
                 f"corrected exists={corrected_exists} size={corrected_size}; "
                 f"original exists={original_exists} size={original_size}; "
                 f"corrected_path={os.path.abspath(corrected_path)}; "
@@ -129,7 +129,7 @@ def run_compare(host: str, port: int, original_path: str, corrected_path: str, o
             ".uno:CompareDocuments",
             "",
             0,
-            (_prop("URL", corrected_url),),
+            (_prop("URL", original_url),),
         )
 
         total_bytes = 0
