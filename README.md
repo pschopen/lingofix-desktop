@@ -110,4 +110,4 @@ open "tauri/target/release/bundle/macos/Lingofix Desktop.app"
 
 ## License
 
-MIT
+GNU AGPL v3
