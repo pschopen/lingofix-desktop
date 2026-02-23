@@ -1248,7 +1248,8 @@ if ($null -ne $lastError) {
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
                 };
                 psi.ArgumentList.Add("--version");
 
@@ -1322,7 +1323,43 @@ if ($null -ne $lastError) {
             }
         }
 
-        Add(Environment.GetEnvironmentVariable(SOfficePathEnv));
+        void AddWindowsSofficeCandidates(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            var candidate = value.Trim();
+            var normalized = candidate.Replace('\\', '/');
+
+            if (normalized.EndsWith("/soffice.exe", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Equals("soffice.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                Add(Path.ChangeExtension(candidate, ".com"));
+                Add(candidate);
+                return;
+            }
+
+            if (normalized.EndsWith("/soffice.com", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Equals("soffice.com", StringComparison.OrdinalIgnoreCase))
+            {
+                Add(candidate);
+                Add(Path.ChangeExtension(candidate, ".exe"));
+                return;
+            }
+
+            Add(candidate);
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            AddWindowsSofficeCandidates(Environment.GetEnvironmentVariable(SOfficePathEnv));
+        }
+        else
+        {
+            Add(Environment.GetEnvironmentVariable(SOfficePathEnv));
+        }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
@@ -1330,9 +1367,9 @@ if ($null -ne $lastError) {
         }
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            Add("C:/Program Files/LibreOffice/program/soffice.exe");
-            Add("C:/Program Files (x86)/LibreOffice/program/soffice.exe");
-            Add("soffice.exe");
+            AddWindowsSofficeCandidates("C:/Program Files/LibreOffice/program/soffice.exe");
+            AddWindowsSofficeCandidates("C:/Program Files (x86)/LibreOffice/program/soffice.exe");
+            AddWindowsSofficeCandidates("soffice.exe");
         }
         else
         {
