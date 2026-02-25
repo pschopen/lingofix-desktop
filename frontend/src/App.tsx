@@ -24,6 +24,8 @@ const DEFAULT_BATCH_PROMPT_EN = 'Correct each item and return ONLY valid JSON in
 const DOCX_COMPARE_FALLBACK_MANUAL_HINT = 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.';
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_STORAGE_KEY = 'lingofix.last_update_check_at';
+const UPDATE_CHECK_ETAG_STORAGE_KEY = 'lingofix.update_check_etag';
+const UPDATE_CHECK_RELEASE_STORAGE_KEY = 'lingofix.update_check_release';
 const GITHUB_LATEST_RELEASE_API = 'https://api.github.com/repos/pschopen/Lingofix/releases/latest';
 const GITHUB_RELEASES_PAGE = 'https://github.com/pschopen/Lingofix/releases';
 
@@ -35,6 +37,11 @@ type UpdateNotice = {
 type UpdateCheckResult = {
   status: 'update-available' | 'up-to-date' | 'error';
   message: string;
+};
+
+type CachedRelease = {
+  tag_name: string;
+  html_url: string;
 };
 
 function parseVersionParts(raw: string): number[] {
@@ -56,6 +63,37 @@ function compareVersions(a: string, b: string): number {
     if (l < r) return -1;
   }
   return 0;
+}
+
+function loadCachedRelease(): CachedRelease | null {
+  try {
+    const raw = window.localStorage.getItem(UPDATE_CHECK_RELEASE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<CachedRelease>;
+    const tagName = (parsed.tag_name ?? '').toString().trim();
+    const htmlUrl = (parsed.html_url ?? '').toString().trim();
+    if (!tagName) {
+      return null;
+    }
+
+    return {
+      tag_name: tagName,
+      html_url: htmlUrl || GITHUB_RELEASES_PAGE,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedRelease(release: CachedRelease): void {
+  try {
+    window.localStorage.setItem(UPDATE_CHECK_RELEASE_STORAGE_KEY, JSON.stringify(release));
+  } catch {
+    // ignore localStorage write errors
+  }
 }
 
 function App() {
@@ -220,13 +258,63 @@ function App() {
 
     try {
       const currentVersion = await invoke<string>('get_app_version');
-      const response = await fetch(GITHUB_LATEST_RELEASE_API, {
-        headers: { Accept: 'application/vnd.github+json' },
+      const cachedEtag = (() => {
+        try {
+          return window.localStorage.getItem(UPDATE_CHECK_ETAG_STORAGE_KEY)?.trim() || '';
+        } catch {
+          return '';
+        }
+      })();
+      const headers: HeadersInit = { Accept: 'application/vnd.github+json' };
+      if (cachedEtag) {
+        headers['If-None-Match'] = cachedEtag;
+      }
+      let response = await fetch(GITHUB_LATEST_RELEASE_API, {
+        headers,
         cache: 'no-store',
       });
 
+      if (response.status === 304) {
+        const cachedRelease = loadCachedRelease();
+        if (!cachedRelease) {
+          response = await fetch(GITHUB_LATEST_RELEASE_API, {
+            headers: { Accept: 'application/vnd.github+json' },
+            cache: 'no-store',
+          });
+        } else {
+          const remoteVersion = cachedRelease.tag_name;
+          const releaseUrl = cachedRelease.html_url || GITHUB_RELEASES_PAGE;
+          const hasUpdate = compareVersions(remoteVersion, currentVersion) > 0;
+          if (hasUpdate) {
+            if (shownUpdateVersionRef.current !== remoteVersion || manual) {
+              shownUpdateVersionRef.current = remoteVersion;
+              setUpdateNotice({ version: remoteVersion, url: releaseUrl });
+            }
+
+            return {
+              status: 'update-available',
+              message: t('update.available.message', lang).replace('{version}', remoteVersion),
+            };
+          }
+
+          return {
+            status: 'up-to-date',
+            message: t('update.none', lang),
+          };
+        }
+      }
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
+      }
+
+      const responseEtag = response.headers.get('etag')?.trim() || '';
+      if (responseEtag) {
+        try {
+          window.localStorage.setItem(UPDATE_CHECK_ETAG_STORAGE_KEY, responseEtag);
+        } catch {
+          // ignore localStorage write errors
+        }
       }
 
       const release = await response.json() as { tag_name?: string; html_url?: string };
@@ -236,6 +324,11 @@ function App() {
       if (!remoteVersion) {
         throw new Error('Missing release version');
       }
+
+      saveCachedRelease({
+        tag_name: remoteVersion,
+        html_url: releaseUrl,
+      });
 
       const hasUpdate = compareVersions(remoteVersion, currentVersion) > 0;
       if (hasUpdate) {
