@@ -1050,11 +1050,13 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     $doc1 = $null
     $doc2 = $null
     $comp = $null
+    $previousUserName = $null
 
     try {
         $word = New-Object -ComObject Word.Application
         $word.Visible = $false
         $word.DisplayAlerts = 0
+        try { $previousUserName = [string]$word.UserName } catch { $previousUserName = $null }
         $word.UserName = $author
 
         try { $word.ScreenUpdating = $false } catch { }
@@ -1112,6 +1114,9 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             try { $doc1.Close($false) } catch { }
         }
         if ($null -ne $word) {
+            if ($null -ne $previousUserName) {
+                try { $word.UserName = $previousUserName } catch { }
+            }
             try { $word.Quit() } catch { }
         }
 
