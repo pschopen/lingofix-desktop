@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '../lib/bridge';
-import { X, Loader2, RefreshCw, ChevronDown } from 'lucide-react';
+import { X, Loader2, ChevronDown } from 'lucide-react';
 import {
   Settings,
+  CustomPromptPreset,
   Provider,
   DocxSettings,
   FontSize,
@@ -34,6 +35,8 @@ interface CompareAccessStatus {
   details: string;
 }
 
+type PresetDialogMode = 'new' | 'rename' | 'delete' | null;
+
 export function SettingsModal({
   isOpen,
   onClose,
@@ -57,6 +60,9 @@ export function SettingsModal({
   const [isResettingApp, setIsResettingApp] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
   const [resetMessageIsError, setResetMessageIsError] = useState(false);
+  const [presetMessage, setPresetMessage] = useState('');
+  const [presetDialogMode, setPresetDialogMode] = useState<PresetDialogMode>(null);
+  const [presetDialogValue, setPresetDialogValue] = useState('');
 
   useEffect(() => {
     if (isOpen) {
@@ -66,6 +72,9 @@ export function SettingsModal({
       setSystemPathMessage('');
       setResetMessage('');
       setResetMessageIsError(false);
+      setPresetMessage('');
+      setPresetDialogMode(null);
+      setPresetDialogValue('');
     }
   }, [isOpen, settings]);
 
@@ -141,6 +150,204 @@ export function SettingsModal({
         ...formData.docx,
         [key]: value,
       },
+    });
+  };
+
+  const handleModelDropdownFocus = () => {
+    if (isLoadingModels || models.length > 0) {
+      return;
+    }
+
+    void handleFetchModels();
+  };
+
+  const createPresetId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `preset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  };
+
+  const getActivePreset = (current: Settings): CustomPromptPreset | undefined => {
+    return current.custom_prompt_presets.find((preset) => preset.id === current.active_custom_prompt_preset_id);
+  };
+
+  const handleSelectCustomPromptPreset = (presetId: string) => {
+    if (!formData) {
+      return;
+    }
+
+    const selected = formData.custom_prompt_presets.find((preset) => preset.id === presetId);
+    if (!selected) {
+      return;
+    }
+
+    setPresetMessage('');
+    setFormData({
+      ...formData,
+      active_custom_prompt_preset_id: selected.id,
+      custom_prompt: selected.value,
+    });
+  };
+
+  const handleCreateCustomPromptPreset = () => {
+    if (!formData) {
+      return;
+    }
+
+    setPresetMessage('');
+    setPresetDialogValue(t('settings.prompt_presets.new_name_default', lang));
+    setPresetDialogMode('new');
+  };
+
+  const handleDuplicateCustomPromptPreset = () => {
+    if (!formData) {
+      return;
+    }
+
+    const active = getActivePreset(formData);
+    if (!active) {
+      return;
+    }
+
+    const duplicated: CustomPromptPreset = {
+      ...active,
+      id: createPresetId(),
+      name: `${active.name} (${t('settings.prompt_presets.copy_suffix', lang)})`,
+    };
+
+    setPresetMessage('');
+    setFormData({
+      ...formData,
+      custom_prompt_presets: [...formData.custom_prompt_presets, duplicated],
+      active_custom_prompt_preset_id: duplicated.id,
+      custom_prompt: duplicated.value,
+    });
+  };
+
+  const handleRenameCustomPromptPreset = () => {
+    if (!formData) {
+      return;
+    }
+
+    const active = getActivePreset(formData);
+    if (!active) {
+      return;
+    }
+
+    setPresetMessage('');
+    setPresetDialogValue(active.name);
+    setPresetDialogMode('rename');
+  };
+
+  const handleDeleteCustomPromptPreset = () => {
+    if (!formData) {
+      return;
+    }
+
+    if (formData.custom_prompt_presets.length <= 1) {
+      setPresetMessage(t('settings.prompt_presets.keep_one', lang));
+      return;
+    }
+
+    const active = getActivePreset(formData);
+    if (!active) {
+      return;
+    }
+
+    setPresetMessage('');
+    setPresetDialogMode('delete');
+  };
+
+  const closePresetDialog = () => {
+    setPresetDialogMode(null);
+    setPresetDialogValue('');
+  };
+
+  const handleConfirmPresetDialog = () => {
+    if (!formData || !presetDialogMode) {
+      return;
+    }
+
+    if (presetDialogMode === 'delete') {
+      const active = getActivePreset(formData);
+      if (!active) {
+        closePresetDialog();
+        return;
+      }
+
+      const remaining = formData.custom_prompt_presets.filter((preset) => preset.id !== active.id);
+      const nextActive = remaining[0];
+      if (!nextActive) {
+        closePresetDialog();
+        return;
+      }
+
+      setPresetMessage('');
+      setFormData({
+        ...formData,
+        custom_prompt_presets: remaining,
+        active_custom_prompt_preset_id: nextActive.id,
+        custom_prompt: nextActive.value,
+      });
+      closePresetDialog();
+      return;
+    }
+
+    const trimmedName = presetDialogValue.trim();
+    if (!trimmedName) {
+      setPresetMessage(t('settings.prompt_presets.empty_name', lang));
+      return;
+    }
+
+    if (presetDialogMode === 'new') {
+      const locale = lang === 'de' ? 'de' : 'en';
+      const newPreset: CustomPromptPreset = {
+        id: createPresetId(),
+        name: trimmedName,
+        value: formData.custom_prompt,
+        locale,
+      };
+
+      setPresetMessage('');
+      setFormData({
+        ...formData,
+        custom_prompt_presets: [...formData.custom_prompt_presets, newPreset],
+        active_custom_prompt_preset_id: newPreset.id,
+      });
+      closePresetDialog();
+      return;
+    }
+
+    const active = getActivePreset(formData);
+    if (!active) {
+      closePresetDialog();
+      return;
+    }
+
+    setPresetMessage('');
+    setFormData({
+      ...formData,
+      custom_prompt_presets: formData.custom_prompt_presets.map((preset) =>
+        preset.id === active.id ? { ...preset, name: trimmedName } : preset,
+      ),
+    });
+    closePresetDialog();
+  };
+
+  const handleCustomPromptChange = (value: string) => {
+    if (!formData) {
+      return;
+    }
+
+    const activeId = formData.active_custom_prompt_preset_id;
+    setPresetMessage('');
+    setFormData({
+      ...formData,
+      custom_prompt: value,
+      custom_prompt_presets: formData.custom_prompt_presets.map((preset) =>
+        preset.id === activeId ? { ...preset, value } : preset,
+      ),
     });
   };
 
@@ -381,20 +588,102 @@ export function SettingsModal({
           <div className="p-6 space-y-5">
             {activeTab === 'general' ? (
               <>
-                {/* Provider Selection */}
-                <FieldGroup label={t('settings.provider', lang)}>
-                  <SelectField
-                    value={formData.provider}
-                    onChange={(e) => handleProviderChange(e.target.value as Provider)}
-                    isDarkMode={isDarkMode}
-                  >
-                    {PROVIDERS.map((key) => (
-                      <option key={key} value={key}>
-                        {PROVIDER_LABELS[key]}
-                      </option>
-                    ))}
-                  </SelectField>
+                {/* Custom Prompt Presets */}
+                <FieldGroup label={t('settings.prompt_presets', lang)} isDarkMode={isDarkMode}>
+                  <div className={`rounded-xl border p-3 space-y-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/50' : 'border-surface-200 bg-surface-50/80'}`}>
+                    <div className="space-y-1">
+                      <SelectField
+                        value={formData.active_custom_prompt_preset_id}
+                        onChange={(e) => handleSelectCustomPromptPreset(e.target.value)}
+                        isDarkMode={isDarkMode}
+                      >
+                        {formData.custom_prompt_presets.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.name}
+                          </option>
+                        ))}
+                      </SelectField>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCreateCustomPromptPreset}
+                        className="btn-secondary !text-base"
+                      >
+                        {t('settings.prompt_presets.new', lang)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDuplicateCustomPromptPreset}
+                        className="btn-secondary !text-base"
+                      >
+                        {t('settings.prompt_presets.duplicate', lang)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRenameCustomPromptPreset}
+                        className="btn-secondary !text-base"
+                      >
+                        {t('settings.prompt_presets.rename', lang)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeleteCustomPromptPreset}
+                        className="btn-secondary !text-base"
+                      >
+                        {t('settings.prompt_presets.delete', lang)}
+                      </button>
+                    </div>
+
+                    <textarea
+                      value={formData.custom_prompt}
+                      onChange={(e) => handleCustomPromptChange(e.target.value)}
+                      placeholder={t('settings.prompt.hint', lang)}
+                      className={`textarea !text-base h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
+                    />
+
+                    {presetMessage && (
+                      <p className="text-sm text-amber-600">{presetMessage}</p>
+                    )}
+                  </div>
                 </FieldGroup>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Provider Selection */}
+                  <div className="md:col-span-1">
+                    <FieldGroup label={t('settings.provider', lang)}>
+                      <SelectField
+                        value={formData.provider}
+                        onChange={(e) => handleProviderChange(e.target.value as Provider)}
+                        isDarkMode={isDarkMode}
+                      >
+                        {PROVIDERS.map((key) => (
+                          <option key={key} value={key}>
+                            {PROVIDER_LABELS[key]}
+                          </option>
+                        ))}
+                      </SelectField>
+                    </FieldGroup>
+                  </div>
+
+                  {/* API Key */}
+                  <div className="md:col-span-2">
+                    <FieldGroup
+                      label={t('settings.api_key', lang)}
+                      required={!isOllama}
+                      isDarkMode={isDarkMode}
+                    >
+                      <input
+                        type="password"
+                        value={formData.api_key || ''}
+                        onChange={(e) => setFormData({ ...formData, api_key: e.target.value || null })}
+                        placeholder={isOllama ? t('settings.api_key.optional', lang) : t('settings.api_key.placeholder', lang)}
+                        className={`input !text-base ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
+                      />
+                    </FieldGroup>
+                  </div>
+                </div>
 
                 {/* API URL — only for Custom */}
                 {isCustom && (
@@ -409,80 +698,27 @@ export function SettingsModal({
                   </FieldGroup>
                 )}
 
-                {/* API Key */}
-                <FieldGroup
-                  label={t('settings.api_key', lang)}
-                  required={!isOllama}
-                  isDarkMode={isDarkMode}
-                >
-                  <input
-                    type="password"
-                    value={formData.api_key || ''}
-                    onChange={(e) => setFormData({ ...formData, api_key: e.target.value || null })}
-                    placeholder={isOllama ? t('settings.api_key.optional', lang) : t('settings.api_key.placeholder', lang)}
-                    className={`input !text-sm ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
-                  />
-                </FieldGroup>
-
                 {/* Model Selection */}
                 <FieldGroup label={t('settings.model', lang)} error={modelError} isDarkMode={isDarkMode}>
-                  <div className="flex gap-2">
-                    <SelectField
-                      value={formData.model}
-                      onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                      className="flex-1"
-                      isDarkMode={isDarkMode}
-                    >
-                      {models.length === 0 ? (
-                        <option value={formData.model}>{formData.model}</option>
-                      ) : (
-                        models.map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))
-                      )}
-                    </SelectField>
-                    <button
-                      type="button"
-                      onClick={handleFetchModels}
-                      disabled={isLoadingModels}
-                      className="btn-secondary !py-2 !text-base flex-shrink-0"
-                    >
-                      {isLoadingModels ? (
-                        <Loader2 className="animate-spin" size={14} />
-                      ) : (
-                        <RefreshCw size={14} />
-                      )}
-                      {t('settings.model.load', lang)}
-                    </button>
-                  </div>
-                </FieldGroup>
-
-                {/* Prompt */}
-                <FieldGroup label={t('settings.prompt', lang)} hint={t('settings.prompt.hint', lang)} isDarkMode={isDarkMode}>
-                  <textarea
-                    value={formData.custom_prompt}
-                    onChange={(e) => setFormData({ ...formData, custom_prompt: e.target.value, prompt_user_modified: true })}
-                    placeholder={t('settings.prompt.placeholder', lang)}
-                    className={`textarea !text-base h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
-                  />
-                </FieldGroup>
-
-                {/* Font Size */}
-                <FieldGroup label={t('settings.font_size', lang)} isDarkMode={isDarkMode}>
                   <SelectField
-                    value={formData.font_size}
-                    onChange={(e) => setFormData({ ...formData, font_size: e.target.value as FontSize })}
+                    value={formData.model}
+                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
+                    onFocus={handleModelDropdownFocus}
+                    onMouseDown={handleModelDropdownFocus}
                     isDarkMode={isDarkMode}
                   >
-                    {FONT_SIZES.map((size: FontSize) => (
-                      <option key={size} value={size}>
-                        {t(`settings.font_size.${size}`, lang)}
-                      </option>
-                    ))}
+                    {models.length === 0 ? (
+                      <option value={formData.model}>{isLoadingModels ? `${t('settings.model.load', lang)}...` : formData.model}</option>
+                    ) : (
+                      models.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))
+                    )}
                   </SelectField>
                 </FieldGroup>
+
               </>
             ) : activeTab === 'docx' ? (
               <>
@@ -614,6 +850,21 @@ export function SettingsModal({
               </>
             ) : (
               <>
+                {/* Font Size */}
+                <FieldGroup label={t('settings.font_size', lang)} isDarkMode={isDarkMode}>
+                  <SelectField
+                    value={formData.font_size}
+                    onChange={(e) => setFormData({ ...formData, font_size: e.target.value as FontSize })}
+                    isDarkMode={isDarkMode}
+                  >
+                    {FONT_SIZES.map((size: FontSize) => (
+                      <option key={size} value={size}>
+                        {t(`settings.font_size.${size}`, lang)}
+                      </option>
+                    ))}
+                  </SelectField>
+                </FieldGroup>
+
                 {/* Temperature */}
                 <FieldGroup label={`${t('settings.temperature', lang)}: ${formData.temperature}`} isDarkMode={isDarkMode}>
                   <input
@@ -631,7 +882,7 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.system_prompt', lang)} hint={t('settings.system_prompt.hint', lang)} isDarkMode={isDarkMode}>
                   <textarea
                     value={formData.system_prompt}
-                    onChange={(e) => setFormData({ ...formData, system_prompt: e.target.value, prompt_user_modified: true })}
+                    onChange={(e) => setFormData({ ...formData, system_prompt: e.target.value })}
                     placeholder={t('settings.system_prompt.placeholder', lang)}
                     className={`textarea !text-base h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
                   />
@@ -740,6 +991,52 @@ export function SettingsModal({
           </div>
         </form>
       </div>
+
+      {presetDialogMode && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-[1px] px-4">
+          <div className={`w-full max-w-md rounded-xl overflow-hidden border shadow-xl ${isDarkMode ? 'bg-surface-800 border-surface-700 text-surface-100' : 'bg-white border-surface-200 text-surface-900'}`}>
+            <div className={`px-5 py-4 border-b ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
+              <h3 className="text-base font-semibold">
+                {presetDialogMode === 'new'
+                  ? t('settings.prompt_presets.new', lang)
+                  : presetDialogMode === 'rename'
+                    ? t('settings.prompt_presets.rename', lang)
+                    : t('settings.prompt_presets.delete', lang)}
+              </h3>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              {presetDialogMode === 'delete' ? (
+                <p className={`text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
+                  {t('settings.prompt_presets.delete_confirm', lang).replace('{name}', getActivePreset(formData)?.name ?? '')}
+                </p>
+              ) : (
+                <>
+                  <label className={`block text-sm font-medium ${isDarkMode ? 'text-surface-200' : 'text-surface-700'}`}>
+                    {t('settings.prompt_presets.name_label', lang)}
+                  </label>
+                  <input
+                    type="text"
+                    value={presetDialogValue}
+                    onChange={(e) => setPresetDialogValue(e.target.value)}
+                    className={`input !text-base ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100' : ''}`}
+                    autoFocus
+                  />
+                </>
+              )}
+            </div>
+
+            <div className={`px-5 py-4 border-t flex justify-end gap-2 ${isDarkMode ? 'border-surface-700 bg-surface-900/50' : 'border-surface-100 bg-white'}`}>
+              <button type="button" onClick={closePresetDialog} className="btn-secondary !text-base">
+                {t('settings.cancel', lang)}
+              </button>
+              <button type="button" onClick={handleConfirmPresetDialog} className="btn-primary !text-base">
+                {presetDialogMode === 'delete' ? t('settings.prompt_presets.delete', lang) : t('settings.save', lang)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -779,12 +1076,16 @@ function FieldGroup({
 function SelectField({
   value,
   onChange,
+  onFocus,
+  onMouseDown,
   children,
   className = '',
   isDarkMode = false,
 }: {
   value: string;
   onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  onFocus?: (e: React.FocusEvent<HTMLSelectElement>) => void;
+  onMouseDown?: (e: React.MouseEvent<HTMLSelectElement>) => void;
   children: React.ReactNode;
   className?: string;
   isDarkMode?: boolean;
@@ -794,6 +1095,8 @@ function SelectField({
       <select
         value={value}
         onChange={onChange}
+        onFocus={onFocus}
+        onMouseDown={onMouseDown}
         className={`input !text-base !pr-9 cursor-pointer ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100' : ''}`}
       >
         {children}

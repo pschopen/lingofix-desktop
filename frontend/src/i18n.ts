@@ -168,6 +168,66 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Prompt',
     en: 'Prompt',
   },
+  'settings.prompt_presets': {
+    de: 'Prompt',
+    en: 'Prompt',
+  },
+  'settings.prompt_presets.select_label': {
+    de: 'Vorlage auswählen',
+    en: 'Select preset',
+  },
+  'settings.prompt_presets.editor_label': {
+    de: 'Inhalt der aktiven Vorlage',
+    en: 'Content of active preset',
+  },
+  'settings.prompt_presets.name_label': {
+    de: 'Name',
+    en: 'Name',
+  },
+  'settings.prompt_presets.new': {
+    de: 'Neu',
+    en: 'New',
+  },
+  'settings.prompt_presets.duplicate': {
+    de: 'Duplizieren',
+    en: 'Duplicate',
+  },
+  'settings.prompt_presets.rename': {
+    de: 'Umbenennen',
+    en: 'Rename',
+  },
+  'settings.prompt_presets.delete': {
+    de: 'Löschen',
+    en: 'Delete',
+  },
+  'settings.prompt_presets.new_name_prompt': {
+    de: 'Name der neuen Vorlage:',
+    en: 'Name of the new preset:',
+  },
+  'settings.prompt_presets.new_name_default': {
+    de: 'Neue Vorlage',
+    en: 'New preset',
+  },
+  'settings.prompt_presets.rename_prompt': {
+    de: 'Neuer Name für die Vorlage:',
+    en: 'New name for the preset:',
+  },
+  'settings.prompt_presets.delete_confirm': {
+    de: 'Vorlage "{name}" wirklich löschen?',
+    en: 'Delete preset "{name}"?',
+  },
+  'settings.prompt_presets.keep_one': {
+    de: 'Mindestens eine Vorlage muss erhalten bleiben.',
+    en: 'At least one preset must remain.',
+  },
+  'settings.prompt_presets.empty_name': {
+    de: 'Bitte einen Namen für die Vorlage eingeben.',
+    en: 'Please enter a preset name.',
+  },
+  'settings.prompt_presets.copy_suffix': {
+    de: 'Kopie',
+    en: 'Copy',
+  },
   'settings.prompt.placeholder': {
     de: 'Geben Sie Ihren Prompt ein...',
     en: 'Enter your prompt...',

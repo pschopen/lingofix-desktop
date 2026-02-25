@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -40,6 +40,8 @@ const DEFAULT_BATCH_PROMPT_EN: &str =
     "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text.";
 const DEFAULT_BATCH_PROMPT_DE: &str =
     "Korrigiere jedes Element und gib NUR gueltiges JSON in genau diesem Format zurueck: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Behalte dieselben IDs und die Reihenfolge bei. Keine zusaetzlichen Schluessel oder Texte.";
+const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_EN: &str = "Default";
+const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_DE: &str = "Standard";
 
 fn normalize_locale(locale: &str) -> &'static str {
     if locale.trim().to_ascii_lowercase().starts_with("de") {
@@ -70,6 +72,22 @@ fn default_batch_prompt(locale: &str) -> String {
         DEFAULT_BATCH_PROMPT_DE.to_string()
     } else {
         DEFAULT_BATCH_PROMPT_EN.to_string()
+    }
+}
+
+fn default_custom_prompt_preset(locale: &str) -> CustomPromptPreset {
+    let normalized_locale = normalize_locale(locale);
+    let name = if normalized_locale == "de" {
+        DEFAULT_CUSTOM_PROMPT_PRESET_NAME_DE
+    } else {
+        DEFAULT_CUSTOM_PROMPT_PRESET_NAME_EN
+    };
+
+    CustomPromptPreset {
+        id: "default".to_string(),
+        name: name.to_string(),
+        value: default_custom_prompt(normalized_locale),
+        locale: normalized_locale.to_string(),
     }
 }
 
@@ -168,17 +186,24 @@ impl Default for DocxSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct CustomPromptPreset {
+    id: String,
+    name: String,
+    value: String,
+    locale: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct FrontendSettings {
     provider: String,
     api_url: String,
     api_key: Option<String>,
     model: String,
     custom_prompt: String,
+    custom_prompt_presets: Vec<CustomPromptPreset>,
+    active_custom_prompt_preset_id: String,
     system_prompt: String,
     batch_prompt: String,
-    prompt_preset: String,
-    prompt_locale: String,
-    prompt_user_modified: bool,
     auto_check_updates: bool,
     temperature: f64,
     provider_keys: HashMap<String, Option<String>>,
@@ -208,17 +233,17 @@ impl Default for FrontendSettings {
 impl FrontendSettings {
     fn default_for_locale(locale: &str) -> Self {
         let normalized_locale = normalize_locale(locale);
+        let default_preset = default_custom_prompt_preset(normalized_locale);
         Self {
             provider: "openai".into(),
             api_url: "https://api.openai.com/v1".into(),
             api_key: None,
             model: "gpt-4".into(),
-            custom_prompt: default_custom_prompt(normalized_locale),
+            custom_prompt: default_preset.value.clone(),
+            custom_prompt_presets: vec![default_preset.clone()],
+            active_custom_prompt_preset_id: default_preset.id,
             system_prompt: default_system_prompt(normalized_locale),
             batch_prompt: default_batch_prompt(normalized_locale),
-            prompt_preset: "default".into(),
-            prompt_locale: normalized_locale.into(),
-            prompt_user_modified: false,
             auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
             provider_keys: empty_provider_keys(),
@@ -484,7 +509,7 @@ async fn load_settings(app: AppHandle, locale: Option<String>) -> Result<Fronten
 
     let mut settings = decrypt_settings_secrets(raw_settings);
     settings.provider = canonical_provider(&settings.provider)?;
-    settings.prompt_locale = normalize_locale(&settings.prompt_locale).to_string();
+    sync_custom_prompt_with_active_preset(&mut settings)?;
     validate_settings(&settings)?;
 
     if settings.api_key.as_ref().map(|v| v.trim().is_empty()).unwrap_or(true) {
@@ -527,12 +552,39 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         return Err(format!("Invalid settings: batch_prompt is missing. {reset_hint}"));
     }
 
-    if settings.prompt_preset.trim().is_empty() {
-        return Err(format!("Invalid settings: prompt_preset is missing. {reset_hint}"));
+    if settings.custom_prompt_presets.is_empty() {
+        return Err(format!("Invalid settings: custom_prompt_presets is empty. {reset_hint}"));
     }
 
-    if normalize_locale(&settings.prompt_locale) != settings.prompt_locale.trim().to_ascii_lowercase() {
-        return Err(format!("Invalid settings: prompt_locale is invalid. {reset_hint}"));
+    if settings.active_custom_prompt_preset_id.trim().is_empty() {
+        return Err(format!("Invalid settings: active_custom_prompt_preset_id is missing. {reset_hint}"));
+    }
+
+    let mut seen_ids = HashSet::new();
+    let mut active_found = false;
+    for preset in &settings.custom_prompt_presets {
+        if preset.id.trim().is_empty() {
+            return Err(format!("Invalid settings: custom prompt preset id is missing. {reset_hint}"));
+        }
+        if !seen_ids.insert(preset.id.to_ascii_lowercase()) {
+            return Err(format!("Invalid settings: duplicate custom prompt preset ids. {reset_hint}"));
+        }
+        if preset.name.trim().is_empty() {
+            return Err(format!("Invalid settings: custom prompt preset name is missing. {reset_hint}"));
+        }
+        if preset.value.trim().is_empty() {
+            return Err(format!("Invalid settings: custom prompt preset value is missing. {reset_hint}"));
+        }
+        if normalize_locale(&preset.locale) != preset.locale.trim().to_ascii_lowercase() {
+            return Err(format!("Invalid settings: custom prompt preset locale is invalid. {reset_hint}"));
+        }
+        if preset.id.eq_ignore_ascii_case(&settings.active_custom_prompt_preset_id) {
+            active_found = true;
+        }
+    }
+
+    if !active_found {
+        return Err(format!("Invalid settings: active custom prompt preset does not exist. {reset_hint}"));
     }
 
     if !settings
@@ -590,6 +642,26 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
     Ok(())
 }
 
+fn sync_custom_prompt_with_active_preset(settings: &mut FrontendSettings) -> Result<(), String> {
+    let active_id = settings.active_custom_prompt_preset_id.trim();
+    if active_id.is_empty() {
+        return Err("Invalid settings: active custom prompt preset id is missing. Open Settings > Advanced and use 'Reset app'.".to_string());
+    }
+
+    let Some(active_preset) = settings
+        .custom_prompt_presets
+        .iter_mut()
+        .find(|preset| preset.id.eq_ignore_ascii_case(active_id))
+    else {
+        return Err("Invalid settings: active custom prompt preset does not exist. Open Settings > Advanced and use 'Reset app'.".to_string());
+    };
+
+    active_preset.locale = normalize_locale(&active_preset.locale).to_string();
+    settings.active_custom_prompt_preset_id = active_preset.id.trim().to_string();
+    settings.custom_prompt = active_preset.value.trim().to_string();
+    Ok(())
+}
+
 fn empty_provider_keys() -> HashMap<String, Option<String>> {
     let mut keys = HashMap::new();
     for provider in KNOWN_PROVIDERS {
@@ -612,7 +684,7 @@ async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(),
     let normalized_provider = canonical_provider(&settings.provider)?;
     let mut normalized_settings = settings;
     normalized_settings.provider = normalized_provider.clone();
-    normalized_settings.prompt_locale = normalize_locale(&normalized_settings.prompt_locale).to_string();
+    sync_custom_prompt_with_active_preset(&mut normalized_settings)?;
     if let Some(active) = normalized_settings
         .api_key
         .as_ref()

@@ -52,17 +52,23 @@ export const SETTINGS_LIMITS = {
   maxParallelRequests: { min: 1, max: 16, step: 1 },
 } as const;
 
+export interface CustomPromptPreset {
+  id: string;
+  name: string;
+  value: string;
+  locale: string;
+}
+
 export interface Settings {
   provider: Provider;
   api_url: string;
   api_key: string | null;
   model: string;
   custom_prompt: string;
+  custom_prompt_presets: CustomPromptPreset[];
+  active_custom_prompt_preset_id: string;
   system_prompt: string;
   batch_prompt: string;
-  prompt_preset: string;
-  prompt_locale: string;
-  prompt_user_modified: boolean;
   auto_check_updates: boolean;
   temperature: number;
   provider_keys: Record<Provider, string | null>;
