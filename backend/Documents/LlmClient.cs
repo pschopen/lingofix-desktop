@@ -47,7 +47,26 @@ public sealed class LlmClient
             Temperature = _temperature
         };
 
-        return await SendWithTemperatureFallbackAsync(baseRequest, cancellationToken);
+        return await SendWithTemperatureFallbackAsync(baseRequest, sanitizeOutput: true, cancellationToken);
+    }
+
+    public async Task<string> CorrectStructuredAsync(string input, CancellationToken cancellationToken = default)
+    {
+        var baseRequest = new ChatCompletionsRequest
+        {
+            Model = _model,
+            Messages =
+            [
+                new ChatMessage("user", BuildUserPrompt(_prompt, _systemPromptOverride, input))
+            ],
+            Temperature = _temperature,
+            ResponseFormat = new ChatResponseFormat
+            {
+                Type = "json_object"
+            }
+        };
+
+        return await SendWithTemperatureFallbackAsync(baseRequest, sanitizeOutput: false, cancellationToken);
     }
 
     public void ApplyAuth(string apiKey)
@@ -70,7 +89,7 @@ public sealed class LlmClient
         return string.Join("\n\n", parts);
     }
 
-    private static string SanitizeCorrection(string? value)
+    internal static string SanitizeCorrection(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -187,9 +206,10 @@ public sealed class LlmClient
         return baseDelay;
     }
 
-    private async Task<string> SendWithTemperatureFallbackAsync(ChatCompletionsRequest request, CancellationToken cancellationToken)
+    private async Task<string> SendWithTemperatureFallbackAsync(ChatCompletionsRequest request, bool sanitizeOutput, CancellationToken cancellationToken)
     {
         var allowTemperatureFallback = true;
+        var allowResponseFormatFallback = request.ResponseFormat is not null;
         for (int attempt = 1; attempt <= 3; attempt++)
         {
             var payload = JsonSerializer.Serialize(request, JsonOptions.Default);
@@ -209,7 +229,7 @@ public sealed class LlmClient
             if (response.IsSuccessStatusCode)
             {
                 var result = ExtractCompletionText(responseBody);
-                return SanitizeCorrection(result);
+                return sanitizeOutput ? SanitizeCorrection(result) : result.Trim();
             }
 
             var retryAfterSeconds = GetRetryAfterSeconds(response);
@@ -233,6 +253,15 @@ public sealed class LlmClient
                 continue;
             }
 
+            if (allowResponseFormatFallback && IsResponseFormatUnsupported(responseBody))
+            {
+                _logger?.Info("Note: response_format not accepted by the model. Retrying without response_format.");
+                request.ResponseFormat = null;
+                allowResponseFormatFallback = false;
+                attempt = 0;
+                continue;
+            }
+
             if (attempt == 3)
             {
                 throw new InvalidOperationException($"LLM error: {response.StatusCode} - {responseBody}");
@@ -242,6 +271,32 @@ public sealed class LlmClient
         }
 
         throw new InvalidOperationException("LLM request failed after retries.");
+    }
+
+    private static bool IsResponseFormatUnsupported(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return false;
+        }
+
+        var text = responseBody.ToLowerInvariant();
+        if (text.Contains("unsupported_parameter") || text.Contains("param\":\"response_format"))
+        {
+            return true;
+        }
+
+        if (TryGetErrorText(responseBody, out var errorText))
+        {
+            text = errorText.ToLowerInvariant();
+        }
+
+        return text.Contains("response_format") &&
+               (text.Contains("unsupported") ||
+                text.Contains("not supported") ||
+                text.Contains("does not support") ||
+                text.Contains("not allowed") ||
+                text.Contains("invalid"));
     }
 
     private static bool IsTemperatureUnsupported(string responseBody)

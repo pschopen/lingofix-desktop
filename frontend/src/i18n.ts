@@ -381,8 +381,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Batching',
   },
   'settings.docx.batch_prompt': {
-    de: 'Korrigiere nur den Text innerhalb der Tags. Gib die Antwort mit exakt denselben Tags und IDs zurück.\nKeine zusätzlichen Zeilen außerhalb der Tags.',
-    en: 'Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.',
+    de: 'Korrigiere jedes Element und gib NUR gueltiges JSON in genau diesem Format zurueck: {"items":[{"id":123,"text":"..."}]}. Behalte dieselben IDs und die Reihenfolge bei. Keine zusaetzlichen Schluessel oder Texte.',
+    en: 'Correct each item and return ONLY valid JSON in this exact format: {"items":[{"id":123,"text":"..."}]}. Keep the same IDs and order. No extra keys or text.',
   },
   'settings.docx.batch_max_chars': {
     de: 'Max. Zeichen pro Batch',

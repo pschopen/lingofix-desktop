@@ -12,6 +12,16 @@ public sealed class ChatCompletionsRequest
 
     [JsonPropertyName("temperature")]
     public double? Temperature { get; set; }
+
+    [JsonPropertyName("response_format")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ChatResponseFormat? ResponseFormat { get; set; }
+}
+
+public sealed class ChatResponseFormat
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "text";
 }
 
 public sealed class ChatMessage

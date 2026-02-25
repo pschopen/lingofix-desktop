@@ -39,7 +39,7 @@ fn default_system_prompt() -> String {
 }
 
 fn default_batch_prompt() -> String {
-    "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
+    "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text."
         .to_string()
 }
 
@@ -109,8 +109,8 @@ impl Default for DocxSettings {
         Self {
             compare_mode: "openxml".into(),
             enable_batching: true,
-            batch_max_chars: 50_000,
-            batch_max_paragraphs: 100,
+            batch_max_chars: 8_000,
+            batch_max_paragraphs: 20,
             enable_cache: true,
             enable_parallelization: true,
             max_parallel_requests: 2,

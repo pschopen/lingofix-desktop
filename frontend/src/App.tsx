@@ -11,8 +11,8 @@ import { useCorrectionState } from './hooks/useCorrectionState';
 const DEFAULT_DOCX_SETTINGS = {
   compare_mode: 'openxml' as const,
   enable_batching: true,
-  batch_max_chars: 50000,
-  batch_max_paragraphs: 100,
+  batch_max_chars: 8000,
+  batch_max_paragraphs: 20,
   enable_cache: true,
   enable_parallelization: true,
   max_parallel_requests: 2,
@@ -20,7 +20,7 @@ const DEFAULT_DOCX_SETTINGS = {
 
 const DEFAULT_PROMPT_EN = 'Correct the following text while maintaining the style and tone.';
 const DEFAULT_SYSTEM_PROMPT_EN = 'Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.';
-const DEFAULT_BATCH_PROMPT_EN = 'Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.';
+const DEFAULT_BATCH_PROMPT_EN = 'Correct each item and return ONLY valid JSON in this exact format: {"items":[{"id":123,"text":"..."}]}. Keep the same IDs and order. No extra keys or text.';
 const DOCX_COMPARE_FALLBACK_MANUAL_HINT = 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.';
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_STORAGE_KEY = 'lingofix.last_update_check_at';
@@ -150,6 +150,11 @@ function App() {
       const loaded = await invoke<Settings>('load_settings');
       if (!loaded.docx) {
         loaded.docx = DEFAULT_DOCX_SETTINGS;
+      } else {
+        loaded.docx = {
+          ...DEFAULT_DOCX_SETTINGS,
+          ...loaded.docx,
+        };
       }
       let updated = loaded;
       let changed = false;
@@ -771,36 +776,43 @@ function App() {
                 {docxLogs.length === 0 && (
                   <div className={`${isDarkMode ? 'text-surface-500' : 'text-surface-400'} text-sm`}>{t('docx.logs.empty', lang)}</div>
                 )}
-                {docxLogs.map((log, index) => (
-                  <div 
-                    key={index} 
-                    className={`flex items-start gap-2 ${
-                      log.level === 'error' 
-                        ? (isDarkMode ? 'text-red-400' : 'text-red-600')
-                        : log.level === 'warning'
-                        ? (isDarkMode ? 'text-amber-300' : 'text-amber-700')
-                        : log.level === 'info'
-                        ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-600')
-                        : (isDarkMode ? 'text-surface-400' : 'text-surface-600')
-                    }`}
-                  >
-                    <span className={`text-xs opacity-60 flex-shrink-0 mt-0.5`}>
-                      {new Date(log.timestamp).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 uppercase font-bold ${
-                      log.level === 'error'
-                        ? (isDarkMode ? 'bg-red-900/30 text-red-300' : 'bg-red-100 text-red-700')
-                        : log.level === 'warning'
-                        ? (isDarkMode ? 'bg-amber-900/30 text-amber-300' : 'bg-amber-100 text-amber-700')
-                        : log.level === 'info'
-                        ? (isDarkMode ? 'bg-emerald-900/30 text-emerald-300' : 'bg-emerald-100 text-emerald-700')
-                        : (isDarkMode ? 'bg-surface-700 text-surface-300' : 'bg-surface-200 text-surface-600')
-                    }`}>
-                      {log.level}
-                    </span>
-                    <span className="break-all">{localizeDocxLogMessage(log.message)}</span>
-                  </div>
-                ))}
+                {docxLogs.map((log, index) => {
+                  const isBatchingProfile = log.message.startsWith('Batching profile:');
+                  return (
+                    <div 
+                      key={index} 
+                      className={`flex items-start gap-2 ${
+                        isBatchingProfile
+                          ? (isDarkMode ? 'text-cyan-300 bg-cyan-900/20 border border-cyan-800/40 rounded px-2 py-1' : 'text-cyan-800 bg-cyan-50 border border-cyan-200 rounded px-2 py-1')
+                          : log.level === 'error' 
+                          ? (isDarkMode ? 'text-red-400' : 'text-red-600')
+                          : log.level === 'warning'
+                          ? (isDarkMode ? 'text-amber-300' : 'text-amber-700')
+                          : log.level === 'info'
+                          ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-600')
+                          : (isDarkMode ? 'text-surface-400' : 'text-surface-600')
+                      }`}
+                    >
+                      <span className={`text-xs opacity-60 flex-shrink-0 mt-0.5`}>
+                        {new Date(log.timestamp).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 uppercase font-bold ${
+                        isBatchingProfile
+                          ? (isDarkMode ? 'bg-cyan-900/40 text-cyan-200' : 'bg-cyan-100 text-cyan-700')
+                          : log.level === 'error'
+                          ? (isDarkMode ? 'bg-red-900/30 text-red-300' : 'bg-red-100 text-red-700')
+                          : log.level === 'warning'
+                          ? (isDarkMode ? 'bg-amber-900/30 text-amber-300' : 'bg-amber-100 text-amber-700')
+                          : log.level === 'info'
+                          ? (isDarkMode ? 'bg-emerald-900/30 text-emerald-300' : 'bg-emerald-100 text-emerald-700')
+                          : (isDarkMode ? 'bg-surface-700 text-surface-300' : 'bg-surface-200 text-surface-600')
+                      }`}>
+                        {isBatchingProfile ? 'batch' : log.level}
+                      </span>
+                      <span className="break-all">{localizeDocxLogMessage(log.message)}</span>
+                    </div>
+                  );
+                })}
                 <div ref={logsEndRef} />
               </div>
             </div>

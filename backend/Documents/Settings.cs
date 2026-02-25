@@ -14,12 +14,12 @@ public sealed class Settings
     public string SystemPrompt { get; set; } =
         "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
     public string BatchPrompt { get; set; } =
-        "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.";
+        "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text.";
     public string CompareMode { get; set; } = "openxml";
     public double Temperature { get; set; } = 0.0;
     public bool EnableBatching { get; set; } = true;
-    public int BatchMaxChars { get; set; } = 50000;
-    public int BatchMaxParagraphs { get; set; } = 100;
+    public int BatchMaxChars { get; set; } = 8000;
+    public int BatchMaxParagraphs { get; set; } = 20;
     public bool EnableCache { get; set; } = true;
     public bool EnableParallelization { get; set; } = true;
     public int MaxParallelRequests { get; set; } = 2;
@@ -84,7 +84,7 @@ public sealed class Settings
                 ? "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences."
                 : payload.SystemPrompt,
             BatchPrompt = string.IsNullOrWhiteSpace(payload.BatchPrompt)
-                ? "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
+                ? "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text."
                 : payload.BatchPrompt,
             Temperature = payload.Temperature,
             CompareMode = string.IsNullOrWhiteSpace(payload.Docx.CompareMode) ? "openxml" : payload.Docx.CompareMode,
@@ -130,7 +130,7 @@ internal sealed class FrontendSettingsPayload
     public string SystemPrompt { get; set; } = "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
 
     [JsonPropertyName("batch_prompt")]
-    public string BatchPrompt { get; set; } = "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.";
+    public string BatchPrompt { get; set; } = "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text.";
 
     [JsonPropertyName("temperature")]
     public double Temperature { get; set; }
@@ -148,10 +148,10 @@ internal sealed class FrontendDocxSettingsPayload
     public bool EnableBatching { get; set; } = true;
 
     [JsonPropertyName("batch_max_chars")]
-    public int BatchMaxChars { get; set; } = 50000;
+    public int BatchMaxChars { get; set; } = 8000;
 
     [JsonPropertyName("batch_max_paragraphs")]
-    public int BatchMaxParagraphs { get; set; } = 100;
+    public int BatchMaxParagraphs { get; set; } = 20;
 
     [JsonPropertyName("enable_cache")]
     public bool EnableCache { get; set; } = true;

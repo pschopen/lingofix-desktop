@@ -432,7 +432,7 @@ export function SettingsModal({
                   <div className="pl-4 border-l-2 border-accent-100 space-y-4">
                     <FieldGroup label={`${t('settings.docx.batch_max_chars', lang)}: ${formData.docx.batch_max_chars}`} isDarkMode={isDarkMode}>
                       <input
-                        type="range" min="1000" max="1000000" step="1000"
+                        type="range" min="500" max="50000" step="500"
                         value={formData.docx.batch_max_chars}
                         onChange={(e) => handleDocxSettingChange('batch_max_chars', Number(e.target.value))}
                         className="w-full mt-1"
@@ -440,7 +440,7 @@ export function SettingsModal({
                     </FieldGroup>
                     <FieldGroup label={`${t('settings.docx.batch_max_paragraphs', lang)}: ${formData.docx.batch_max_paragraphs}`} isDarkMode={isDarkMode}>
                       <input
-                        type="range" min="1" max="10000" step="10"
+                        type="range" min="1" max="100" step="1"
                         value={formData.docx.batch_max_paragraphs}
                         onChange={(e) => handleDocxSettingChange('batch_max_paragraphs', Number(e.target.value))}
                         className="w-full mt-1"
