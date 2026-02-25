@@ -64,12 +64,15 @@ fn is_known_provider(provider: &str) -> bool {
         .any(|known| known.eq_ignore_ascii_case(provider))
 }
 
-fn normalize_provider(provider: &str) -> String {
+fn canonical_provider(provider: &str) -> Result<String, String> {
     let trimmed = provider.trim();
     if is_known_provider(trimmed) {
-        trimmed.to_ascii_lowercase()
+        Ok(trimmed.to_ascii_lowercase())
     } else {
-        "openai".to_string()
+        Err(
+            "Invalid settings: provider is unknown. Open Settings > Advanced and use 'Reset app'."
+                .to_string(),
+        )
     }
 }
 
@@ -131,13 +134,9 @@ struct FrontendSettings {
     api_url: String,
     api_key: Option<String>,
     model: String,
-    #[serde(default = "default_custom_prompt")]
     custom_prompt: String,
-    #[serde(default = "default_system_prompt")]
     system_prompt: String,
-    #[serde(default = "default_batch_prompt")]
     batch_prompt: String,
-    #[serde(default = "default_auto_check_updates")]
     auto_check_updates: bool,
     temperature: f64,
     provider_keys: HashMap<String, Option<String>>,
@@ -304,7 +303,6 @@ fn encrypt_settings_secrets(mut settings: FrontendSettings) -> FrontendSettings 
 }
 
 fn sanitize_settings_for_disk(mut settings: FrontendSettings) -> FrontendSettings {
-    settings.provider = normalize_provider(&settings.provider);
     settings.api_key = None;
     let mut cleaned_keys: HashMap<String, Option<String>> = HashMap::new();
     for provider in KNOWN_PROVIDERS {
@@ -431,7 +429,7 @@ async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
         });
 
     let mut settings = decrypt_settings_secrets(raw_settings);
-    settings.provider = normalize_provider(&settings.provider);
+    settings.provider = canonical_provider(&settings.provider)?;
 
     if settings.api_key.as_ref().map(|v| v.trim().is_empty()).unwrap_or(true) {
         settings.api_key = settings
@@ -460,7 +458,7 @@ async fn write_settings_file(path: &Path, settings: FrontendSettings) -> Result<
 
 #[tauri::command]
 async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(), String> {
-    let normalized_provider = normalize_provider(&settings.provider);
+    let normalized_provider = canonical_provider(&settings.provider)?;
     let mut normalized_settings = settings;
     normalized_settings.provider = normalized_provider.clone();
     if let Some(active) = normalized_settings

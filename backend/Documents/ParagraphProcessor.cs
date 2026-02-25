@@ -403,9 +403,7 @@ public static class ParagraphProcessor
 
     private static string BuildBatchRequest(List<ParagraphItem> items, string batchPrompt)
     {
-        var normalizedPrompt = string.IsNullOrWhiteSpace(batchPrompt)
-            ? "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text."
-            : batchPrompt.Trim();
+        var normalizedPrompt = batchPrompt.Trim();
 
         var payload = new BatchInputPayload
         {
@@ -428,9 +426,7 @@ public static class ParagraphProcessor
 
     private static string BuildBatchRepairRequest(List<ParagraphItem> items, string invalidResponse, string batchPrompt)
     {
-        var normalizedPrompt = string.IsNullOrWhiteSpace(batchPrompt)
-            ? "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text."
-            : batchPrompt.Trim();
+        var normalizedPrompt = batchPrompt.Trim();
         var payload = new BatchInputPayload
         {
             Items = items.Select(item => new BatchInputItem
