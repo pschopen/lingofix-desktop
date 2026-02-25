@@ -77,6 +77,10 @@ You can run it manually from the Actions tab via `workflow_dispatch`.
 
 Release assets are published automatically by the `Release` workflow when you push a version tag matching `v*`.
 
+Version source of truth: `tauri/Cargo.toml` (`[package].version`).
+
+Release tags must match that version exactly (`vX.Y.Z` for `X.Y.Z` in `tauri/Cargo.toml`).
+
 Example:
 
 ```bash

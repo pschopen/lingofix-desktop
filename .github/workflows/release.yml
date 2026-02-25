@@ -12,9 +12,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  validate-version:
+    name: Validate tag vs Cargo version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify release tag matches tauri/Cargo.toml version
+        shell: bash
+        run: |
+          CARGO_VERSION=$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('tauri/Cargo.toml').read_text(encoding='utf-8')
+          match = re.search(r'^version\s*=\s*"([^"]+)"\s*$', text, flags=re.MULTILINE)
+          if not match:
+              raise SystemExit('Could not find version in tauri/Cargo.toml')
+          print(match.group(1))
+          PY
+          )
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+
+          echo "Cargo version: ${CARGO_VERSION}"
+          echo "Tag version:   ${TAG_VERSION}"
+
+          if [ "${CARGO_VERSION}" != "${TAG_VERSION}" ]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match tauri/Cargo.toml version ${CARGO_VERSION}."
+            exit 1
+          fi
+
   macos-arm64:
     name: Build macOS ARM64
     runs-on: macos-14
+    needs: validate-version
 
     steps:
       - name: Checkout
@@ -72,6 +104,7 @@ jobs:
   macos-x64:
     name: Build macOS x64
     runs-on: macos-14
+    needs: validate-version
 
     steps:
       - name: Checkout
@@ -129,6 +162,7 @@ jobs:
   windows-x64:
     name: Build Windows x64
     runs-on: windows-latest
+    needs: validate-version
 
     steps:
       - name: Checkout
@@ -184,6 +218,7 @@ jobs:
   linux-x64:
     name: Build Linux x64
     runs-on: ubuntu-latest
+    needs: validate-version
 
     steps:
       - name: Checkout
