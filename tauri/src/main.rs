@@ -115,7 +115,7 @@ impl Default for DocxSettings {
     fn default() -> Self {
         Self {
             compare_mode: "openxml".into(),
-            enable_batching: true,
+            enable_batching: false,
             batch_max_chars: 8_000,
             batch_max_paragraphs: 20,
             enable_cache: true,
@@ -405,13 +405,19 @@ fn clear_temp_lingofix_dir() {
 async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
     let path = settings_path(&app).map_err(|e| e.to_string())?;
     if !path.exists() {
-        return Ok(FrontendSettings::default());
+        let defaults = FrontendSettings::default();
+        write_settings_file(&path, defaults.clone()).await?;
+        return Ok(defaults);
     }
 
     let content = tokio::fs::read_to_string(&path)
         .await
         .map_err(|e| e.to_string())?;
-    let raw_settings: FrontendSettings = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let raw_settings: FrontendSettings = serde_json::from_str(&content).map_err(|e| {
+        format!(
+            "Could not parse settings.json: {e}. Open Settings > Advanced and use 'Reset app'."
+        )
+    })?;
     let has_plain_secrets = raw_settings
         .api_key
         .as_ref()
@@ -437,13 +443,19 @@ async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
     }
 
     if has_plain_secrets {
-        let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(settings.clone()));
-        if let Ok(serialized) = serde_json::to_string_pretty(&encrypted) {
-            let _ = tokio::fs::write(&path, serialized).await;
-        }
+        let _ = write_settings_file(&path, settings.clone()).await;
     }
 
     Ok(settings)
+}
+
+async fn write_settings_file(path: &Path, settings: FrontendSettings) -> Result<(), String> {
+    let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(settings));
+    let content = serde_json::to_string_pretty(&encrypted)
+        .map_err(|e| e.to_string())?;
+    tokio::fs::write(path, content)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -463,12 +475,20 @@ async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(),
     }
 
     let path = settings_path(&app).map_err(|e| e.to_string())?;
-    let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(normalized_settings));
-    let content = serde_json::to_string_pretty(&encrypted)
-        .map_err(|e| e.to_string())?;
-    tokio::fs::write(path, content)
-        .await
-        .map_err(|e| e.to_string())
+    write_settings_file(&path, normalized_settings).await
+}
+
+#[tauri::command]
+async fn reset_settings(app: AppHandle) -> Result<FrontendSettings, String> {
+    let path = settings_path(&app).map_err(|e| e.to_string())?;
+    let defaults = FrontendSettings::default();
+    write_settings_file(&path, defaults.clone()).await?;
+    Ok(defaults)
+}
+
+#[tauri::command]
+fn get_default_settings() -> FrontendSettings {
+    FrontendSettings::default()
 }
 
 #[tauri::command]
@@ -2085,6 +2105,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,
+            reset_settings,
+            get_default_settings,
             fetch_models,
             correct_text_streaming,
             cancel_correction,

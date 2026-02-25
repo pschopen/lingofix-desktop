@@ -90,6 +90,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Einstellungen konnten nicht geladen werden.',
     en: 'Could not load settings.',
   },
+  'error.load_settings_reset': {
+    de: 'Einstellungen konnten nicht geladen werden. Öffnen Sie Einstellungen > Erweitert und wählen Sie "App zurücksetzen".',
+    en: 'Could not load settings. Open Settings > Advanced and choose "Reset app".',
+  },
   'error.empty_result': {
     de: 'Die Korrektur lieferte keinen Text. Bitte prüfen Sie API-Key, Modell und Provider in den Einstellungen.',
     en: 'The correction returned no text. Please verify API key, model, and provider settings.',
@@ -377,8 +381,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Temperature',
   },
   'settings.docx.batching': {
-    de: 'Batching',
-    en: 'Batching',
+    de: 'Batching (experimentell)',
+    en: 'Batching (experimental)',
   },
   'settings.docx.batch_prompt': {
     de: 'Korrigiere jedes Element und gib NUR gueltiges JSON in genau diesem Format zurueck: {"items":[{"id":123,"text":"..."}]}. Behalte dieselben IDs und die Reihenfolge bei. Keine zusaetzlichen Schluessel oder Texte.',
@@ -449,6 +453,26 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.system_paths': {
     de: 'Systempfade',
     en: 'System paths',
+  },
+  'settings.app_reset': {
+    de: 'App zurücksetzen',
+    en: 'Reset app',
+  },
+  'settings.app_reset.hint': {
+    de: 'Erstellt die settings.json neu mit Standardwerten. Verwenden Sie dies bei beschädigter Konfiguration.',
+    en: 'Recreates settings.json with default values. Use this if your configuration is broken.',
+  },
+  'settings.app_reset.button': {
+    de: 'App zurücksetzen',
+    en: 'Reset app',
+  },
+  'settings.app_reset.success': {
+    de: 'Die App wurde zurückgesetzt. Die Standard-Einstellungen sind wiederhergestellt.',
+    en: 'App reset complete. Default settings were restored.',
+  },
+  'settings.app_reset.failed': {
+    de: 'App konnte nicht zurückgesetzt werden',
+    en: 'Could not reset app',
   },
   'settings.system_paths.hint': {
     de: 'Temp-Ordner und settings.json direkt im Dateiexplorer öffnen.',

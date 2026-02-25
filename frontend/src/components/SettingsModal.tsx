@@ -9,6 +9,7 @@ interface SettingsModalProps {
   onClose: () => void;
   settings: Settings;
   onSave: (settings: Settings) => void;
+  onResetSettings: () => Promise<Settings>;
   onCheckUpdates: () => Promise<{ status: 'update-available' | 'up-to-date' | 'error'; message: string }>;
   lang: Language;
   isDarkMode?: boolean;
@@ -47,6 +48,7 @@ export function SettingsModal({
   onClose,
   settings,
   onSave,
+  onResetSettings,
   onCheckUpdates,
   lang,
   isDarkMode = false,
@@ -61,6 +63,9 @@ export function SettingsModal({
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updateCheckMessage, setUpdateCheckMessage] = useState('');
   const [systemPathMessage, setSystemPathMessage] = useState('');
+  const [isResettingApp, setIsResettingApp] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
+  const [resetMessageIsError, setResetMessageIsError] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -68,6 +73,8 @@ export function SettingsModal({
       setCompareAccessStatus(null);
       setUpdateCheckMessage('');
       setSystemPathMessage('');
+      setResetMessage('');
+      setResetMessageIsError(false);
     }
   }, [isOpen, settings]);
 
@@ -200,6 +207,24 @@ export function SettingsModal({
       await invoke('open_settings_json');
     } catch (error) {
       setSystemPathMessage(`${t('settings.system_paths.open_failed', lang)}: ${error}`);
+    }
+  };
+
+  const handleResetApp = async () => {
+    setResetMessage('');
+    setResetMessageIsError(false);
+    setSystemPathMessage('');
+    setIsResettingApp(true);
+    try {
+      const resetSettings = await onResetSettings();
+      setFormData(resetSettings);
+      setResetMessage(t('settings.app_reset.success', lang));
+      setResetMessageIsError(false);
+    } catch (error) {
+      setResetMessage(`${t('settings.app_reset.failed', lang)}: ${error}`);
+      setResetMessageIsError(true);
+    } finally {
+      setIsResettingApp(false);
     }
   };
 
@@ -528,6 +553,29 @@ export function SettingsModal({
                     {updateCheckMessage && (
                       <p className={`mt-2 text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
                         {updateCheckMessage}
+                      </p>
+                    )}
+                  </FieldGroup>
+                </div>
+
+                <div className={`pt-2 mt-1 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
+                  <FieldGroup
+                    label={t('settings.app_reset', lang)}
+                    hint={t('settings.app_reset.hint', lang)}
+                    isDarkMode={isDarkMode}
+                  >
+                    <button
+                      type="button"
+                      onClick={handleResetApp}
+                      disabled={isResettingApp}
+                      className="btn-secondary !text-base"
+                    >
+                      {isResettingApp ? <Loader2 className="animate-spin" size={14} /> : null}
+                      {t('settings.app_reset.button', lang)}
+                    </button>
+                    {resetMessage && (
+                      <p className={`mt-2 text-sm ${resetMessageIsError ? 'text-amber-600' : 'text-emerald-600'}`}>
+                        {resetMessage}
                       </p>
                     )}
                   </FieldGroup>

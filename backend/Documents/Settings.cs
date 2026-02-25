@@ -17,7 +17,7 @@ public sealed class Settings
         "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text.";
     public string CompareMode { get; set; } = "openxml";
     public double Temperature { get; set; } = 0.0;
-    public bool EnableBatching { get; set; } = true;
+    public bool EnableBatching { get; set; } = false;
     public int BatchMaxChars { get; set; } = 8000;
     public int BatchMaxParagraphs { get; set; } = 20;
     public bool EnableCache { get; set; } = true;
@@ -145,7 +145,7 @@ internal sealed class FrontendDocxSettingsPayload
     public string CompareMode { get; set; } = "openxml";
 
     [JsonPropertyName("enable_batching")]
-    public bool EnableBatching { get; set; } = true;
+    public bool EnableBatching { get; set; } = false;
 
     [JsonPropertyName("batch_max_chars")]
     public int BatchMaxChars { get; set; } = 8000;

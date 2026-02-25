@@ -8,19 +8,6 @@ import { t, detectLanguage } from './i18n';
 import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
 
-const DEFAULT_DOCX_SETTINGS = {
-  compare_mode: 'openxml' as const,
-  enable_batching: true,
-  batch_max_chars: 8000,
-  batch_max_paragraphs: 20,
-  enable_cache: true,
-  enable_parallelization: true,
-  max_parallel_requests: 2,
-};
-
-const DEFAULT_PROMPT_EN = 'Correct the following text while maintaining the style and tone.';
-const DEFAULT_SYSTEM_PROMPT_EN = 'Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.';
-const DEFAULT_BATCH_PROMPT_EN = 'Correct each item and return ONLY valid JSON in this exact format: {"items":[{"id":123,"text":"..."}]}. Keep the same IDs and order. No extra keys or text.';
 const DOCX_COMPARE_FALLBACK_MANUAL_HINT = 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.';
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_STORAGE_KEY = 'lingofix.last_update_check_at';
@@ -135,28 +122,7 @@ function App() {
   } = useDocxState();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [settings, setSettings] = useState<Settings>({
-    provider: 'openai',
-    api_url: 'https://api.openai.com/v1',
-    api_key: null,
-    model: 'gpt-4',
-    custom_prompt: t('settings.prompt.default', lang),
-    system_prompt: t('settings.system_prompt.value', lang),
-    batch_prompt: t('settings.docx.batch_prompt', lang),
-    auto_check_updates: true,
-    temperature: 0.0,
-    provider_keys: {
-      openai: null,
-      ollama: null,
-      openrouter: null,
-      huggingface: null,
-      google: null,
-      mistral: null,
-      custom: null,
-    },
-    docx: DEFAULT_DOCX_SETTINGS,
-    font_size: 'default' as FontSize,
-  });
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
   const shownUpdateVersionRef = useRef<string | null>(null);
 
@@ -170,12 +136,12 @@ function App() {
       xxl: 22,
     };
     
-    const fontSize = settings.font_size as FontSize || 'default';
+    const fontSize = (settings?.font_size as FontSize | undefined) || 'default';
     const px = FONT_SIZE_MAP[fontSize] || 16;
     document.documentElement.style.setProperty('--fs-base', `${px}px`);
     // Set font-size on html element so Tailwind's rem-based classes respond correctly
     document.documentElement.style.fontSize = `${px}px`;
-  }, [settings.font_size]);
+  }, [settings?.font_size]);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const textRef = useRef(text);
 
@@ -186,54 +152,24 @@ function App() {
   const loadSettings = useCallback(async () => {
     try {
       const loaded = await invoke<Settings>('load_settings');
-      if (!loaded.docx) {
-        loaded.docx = DEFAULT_DOCX_SETTINGS;
-      } else {
-        loaded.docx = {
-          ...DEFAULT_DOCX_SETTINGS,
-          ...loaded.docx,
-        };
-      }
-      let updated = loaded;
-      let changed = false;
-
-      if (lang === 'de') {
-        if (!loaded.custom_prompt || loaded.custom_prompt === DEFAULT_PROMPT_EN) {
-          updated = { ...updated, custom_prompt: t('settings.prompt.default', lang) };
-          changed = true;
-        }
-        if (!loaded.system_prompt || loaded.system_prompt === DEFAULT_SYSTEM_PROMPT_EN) {
-          updated = { ...updated, system_prompt: t('settings.system_prompt.value', lang) };
-          changed = true;
-        }
-        if (!loaded.batch_prompt || loaded.batch_prompt === DEFAULT_BATCH_PROMPT_EN) {
-          updated = { ...updated, batch_prompt: t('settings.docx.batch_prompt', lang) };
-          changed = true;
-        }
-      }
-
-      if (!updated.batch_prompt) {
-        updated = { ...updated, batch_prompt: t('settings.docx.batch_prompt', lang) };
-        changed = true;
-      }
-
-      if (typeof updated.auto_check_updates !== 'boolean') {
-        updated = { ...updated, auto_check_updates: true };
-        changed = true;
-      }
-
-      if (changed) {
-        await invoke('save_settings', { settings: updated });
-      }
-
-      setSettings(updated);
+      setSettings(loaded);
     } catch (error) {
       console.error('Failed to load settings:', error);
-      setError(t('error.load_settings', lang));
+      try {
+        const defaults = await invoke<Settings>('get_default_settings');
+        setSettings(defaults);
+      } catch {
+        setSettings(null);
+      }
+      setError(t('error.load_settings_reset', lang));
     }
   }, [lang, setError]);
 
   const runUpdateCheck = useCallback(async ({ manual = false, force = false }: { manual?: boolean; force?: boolean } = {}): Promise<UpdateCheckResult> => {
+    if (!settings) {
+      return { status: 'error', message: t('error.load_settings_reset', lang) };
+    }
+
     if (!manual && !settings.auto_check_updates) {
       return { status: 'up-to-date', message: t('update.none', lang) };
     }
@@ -354,7 +290,7 @@ function App() {
         message: t('update.check_failed', lang),
       };
     }
-  }, [lang, settings.auto_check_updates]);
+  }, [lang, settings]);
 
   const handleManualUpdateCheck = useCallback(async (): Promise<UpdateCheckResult> => {
     const result = await runUpdateCheck({ manual: true, force: true });
@@ -473,7 +409,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!settings.auto_check_updates) {
+    if (!settings || !settings.auto_check_updates) {
       return;
     }
 
@@ -485,7 +421,7 @@ function App() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [runUpdateCheck, settings.auto_check_updates]);
+  }, [runUpdateCheck, settings]);
 
   // Auto-scroll to bottom of logs
   useEffect(() => {
@@ -510,7 +446,7 @@ function App() {
   }, [setDocxSelection]);
 
   const startDocxCorrection = useCallback(async (acceptExistingTrackChanges: boolean) => {
-    if (!docxFile?.path) {
+    if (!docxFile?.path || !settings) {
       return;
     }
 
@@ -536,6 +472,11 @@ function App() {
   }, [docxFile, lang, resetDocxRunState, setDocxProgress, setError, setInfoMessage, setIsCorrecting, settings]);
 
   const handleCorrect = useCallback(async () => {
+    if (!settings) {
+      setError(t('error.load_settings_reset', lang));
+      return;
+    }
+
     if (docxFile) {
       if (!docxFile.path) return;
 
@@ -640,6 +581,14 @@ function App() {
       setError(String(error));
     }
   };
+
+  const handleResetSettings = useCallback(async (): Promise<Settings> => {
+    const reset = await invoke<Settings>('reset_settings');
+    setSettings(reset);
+    setError(null);
+    setInfoMessage(t('settings.app_reset.success', lang));
+    return reset;
+  }, [lang, setError]);
 
   const isDocxMode = !!docxFile;
   const hasText = text.trim().length > 0;
@@ -1069,15 +1018,18 @@ function App() {
       </main>
 
       {/* === Settings Modal === */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        settings={settings}
-        onSave={handleSaveSettings}
-        onCheckUpdates={handleManualUpdateCheck}
-        lang={lang}
-        isDarkMode={isDarkMode}
-      />
+      {settings && (
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          settings={settings}
+          onSave={handleSaveSettings}
+          onResetSettings={handleResetSettings}
+          onCheckUpdates={handleManualUpdateCheck}
+          lang={lang}
+          isDarkMode={isDarkMode}
+        />
+      )}
 
       {/* === Diff Mode Consent Modal === */}
       {showDiffModeConsent && (
