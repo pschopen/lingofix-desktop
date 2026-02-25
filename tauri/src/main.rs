@@ -26,6 +26,7 @@ const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
 const SOFFICE_PATH_ENV: &str = "LINGOFIX_SOFFICE_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
+#[cfg(target_os = "macos")]
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
 
@@ -1578,12 +1579,71 @@ fn combine_backend_error(message: &str, stderr: &str) -> String {
 
 #[tauri::command]
 fn check_word_compare_access() -> Result<WordCompareAccessStatus, String> {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let script = "$ErrorActionPreference='Stop'; $word=$null; try { $word = New-Object -ComObject Word.Application; $word.Visible = $false; $name = $word.Name; if ([string]::IsNullOrWhiteSpace($name)) { Write-Output 'Microsoft Word'; } else { Write-Output $name; } } finally { if ($null -ne $word) { try { $word.Quit() } catch { } [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) } }";
+
+        let mut command = std::process::Command::new("powershell.exe");
+        command.arg("-NoProfile").arg("-Sta").arg("-Command").arg(script);
+
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+
+        let output = command
+            .output()
+            .map_err(|e| format!("failed to run PowerShell: {e}"))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let details = if stdout.is_empty() {
+                "Microsoft Word detected via COM automation.".to_string()
+            } else {
+                format!("Detected: {stdout}")
+            };
+
+            return Ok(WordCompareAccessStatus {
+                ok: true,
+                message: "Word compare setup is ready.".to_string(),
+                details,
+            });
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let details = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("PowerShell exited with status {}", output.status)
+        };
+
+        return Ok(WordCompareAccessStatus {
+            ok: false,
+            message: "Word compare access is not ready yet.".to_string(),
+            details: format!(
+                "Check Microsoft Word installation and COM availability.\n\n{}",
+                details
+            ),
+        });
+    }
+
+    #[cfg(target_os = "linux")]
     {
         return Ok(WordCompareAccessStatus {
-            ok: true,
-            message: "Word compare access check is only required on macOS.".to_string(),
-            details: String::new(),
+            ok: false,
+            message: "Word compare access is not supported on this operating system.".to_string(),
+            details: "Use LibreOffice UNO compare mode on Linux.".to_string(),
+        });
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        return Ok(WordCompareAccessStatus {
+            ok: false,
+            message: "Word compare access is not supported on this operating system.".to_string(),
+            details: "Use OpenXML or LibreOffice UNO compare mode instead.".to_string(),
         });
     }
 
