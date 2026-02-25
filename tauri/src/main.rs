@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
 const MAX_OFFICE_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
@@ -922,15 +923,29 @@ async fn stream_openai_like(
     };
 
     let resp = loop {
-        let response = send_openai_like_request(
+        let request_future = send_openai_like_request(
             &client,
             &url,
             settings,
             &prompt,
             include_reasoning_effort,
             include_temperature,
-        )
-        .await?;
+        );
+        tokio::pin!(request_future);
+
+        let response = loop {
+            tokio::select! {
+                result = &mut request_future => {
+                    break result?;
+                }
+                _ = sleep(Duration::from_millis(120)) => {
+                    if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        let _ = app.emit("correction_complete", text.to_string());
+                        return Ok(());
+                    }
+                }
+            }
+        };
 
         if response.status().is_success() {
             if include_temperature {
@@ -975,43 +990,47 @@ async fn stream_openai_like(
     let mut buf = String::new();
     let mut all = String::new();
 
-    while let Some(chunk) = stream.next().await {
-        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = app.emit("correction_complete", remove_markdown(&all));
-            return Ok(());
-        }
-
-        let chunk = chunk?;
-        buf.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(pos) = buf.find('\n') {
-            let line = buf[..pos].trim().to_string();
-            buf = buf[pos + 1..].to_string();
-
-            if !line.starts_with("data: ") {
-                continue;
-            }
-
-            let data = &line[6..];
-            if data == "[DONE]" {
-                let final_text = remove_markdown(&all);
-                if final_text.trim().is_empty() {
-                    return Err(anyhow!("LLM returned an empty correction result"));
+    loop {
+        tokio::select! {
+            _ = sleep(Duration::from_millis(120)) => {
+                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    let partial = remove_markdown(&all);
+                    let payload = if partial.trim().is_empty() { text.to_string() } else { partial };
+                    let _ = app.emit("correction_complete", payload);
+                    return Ok(());
                 }
-                let _ = app.emit("correction_complete", final_text);
-                return Ok(());
             }
+            maybe_chunk = stream.next() => {
+                let Some(chunk) = maybe_chunk else { break; };
+                let chunk = chunk?;
+                buf.push_str(&String::from_utf8_lossy(&chunk));
 
-            if let Ok(value) = serde_json::from_str::<Value>(data) {
-                if let Some(content) = value
-                    .get("choices")
-                    .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|c| c.get("delta"))
-                    .and_then(|d| d.get("content"))
-                    .and_then(|c| c.as_str())
-                {
-                    all.push_str(content);
-                    let _ = app.emit("correction_chunk", remove_markdown(&all));
+                while let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].trim().to_string();
+                    buf = buf[pos + 1..].to_string();
+
+                    if !line.starts_with("data: ") {
+                        continue;
+                    }
+
+                    let data = &line[6..];
+                    if data == "[DONE]" {
+                        let final_text = remove_markdown(&all);
+                        if final_text.trim().is_empty() {
+                            return Err(anyhow!("LLM returned an empty correction result"));
+                        }
+                        let _ = app.emit("correction_complete", final_text);
+                        return Ok(());
+                    }
+
+                    if let Ok(value) = serde_json::from_str::<Value>(data) {
+                        if let Some(content) = extract_openai_like_stream_content(&value) {
+                            if !content.is_empty() {
+                                all.push_str(&content);
+                                let _ = app.emit("correction_chunk", remove_markdown(&all));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1071,6 +1090,133 @@ fn is_temperature_unsupported_error(message: &str) -> bool {
             || m.contains("unsupported")
             || m.contains("not allowed")
             || m.contains("invalid"))
+}
+
+fn extract_openai_like_stream_content(value: &Value) -> Option<String> {
+    if let Some(event_type) = value.get("type").and_then(Value::as_str) {
+        if event_type.contains("output_text") {
+            if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                if !delta.is_empty() {
+                    return Some(delta.to_string());
+                }
+            }
+            if let Some(text) = value.get("text").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+        }
+    }
+
+    if let Some(first_choice) = value
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+    {
+        if let Some(delta) = first_choice.get("delta") {
+            if let Some(content) = delta.get("content") {
+                if let Some(text) = read_text_content_value(content) {
+                    return Some(text);
+                }
+            }
+
+            if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+        }
+
+        if let Some(message) = first_choice.get("message") {
+            if let Some(content) = message.get("content") {
+                if let Some(text) = read_text_content_value(content) {
+                    return Some(text);
+                }
+            }
+        }
+
+        if let Some(text) = first_choice.get("text").and_then(Value::as_str) {
+            if !text.is_empty() {
+                return Some(text.to_string());
+            }
+        }
+    }
+
+    if let Some(output_text) = value.get("output_text") {
+        if let Some(text) = read_text_content_value(output_text) {
+            return Some(text);
+        }
+    }
+
+    if let Some(output) = value.get("output").and_then(Value::as_array) {
+        let mut parts = Vec::new();
+        for item in output {
+            if let Some(content) = item.get("content") {
+                if let Some(text) = read_text_content_value(content) {
+                    if !text.is_empty() {
+                        parts.push(text);
+                    }
+                }
+            }
+        }
+        if !parts.is_empty() {
+            return Some(parts.join(""));
+        }
+    }
+
+    None
+}
+
+fn read_text_content_value(content: &Value) -> Option<String> {
+    match content {
+        Value::String(s) => {
+            if s.is_empty() {
+                None
+            } else {
+                Some(s.clone())
+            }
+        }
+        Value::Array(items) => {
+            let mut parts = Vec::new();
+            for item in items {
+                if let Some(text) = read_text_content_value(item) {
+                    if !text.is_empty() {
+                        parts.push(text);
+                    }
+                }
+            }
+
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(""))
+            }
+        }
+        Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+
+            if let Some(value) = map.get("value").and_then(Value::as_str) {
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+
+            if let Some(nested) = map.get("content") {
+                if let Some(text) = read_text_content_value(nested) {
+                    if !text.is_empty() {
+                        return Some(text);
+                    }
+                }
+            }
+
+            None
+        }
+        _ => None,
+    }
 }
 
 fn temperature_capability_key(settings: &FrontendSettings) -> String {

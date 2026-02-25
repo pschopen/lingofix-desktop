@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { Children, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '../lib/bridge';
-import { X, Loader2, ChevronDown } from 'lucide-react';
+import { X, Loader2, ChevronDown, Plus, Copy, Pencil, Trash2 } from 'lucide-react';
 import {
   Settings,
   CustomPromptPreset,
@@ -80,12 +80,8 @@ export function SettingsModal({
 
   const isMac = navigator.userAgent.toLowerCase().includes('mac');
 
-  const handleFetchModels = async () => {
-    if (!formData) {
-      return;
-    }
-
-    if (!formData.api_url) {
+  const fetchModelsForSettings = async (candidate: Settings) => {
+    if (!candidate.api_url) {
       setModelError(t('settings.url_required', lang));
       return;
     }
@@ -95,17 +91,22 @@ export function SettingsModal({
 
     try {
       const fetchedModels = await invoke<string[]>('fetch_models', {
-        apiUrl: formData.api_url,
-        apiKey: formData.api_key,
-        provider: formData.provider,
+        apiUrl: candidate.api_url,
+        apiKey: candidate.api_key,
+        provider: candidate.provider,
       });
       
       fetchedModels.sort((a, b) => a.localeCompare(b));
       
       setModels(fetchedModels);
       
-      if (fetchedModels.length > 0 && !fetchedModels.includes(formData.model)) {
-        setFormData({ ...formData, model: fetchedModels[0] });
+      if (fetchedModels.length > 0 && !fetchedModels.includes(candidate.model)) {
+        setFormData((prev) => {
+          if (!prev) {
+            return prev;
+          }
+          return { ...prev, model: fetchedModels[0] };
+        });
       }
     } catch (error) {
       console.error('Failed to fetch models:', error);
@@ -114,6 +115,14 @@ export function SettingsModal({
     } finally {
       setIsLoadingModels(false);
     }
+  };
+
+  const handleFetchModels = async () => {
+    if (!formData) {
+      return;
+    }
+
+    await fetchModelsForSettings(formData);
   };
 
   const handleProviderChange = (newProvider: Provider) => {
@@ -128,15 +137,18 @@ export function SettingsModal({
 
     const newApiKey = updatedKeys[newProvider] || null;
     
-    setFormData({
+    const nextSettings: Settings = {
       ...formData,
       provider: newProvider,
       api_url: PROVIDER_DEFAULT_URLS[newProvider] || formData.api_url,
       api_key: newApiKey,
       provider_keys: updatedKeys,
       model: '',
-    });
+    };
+
+    setFormData(nextSettings);
     setModels([]);
+    void fetchModelsForSettings(nextSettings);
   };
 
   const handleDocxSettingChange = <K extends keyof DocxSettings>(key: K, value: DocxSettings[K]) => {
@@ -159,6 +171,26 @@ export function SettingsModal({
     }
 
     void handleFetchModels();
+  };
+
+  const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!formData) {
+      return;
+    }
+
+    const nextApiKey = e.target.value || null;
+    const hadApiKey = !!formData.api_key?.trim();
+    const hasApiKeyNow = !!nextApiKey?.trim();
+    const nextSettings: Settings = {
+      ...formData,
+      api_key: nextApiKey,
+    };
+
+    setFormData(nextSettings);
+
+    if (!hadApiKey && hasApiKeyNow) {
+      void fetchModelsForSettings(nextSettings);
+    }
   };
 
   const createPresetId = () => {
@@ -594,11 +626,11 @@ export function SettingsModal({
                     <div className="space-y-1">
                       <SelectField
                         value={formData.active_custom_prompt_preset_id}
-                        onChange={(e) => handleSelectCustomPromptPreset(e.target.value)}
+                        onChange={(nextValue) => handleSelectCustomPromptPreset(nextValue)}
                         isDarkMode={isDarkMode}
                       >
                         {formData.custom_prompt_presets.map((preset) => (
-                          <option key={preset.id} value={preset.id}>
+                          <option key={preset.id} value={preset.id} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
                             {preset.name}
                           </option>
                         ))}
@@ -611,6 +643,7 @@ export function SettingsModal({
                         onClick={handleCreateCustomPromptPreset}
                         className="btn-secondary !text-base"
                       >
+                        <Plus size={14} />
                         {t('settings.prompt_presets.new', lang)}
                       </button>
                       <button
@@ -618,6 +651,7 @@ export function SettingsModal({
                         onClick={handleDuplicateCustomPromptPreset}
                         className="btn-secondary !text-base"
                       >
+                        <Copy size={14} />
                         {t('settings.prompt_presets.duplicate', lang)}
                       </button>
                       <button
@@ -625,6 +659,7 @@ export function SettingsModal({
                         onClick={handleRenameCustomPromptPreset}
                         className="btn-secondary !text-base"
                       >
+                        <Pencil size={14} />
                         {t('settings.prompt_presets.rename', lang)}
                       </button>
                       <button
@@ -632,6 +667,7 @@ export function SettingsModal({
                         onClick={handleDeleteCustomPromptPreset}
                         className="btn-secondary !text-base"
                       >
+                        <Trash2 size={14} />
                         {t('settings.prompt_presets.delete', lang)}
                       </button>
                     </div>
@@ -655,11 +691,11 @@ export function SettingsModal({
                     <FieldGroup label={t('settings.provider', lang)}>
                       <SelectField
                         value={formData.provider}
-                        onChange={(e) => handleProviderChange(e.target.value as Provider)}
+                        onChange={(nextValue) => handleProviderChange(nextValue as Provider)}
                         isDarkMode={isDarkMode}
                       >
                         {PROVIDERS.map((key) => (
-                          <option key={key} value={key}>
+                          <option key={key} value={key} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
                             {PROVIDER_LABELS[key]}
                           </option>
                         ))}
@@ -677,7 +713,7 @@ export function SettingsModal({
                       <input
                         type="password"
                         value={formData.api_key || ''}
-                        onChange={(e) => setFormData({ ...formData, api_key: e.target.value || null })}
+                        onChange={handleApiKeyChange}
                         placeholder={isOllama ? t('settings.api_key.optional', lang) : t('settings.api_key.placeholder', lang)}
                         className={`input !text-base ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
                       />
@@ -702,16 +738,15 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.model', lang)} error={modelError} isDarkMode={isDarkMode}>
                   <SelectField
                     value={formData.model}
-                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                    onFocus={handleModelDropdownFocus}
-                    onMouseDown={handleModelDropdownFocus}
+                    onChange={(nextValue) => setFormData({ ...formData, model: nextValue })}
+                    onOpen={handleModelDropdownFocus}
                     isDarkMode={isDarkMode}
                   >
                     {models.length === 0 ? (
                       <option value={formData.model}>{isLoadingModels ? `${t('settings.model.load', lang)}...` : formData.model}</option>
                     ) : (
                       models.map((model) => (
-                        <option key={model} value={model}>
+                        <option key={model} value={model} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
                           {model}
                         </option>
                       ))
@@ -726,7 +761,7 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.docx.compare_mode', lang)} isDarkMode={isDarkMode}>
                   <SelectField
                     value={formData.docx.compare_mode}
-                    onChange={(e) => handleDocxSettingChange('compare_mode', e.target.value as DocxSettings['compare_mode'])}
+                    onChange={(nextValue) => handleDocxSettingChange('compare_mode', nextValue as DocxSettings['compare_mode'])}
                     isDarkMode={isDarkMode}
                   >
                     {DOCX_COMPARE_MODES.map((mode) => (
@@ -854,7 +889,7 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.font_size', lang)} isDarkMode={isDarkMode}>
                   <SelectField
                     value={formData.font_size}
-                    onChange={(e) => setFormData({ ...formData, font_size: e.target.value as FontSize })}
+                    onChange={(nextValue) => setFormData({ ...formData, font_size: nextValue as FontSize })}
                     isDarkMode={isDarkMode}
                   >
                     {FONT_SIZES.map((size: FontSize) => (
@@ -1076,34 +1111,114 @@ function FieldGroup({
 function SelectField({
   value,
   onChange,
-  onFocus,
-  onMouseDown,
+  onOpen,
   children,
   className = '',
   isDarkMode = false,
 }: {
   value: string;
-  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-  onFocus?: (e: React.FocusEvent<HTMLSelectElement>) => void;
-  onMouseDown?: (e: React.MouseEvent<HTMLSelectElement>) => void;
+  onChange: (value: string) => void;
+  onOpen?: () => void;
   children: React.ReactNode;
   className?: string;
   isDarkMode?: boolean;
 }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const options = useMemo(() => {
+    return Children.toArray(children)
+      .map((child) => {
+        if (!isValidElement(child)) {
+          return null;
+        }
+
+        const props = child.props as { value?: string; children?: React.ReactNode };
+        if (typeof props.value === 'undefined') {
+          return null;
+        }
+
+        const label = typeof props.children === 'string' || typeof props.children === 'number'
+          ? String(props.children)
+          : String(props.value);
+
+        return {
+          value: String(props.value),
+          label,
+        };
+      })
+      .filter((entry): entry is { value: string; label: string } => entry !== null);
+  }, [children]);
+
+  const selected = options.find((option) => option.value === value);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!containerRef.current || !target) {
+        return;
+      }
+      if (!containerRef.current.contains(target)) {
+        setIsOpen(false);
+      }
+    };
+
+    window.addEventListener('mousedown', handleOutsideClick);
+    return () => window.removeEventListener('mousedown', handleOutsideClick);
+  }, [isOpen]);
+
+  const toggleOpen = () => {
+    const next = !isOpen;
+    setIsOpen(next);
+    if (next) {
+      onOpen?.();
+    }
+  };
+
+  const handleSelect = (nextValue: string) => {
+    onChange(nextValue);
+    setIsOpen(false);
+  };
+
   return (
-    <div className={`relative ${className}`}>
-      <select
-        value={value}
-        onChange={onChange}
-        onFocus={onFocus}
-        onMouseDown={onMouseDown}
-        className={`input !text-base !pr-9 cursor-pointer ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100' : ''}`}
+    <div ref={containerRef} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={toggleOpen}
+        className={`input !text-base !pr-9 text-left cursor-pointer ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100' : ''}`}
       >
-        {children}
-      </select>
+        <span className="block truncate">{selected?.label ?? value}</span>
+      </button>
       <div className="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none">
         <ChevronDown size={16} className={isDarkMode ? 'text-surface-400' : 'text-surface-500'} />
       </div>
+
+      {isOpen && (
+        <div className={`absolute z-20 mt-1 w-full rounded-xl border shadow-premium overflow-hidden ${isDarkMode ? 'border-surface-600 bg-surface-800' : 'border-surface-200 bg-white'}`}>
+          <div className="max-h-64 overflow-y-auto p-1">
+            {options.map((option) => {
+              const active = option.value === value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handleSelect(option.value)}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${active
+                    ? (isDarkMode ? 'bg-accent-900/40 text-accent-300' : 'bg-accent-50 text-accent-700')
+                    : (isDarkMode ? 'text-surface-200 hover:bg-surface-700' : 'text-surface-700 hover:bg-surface-50')
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
