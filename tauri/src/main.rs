@@ -94,6 +94,12 @@ struct CancellationState {
     docx: Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
 }
 
+#[derive(Default)]
+struct ModelCapabilityState {
+    temperature_support: Mutex<HashMap<String, bool>>,
+    reasoning_effort_support: Mutex<HashMap<String, bool>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DocxSettings {
     compare_mode: String,
@@ -525,6 +531,7 @@ async fn cancel_correction(state: State<'_, CancellationState>) -> Result<(), St
 async fn correct_text_streaming(
     app: AppHandle,
     state: State<'_, CancellationState>,
+    capability_state: State<'_, ModelCapabilityState>,
     text: String,
     settings: FrontendSettings,
 ) -> Result<(), String> {
@@ -553,7 +560,14 @@ async fn correct_text_streaming(
     let result = if effective_settings.provider.eq_ignore_ascii_case("ollama") {
         stream_ollama(&app, &cancel_flag, &text, &effective_settings).await
     } else {
-        stream_openai_like(&app, &cancel_flag, &text, &effective_settings).await
+        stream_openai_like(
+            &app,
+            &cancel_flag,
+            &text,
+            &effective_settings,
+            capability_state.inner(),
+        )
+        .await
     };
 
     {
@@ -649,6 +663,7 @@ async fn stream_openai_like(
     cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
     text: &str,
     settings: &FrontendSettings,
+    capability_state: &ModelCapabilityState,
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", settings.api_url.trim_end_matches('/'));
@@ -656,8 +671,16 @@ async fn stream_openai_like(
         "{}\n\n{}\n\nText:\n{}",
         settings.custom_prompt, settings.system_prompt, text
     );
-    let mut include_reasoning_effort = true;
-    let mut include_temperature = true;
+    let cache_key = temperature_capability_key(settings);
+    let mut include_temperature = {
+        let cache = capability_state.temperature_support.lock().await;
+        cache.get(&cache_key).copied().unwrap_or(true)
+    };
+    let mut include_reasoning_effort = {
+        let cache = capability_state.reasoning_effort_support.lock().await;
+        cache.get(&cache_key).copied().unwrap_or(true)
+    };
+
     let resp = loop {
         let response = send_openai_like_request(
             &client,
@@ -670,6 +693,14 @@ async fn stream_openai_like(
         .await?;
 
         if response.status().is_success() {
+            if include_temperature {
+                let mut cache = capability_state.temperature_support.lock().await;
+                cache.insert(cache_key.clone(), true);
+            }
+            if include_reasoning_effort {
+                let mut cache = capability_state.reasoning_effort_support.lock().await;
+                cache.insert(cache_key.clone(), true);
+            }
             break response;
         }
 
@@ -682,6 +713,8 @@ async fn stream_openai_like(
             && is_temperature_unsupported_error(&detail)
         {
             include_temperature = false;
+            let mut cache = capability_state.temperature_support.lock().await;
+            cache.insert(cache_key.clone(), false);
             continue;
         }
 
@@ -690,6 +723,8 @@ async fn stream_openai_like(
             && is_reasoning_or_thinking_error(&detail)
         {
             include_reasoning_effort = false;
+            let mut cache = capability_state.reasoning_effort_support.lock().await;
+            cache.insert(cache_key.clone(), false);
             continue;
         }
 
@@ -796,6 +831,17 @@ fn is_temperature_unsupported_error(message: &str) -> bool {
             || m.contains("unsupported")
             || m.contains("not allowed")
             || m.contains("invalid"))
+}
+
+fn temperature_capability_key(settings: &FrontendSettings) -> String {
+    let provider = settings.provider.trim().to_ascii_lowercase();
+    let api_url = settings
+        .api_url
+        .trim()
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    let model = settings.model.trim().to_ascii_lowercase();
+    format!("{}|{}|{}", provider, api_url, model)
 }
 
 fn extract_api_error_message(body: &str) -> String {
@@ -2035,6 +2081,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .manage(CancellationState::default())
+        .manage(ModelCapabilityState::default())
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,

@@ -8,6 +8,10 @@ namespace Lingofix.Backend.Documents;
 
 public sealed class LlmClient
 {
+    private const int TemperatureSupportUnknown = 0;
+    private const int TemperatureSupportSupported = 1;
+    private const int TemperatureSupportUnsupported = 2;
+
     private static readonly HttpClient SharedHttpClient = CreateHttpClient();
     private readonly string _endpoint;
     private readonly string _model;
@@ -16,6 +20,7 @@ public sealed class LlmClient
     private readonly double _temperature;
     private readonly IRunLogger? _logger;
     private string _apiKey = string.Empty;
+    private int _temperatureSupport = TemperatureSupportUnknown;
 
     public LlmClient(string apiBase, string model, string prompt, string systemPromptOverride, double temperature, IRunLogger? logger = null)
     {
@@ -208,7 +213,13 @@ public sealed class LlmClient
 
     private async Task<string> SendWithTemperatureFallbackAsync(ChatCompletionsRequest request, bool sanitizeOutput, CancellationToken cancellationToken)
     {
-        var allowTemperatureFallback = true;
+        var includeTemperature = request.Temperature.HasValue && Volatile.Read(ref _temperatureSupport) != TemperatureSupportUnsupported;
+        if (!includeTemperature)
+        {
+            request.Temperature = null;
+        }
+
+        var allowTemperatureFallback = includeTemperature;
         var allowResponseFormatFallback = request.ResponseFormat is not null;
         for (int attempt = 1; attempt <= 3; attempt++)
         {
@@ -228,6 +239,11 @@ public sealed class LlmClient
 
             if (response.IsSuccessStatusCode)
             {
+                if (includeTemperature)
+                {
+                    Volatile.Write(ref _temperatureSupport, TemperatureSupportSupported);
+                }
+
                 var result = ExtractCompletionText(responseBody);
                 return sanitizeOutput ? SanitizeCorrection(result) : result.Trim();
             }
@@ -248,7 +264,9 @@ public sealed class LlmClient
             {
                 _logger?.Info("Note: temperature not accepted by the model. Retrying without temperature.");
                 request.Temperature = null;
+                includeTemperature = false;
                 allowTemperatureFallback = false;
+                Volatile.Write(ref _temperatureSupport, TemperatureSupportUnsupported);
                 attempt = 0;
                 continue;
             }
