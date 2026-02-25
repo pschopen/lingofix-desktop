@@ -3,7 +3,7 @@ import { invoke, listen } from './lib/bridge';
 import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal, ExternalLink } from 'lucide-react';
 import { TextEditor } from './components/TextEditor';
 import { SettingsModal } from './components/SettingsModal';
-import { Settings, FontSize } from './types';
+import { Settings, FontSize, FONT_SIZE_PX } from './types';
 import { t, detectLanguage } from './i18n';
 import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
@@ -128,16 +128,8 @@ function App() {
 
   // Apply font-size CSS custom property to document root
   useEffect(() => {
-    const FONT_SIZE_MAP: Record<FontSize, number> = {
-      small: 14,
-      default: 16,
-      large: 18,
-      xl: 20,
-      xxl: 22,
-    };
-    
-    const fontSize = (settings?.font_size as FontSize | undefined) || 'default';
-    const px = FONT_SIZE_MAP[fontSize] || 16;
+    const fontSize: FontSize = settings ? settings.font_size : 'default';
+    const px = FONT_SIZE_PX[fontSize];
     document.documentElement.style.setProperty('--fs-base', `${px}px`);
     // Set font-size on html element so Tailwind's rem-based classes respond correctly
     document.documentElement.style.fontSize = `${px}px`;
@@ -151,7 +143,7 @@ function App() {
 
   const loadSettings = useCallback(async () => {
     try {
-      const loaded = await invoke<Settings>('load_settings');
+      const loaded = await invoke<Settings>('load_settings', { locale: lang });
       setSettings(loaded);
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -578,7 +570,7 @@ function App() {
   };
 
   const handleResetSettings = useCallback(async (): Promise<Settings> => {
-    const reset = await invoke<Settings>('reset_settings');
+    const reset = await invoke<Settings>('reset_settings', { locale: lang });
     setSettings(reset);
     setError(null);
     setInfoMessage(t('settings.app_reset.success', lang));

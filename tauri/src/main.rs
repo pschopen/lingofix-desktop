@@ -30,18 +30,47 @@ const ENCRYPTION_PREFIX: &str = "enc_v1:";
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
 
-fn default_custom_prompt() -> String {
-    "Correct the following text while maintaining the style and tone.".to_string()
+const DEFAULT_CUSTOM_PROMPT_EN: &str = "Correct the following text while maintaining the style and tone.";
+const DEFAULT_CUSTOM_PROMPT_DE: &str = "Korrigiere den folgenden Text nach den Duden-Regeln. Korrigiere nur Fehler, alles andere lässt Du unverändert!";
+const DEFAULT_SYSTEM_PROMPT_EN: &str =
+    "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
+const DEFAULT_SYSTEM_PROMPT_DE: &str =
+    "Wichtig: Antworte nur mit dem korrigierten Text. Keine Erklärungen, keine Notizen, keine zusätzlichen Sätze.";
+const DEFAULT_BATCH_PROMPT_EN: &str =
+    "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text.";
+const DEFAULT_BATCH_PROMPT_DE: &str =
+    "Korrigiere jedes Element und gib NUR gueltiges JSON in genau diesem Format zurueck: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Behalte dieselben IDs und die Reihenfolge bei. Keine zusaetzlichen Schluessel oder Texte.";
+
+fn normalize_locale(locale: &str) -> &'static str {
+    if locale.trim().to_ascii_lowercase().starts_with("de") {
+        "de"
+    } else {
+        "en"
+    }
 }
 
-fn default_system_prompt() -> String {
-    "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences."
-        .to_string()
+fn default_custom_prompt(locale: &str) -> String {
+    if normalize_locale(locale) == "de" {
+        DEFAULT_CUSTOM_PROMPT_DE.to_string()
+    } else {
+        DEFAULT_CUSTOM_PROMPT_EN.to_string()
+    }
 }
 
-fn default_batch_prompt() -> String {
-    "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text."
-        .to_string()
+fn default_system_prompt(locale: &str) -> String {
+    if normalize_locale(locale) == "de" {
+        DEFAULT_SYSTEM_PROMPT_DE.to_string()
+    } else {
+        DEFAULT_SYSTEM_PROMPT_EN.to_string()
+    }
+}
+
+fn default_batch_prompt(locale: &str) -> String {
+    if normalize_locale(locale) == "de" {
+        DEFAULT_BATCH_PROMPT_DE.to_string()
+    } else {
+        DEFAULT_BATCH_PROMPT_EN.to_string()
+    }
 }
 
 fn default_auto_check_updates() -> bool {
@@ -57,6 +86,16 @@ const KNOWN_PROVIDERS: [&str; 7] = [
     "custom",
     "mistral",
 ];
+const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
+const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
+const MIN_TEMPERATURE: f64 = 0.0;
+const MAX_TEMPERATURE: f64 = 2.0;
+const MIN_BATCH_MAX_CHARS: i32 = 500;
+const MAX_BATCH_MAX_CHARS: i32 = 50_000;
+const MIN_BATCH_MAX_PARAGRAPHS: i32 = 1;
+const MAX_BATCH_MAX_PARAGRAPHS: i32 = 100;
+const MIN_MAX_PARALLEL_REQUESTS: i32 = 1;
+const MAX_MAX_PARALLEL_REQUESTS: i32 = 16;
 
 fn is_known_provider(provider: &str) -> bool {
     KNOWN_PROVIDERS
@@ -137,6 +176,9 @@ struct FrontendSettings {
     custom_prompt: String,
     system_prompt: String,
     batch_prompt: String,
+    prompt_preset: String,
+    prompt_locale: String,
+    prompt_user_modified: bool,
     auto_check_updates: bool,
     temperature: f64,
     provider_keys: HashMap<String, Option<String>>,
@@ -159,17 +201,27 @@ struct DocxTrackChangesInspection {
 
 impl Default for FrontendSettings {
     fn default() -> Self {
+        Self::default_for_locale("en")
+    }
+}
+
+impl FrontendSettings {
+    fn default_for_locale(locale: &str) -> Self {
+        let normalized_locale = normalize_locale(locale);
         Self {
             provider: "openai".into(),
             api_url: "https://api.openai.com/v1".into(),
             api_key: None,
             model: "gpt-4".into(),
-            custom_prompt: default_custom_prompt(),
-            system_prompt: default_system_prompt(),
-            batch_prompt: default_batch_prompt(),
+            custom_prompt: default_custom_prompt(normalized_locale),
+            system_prompt: default_system_prompt(normalized_locale),
+            batch_prompt: default_batch_prompt(normalized_locale),
+            prompt_preset: "default".into(),
+            prompt_locale: normalized_locale.into(),
+            prompt_user_modified: false,
             auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
-            provider_keys: HashMap::new(),
+            provider_keys: empty_provider_keys(),
             docx: DocxSettings::default(),
             font_size: "default".into(),
         }
@@ -400,10 +452,12 @@ fn clear_temp_lingofix_dir() {
 }
 
 #[tauri::command]
-async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
+async fn load_settings(app: AppHandle, locale: Option<String>) -> Result<FrontendSettings, String> {
+    let locale = locale.as_deref().unwrap_or("en");
     let path = settings_path(&app).map_err(|e| e.to_string())?;
     if !path.exists() {
-        let defaults = FrontendSettings::default();
+        let defaults = FrontendSettings::default_for_locale(locale);
+        validate_settings(&defaults)?;
         write_settings_file(&path, defaults.clone()).await?;
         return Ok(defaults);
     }
@@ -430,6 +484,8 @@ async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
 
     let mut settings = decrypt_settings_secrets(raw_settings);
     settings.provider = canonical_provider(&settings.provider)?;
+    settings.prompt_locale = normalize_locale(&settings.prompt_locale).to_string();
+    validate_settings(&settings)?;
 
     if settings.api_key.as_ref().map(|v| v.trim().is_empty()).unwrap_or(true) {
         settings.api_key = settings
@@ -447,6 +503,101 @@ async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
     Ok(settings)
 }
 
+fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
+    let reset_hint = "Open Settings > Advanced and use 'Reset app'.";
+    canonical_provider(&settings.provider)?;
+
+    if settings.api_url.trim().is_empty() {
+        return Err(format!("Invalid settings: api_url is missing. {reset_hint}"));
+    }
+
+    if settings.model.trim().is_empty() {
+        return Err(format!("Invalid settings: model is missing. {reset_hint}"));
+    }
+
+    if settings.custom_prompt.trim().is_empty() {
+        return Err(format!("Invalid settings: custom_prompt is missing. {reset_hint}"));
+    }
+
+    if settings.system_prompt.trim().is_empty() {
+        return Err(format!("Invalid settings: system_prompt is missing. {reset_hint}"));
+    }
+
+    if settings.batch_prompt.trim().is_empty() {
+        return Err(format!("Invalid settings: batch_prompt is missing. {reset_hint}"));
+    }
+
+    if settings.prompt_preset.trim().is_empty() {
+        return Err(format!("Invalid settings: prompt_preset is missing. {reset_hint}"));
+    }
+
+    if normalize_locale(&settings.prompt_locale) != settings.prompt_locale.trim().to_ascii_lowercase() {
+        return Err(format!("Invalid settings: prompt_locale is invalid. {reset_hint}"));
+    }
+
+    if !settings
+        .provider_keys
+        .keys()
+        .all(|key| KNOWN_PROVIDERS.iter().any(|provider| provider == &key.as_str()))
+    {
+        return Err(format!("Invalid settings: provider_keys contains unknown providers. {reset_hint}"));
+    }
+
+    if settings.provider_keys.len() != KNOWN_PROVIDERS.len() {
+        return Err(format!("Invalid settings: provider_keys is incomplete. {reset_hint}"));
+    }
+
+    if !KNOWN_COMPARE_MODES
+        .iter()
+        .any(|mode| mode.eq_ignore_ascii_case(settings.docx.compare_mode.trim()))
+    {
+        return Err(format!("Invalid settings: docx.compare_mode is invalid. {reset_hint}"));
+    }
+
+    if !KNOWN_FONT_SIZES
+        .iter()
+        .any(|size| size.eq_ignore_ascii_case(settings.font_size.trim()))
+    {
+        return Err(format!("Invalid settings: font_size is invalid. {reset_hint}"));
+    }
+
+    if settings.temperature.is_nan()
+        || settings.temperature.is_infinite()
+        || settings.temperature < MIN_TEMPERATURE
+        || settings.temperature > MAX_TEMPERATURE
+    {
+        return Err(format!("Invalid settings: temperature is out of range. {reset_hint}"));
+    }
+
+    if settings.docx.batch_max_chars < MIN_BATCH_MAX_CHARS
+        || settings.docx.batch_max_chars > MAX_BATCH_MAX_CHARS
+    {
+        return Err(format!("Invalid settings: docx.batch_max_chars is out of range. {reset_hint}"));
+    }
+
+    if settings.docx.batch_max_paragraphs < MIN_BATCH_MAX_PARAGRAPHS
+        || settings.docx.batch_max_paragraphs > MAX_BATCH_MAX_PARAGRAPHS
+    {
+        return Err(format!("Invalid settings: docx.batch_max_paragraphs is out of range. {reset_hint}"));
+    }
+
+    if settings.docx.max_parallel_requests < MIN_MAX_PARALLEL_REQUESTS
+        || settings.docx.max_parallel_requests > MAX_MAX_PARALLEL_REQUESTS
+    {
+        return Err(format!("Invalid settings: docx.max_parallel_requests is out of range. {reset_hint}"));
+    }
+
+    Ok(())
+}
+
+fn empty_provider_keys() -> HashMap<String, Option<String>> {
+    let mut keys = HashMap::new();
+    for provider in KNOWN_PROVIDERS {
+        keys.insert(provider.to_string(), None);
+    }
+    keys
+}
+
 async fn write_settings_file(path: &Path, settings: FrontendSettings) -> Result<(), String> {
     let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(settings));
     let content = serde_json::to_string_pretty(&encrypted)
@@ -461,6 +612,7 @@ async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(),
     let normalized_provider = canonical_provider(&settings.provider)?;
     let mut normalized_settings = settings;
     normalized_settings.provider = normalized_provider.clone();
+    normalized_settings.prompt_locale = normalize_locale(&normalized_settings.prompt_locale).to_string();
     if let Some(active) = normalized_settings
         .api_key
         .as_ref()
@@ -472,14 +624,17 @@ async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(),
             .insert(normalized_provider, Some(active));
     }
 
+    validate_settings(&normalized_settings)?;
+
     let path = settings_path(&app).map_err(|e| e.to_string())?;
     write_settings_file(&path, normalized_settings).await
 }
 
 #[tauri::command]
-async fn reset_settings(app: AppHandle) -> Result<FrontendSettings, String> {
+async fn reset_settings(app: AppHandle, locale: Option<String>) -> Result<FrontendSettings, String> {
     let path = settings_path(&app).map_err(|e| e.to_string())?;
-    let defaults = FrontendSettings::default();
+    let defaults = FrontendSettings::default_for_locale(locale.as_deref().unwrap_or("en"));
+    validate_settings(&defaults)?;
     write_settings_file(&path, defaults.clone()).await?;
     Ok(defaults)
 }

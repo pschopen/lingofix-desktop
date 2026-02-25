@@ -176,10 +176,6 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Der Text, den Sie korrigieren möchten, wird automatisch an den Prompt angehängt.',
     en: 'The text you want to correct will be automatically appended to the prompt.',
   },
-  'settings.prompt.default': {
-    de: 'Korrigiere den folgenden Text auf Fehler.',
-    en: 'Correct the following text for mistakes.',
-  },
   'settings.system_prompt': {
     de: 'System-Prompt',
     en: 'System Prompt',
@@ -188,9 +184,9 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Wird automatisch unter den Prompt angehängt und gilt für Editor und DOCX.',
     en: 'Appended to the prompt and used for both editor and DOCX.',
   },
-  'settings.system_prompt.value': {
-    de: 'Wichtig: Antworte nur mit dem korrigierten Text. Keine Erklärungen, keine Notizen, keine zusätzlichen Sätze.',
-    en: 'Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.',
+  'settings.system_prompt.placeholder': {
+    de: 'Geben Sie einen System-Prompt ein...',
+    en: 'Enter a system prompt...',
   },
   'settings.cancel': {
     de: 'Abbrechen',
@@ -383,10 +379,6 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.docx.batching': {
     de: 'Batching (experimentell)',
     en: 'Batching (experimental)',
-  },
-  'settings.docx.batch_prompt': {
-    de: 'Korrigiere jedes Element und gib NUR gueltiges JSON in genau diesem Format zurueck: {"items":[{"id":123,"text":"..."}]}. Behalte dieselben IDs und die Reihenfolge bei. Keine zusaetzlichen Schluessel oder Texte.',
-    en: 'Correct each item and return ONLY valid JSON in this exact format: {"items":[{"id":123,"text":"..."}]}. Keep the same IDs and order. No extra keys or text.',
   },
   'settings.docx.batch_max_chars': {
     de: 'Max. Zeichen pro Batch',

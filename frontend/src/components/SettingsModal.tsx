@@ -1,7 +1,18 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '../lib/bridge';
 import { X, Loader2, RefreshCw, ChevronDown } from 'lucide-react';
-import { Settings, Provider, DocxSettings, FontSize } from '../types';
+import {
+  Settings,
+  Provider,
+  DocxSettings,
+  FontSize,
+  FONT_SIZES,
+  PROVIDERS,
+  PROVIDER_DEFAULT_URLS,
+  PROVIDER_LABELS,
+  SETTINGS_LIMITS,
+  DOCX_COMPARE_MODES,
+} from '../types';
 import { Language, t } from '../i18n';
 
 interface SettingsModalProps {
@@ -14,26 +25,6 @@ interface SettingsModalProps {
   lang: Language;
   isDarkMode?: boolean;
 }
-
-const PROVIDER_URLS: Record<Provider, string> = {
-  openai: 'https://api.openai.com/v1',
-  ollama: 'http://localhost:11434',
-  openrouter: 'https://openrouter.ai/api/v1',
-  huggingface: 'https://router.huggingface.co/v1',
-  google: 'https://generativelanguage.googleapis.com/v1beta/openai',
-  mistral: 'https://api.mistral.ai/v1',
-  custom: '',
-};
-
-const PROVIDER_LABELS: Record<Provider, string> = {
-  openai: 'OpenAI',
-  ollama: 'Ollama',
-  openrouter: 'Openrouter',
-  huggingface: 'Hugging Face',
-  google: 'Google AI Studio',
-  mistral: 'Mistral',
-  custom: 'Custom',
-};
 
 type TabType = 'general' | 'docx' | 'advanced';
 
@@ -131,7 +122,7 @@ export function SettingsModal({
     setFormData({
       ...formData,
       provider: newProvider,
-      api_url: PROVIDER_URLS[newProvider] || formData.api_url,
+      api_url: PROVIDER_DEFAULT_URLS[newProvider] || formData.api_url,
       api_key: newApiKey,
       provider_keys: updatedKeys,
       model: '',
@@ -397,7 +388,7 @@ export function SettingsModal({
                     onChange={(e) => handleProviderChange(e.target.value as Provider)}
                     isDarkMode={isDarkMode}
                   >
-                    {(Object.keys(PROVIDER_LABELS) as Provider[]).map((key) => (
+                    {PROVIDERS.map((key) => (
                       <option key={key} value={key}>
                         {PROVIDER_LABELS[key]}
                       </option>
@@ -472,7 +463,7 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.prompt', lang)} hint={t('settings.prompt.hint', lang)} isDarkMode={isDarkMode}>
                   <textarea
                     value={formData.custom_prompt}
-                    onChange={(e) => setFormData({ ...formData, custom_prompt: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, custom_prompt: e.target.value, prompt_user_modified: true })}
                     placeholder={t('settings.prompt.placeholder', lang)}
                     className={`textarea !text-base h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
                   />
@@ -485,7 +476,7 @@ export function SettingsModal({
                     onChange={(e) => setFormData({ ...formData, font_size: e.target.value as FontSize })}
                     isDarkMode={isDarkMode}
                   >
-                    {(['small', 'default', 'large', 'xl', 'xxl'] as FontSize[]).map((size) => (
+                    {FONT_SIZES.map((size: FontSize) => (
                       <option key={size} value={size}>
                         {t(`settings.font_size.${size}`, lang)}
                       </option>
@@ -499,12 +490,18 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.docx.compare_mode', lang)} isDarkMode={isDarkMode}>
                   <SelectField
                     value={formData.docx.compare_mode}
-                    onChange={(e) => handleDocxSettingChange('compare_mode', e.target.value as 'openxml' | 'word-native' | 'libreoffice-uno')}
+                    onChange={(e) => handleDocxSettingChange('compare_mode', e.target.value as DocxSettings['compare_mode'])}
                     isDarkMode={isDarkMode}
                   >
-                    <option value="openxml">{t('settings.docx.compare_mode.openxml', lang)}</option>
-                    <option value="word-native">{t('settings.docx.compare_mode.word_native', lang)}</option>
-                    <option value="libreoffice-uno">{t('settings.docx.compare_mode.libreoffice_uno', lang)}</option>
+                    {DOCX_COMPARE_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {mode === 'openxml'
+                          ? t('settings.docx.compare_mode.openxml', lang)
+                          : mode === 'word-native'
+                            ? t('settings.docx.compare_mode.word_native', lang)
+                            : t('settings.docx.compare_mode.libreoffice_uno', lang)}
+                      </option>
+                    ))}
                   </SelectField>
                 </FieldGroup>
 
@@ -559,7 +556,10 @@ export function SettingsModal({
                   <div className="pl-4 border-l-2 border-accent-100 space-y-4">
                     <FieldGroup label={`${t('settings.docx.batch_max_chars', lang)}: ${formData.docx.batch_max_chars}`} isDarkMode={isDarkMode}>
                       <input
-                        type="range" min="500" max="50000" step="500"
+                        type="range"
+                        min={SETTINGS_LIMITS.batchMaxChars.min}
+                        max={SETTINGS_LIMITS.batchMaxChars.max}
+                        step={SETTINGS_LIMITS.batchMaxChars.step}
                         value={formData.docx.batch_max_chars}
                         onChange={(e) => handleDocxSettingChange('batch_max_chars', Number(e.target.value))}
                         className="w-full mt-1"
@@ -567,7 +567,10 @@ export function SettingsModal({
                     </FieldGroup>
                     <FieldGroup label={`${t('settings.docx.batch_max_paragraphs', lang)}: ${formData.docx.batch_max_paragraphs}`} isDarkMode={isDarkMode}>
                       <input
-                        type="range" min="1" max="100" step="1"
+                        type="range"
+                        min={SETTINGS_LIMITS.batchMaxParagraphs.min}
+                        max={SETTINGS_LIMITS.batchMaxParagraphs.max}
+                        step={SETTINGS_LIMITS.batchMaxParagraphs.step}
                         value={formData.docx.batch_max_paragraphs}
                         onChange={(e) => handleDocxSettingChange('batch_max_paragraphs', Number(e.target.value))}
                         className="w-full mt-1"
@@ -596,7 +599,10 @@ export function SettingsModal({
                   <div className="pl-4 border-l-2 border-accent-100">
                     <FieldGroup label={`${t('settings.docx.max_parallel_requests', lang)}: ${formData.docx.max_parallel_requests}`} isDarkMode={isDarkMode}>
                       <input
-                        type="range" min="1" max="16" step="1"
+                        type="range"
+                        min={SETTINGS_LIMITS.maxParallelRequests.min}
+                        max={SETTINGS_LIMITS.maxParallelRequests.max}
+                        step={SETTINGS_LIMITS.maxParallelRequests.step}
                         value={formData.docx.max_parallel_requests}
                         onChange={(e) => handleDocxSettingChange('max_parallel_requests', Number(e.target.value))}
                         className="w-full mt-1"
@@ -612,9 +618,9 @@ export function SettingsModal({
                 <FieldGroup label={`${t('settings.temperature', lang)}: ${formData.temperature}`} isDarkMode={isDarkMode}>
                   <input
                     type="range"
-                    min="0"
-                    max="2"
-                    step="0.1"
+                    min={SETTINGS_LIMITS.temperature.min}
+                    max={SETTINGS_LIMITS.temperature.max}
+                    step={SETTINGS_LIMITS.temperature.step}
                     value={formData.temperature}
                     onChange={(e) => setFormData({ ...formData, temperature: parseFloat(e.target.value) })}
                     className="w-full mt-1"
@@ -625,8 +631,8 @@ export function SettingsModal({
                 <FieldGroup label={t('settings.system_prompt', lang)} hint={t('settings.system_prompt.hint', lang)} isDarkMode={isDarkMode}>
                   <textarea
                     value={formData.system_prompt}
-                    onChange={(e) => setFormData({ ...formData, system_prompt: e.target.value })}
-                    placeholder={t('settings.system_prompt.value', lang)}
+                    onChange={(e) => setFormData({ ...formData, system_prompt: e.target.value, prompt_user_modified: true })}
+                    placeholder={t('settings.system_prompt.placeholder', lang)}
                     className={`textarea !text-base h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
                   />
                 </FieldGroup>

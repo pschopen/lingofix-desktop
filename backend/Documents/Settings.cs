@@ -5,6 +5,15 @@ namespace Lingofix.Backend.Documents;
 
 public sealed class Settings
 {
+    public const double MinTemperature = 0.0;
+    public const double MaxTemperature = 2.0;
+    public const int MinBatchMaxChars = 500;
+    public const int MaxBatchMaxChars = 50_000;
+    public const int MinBatchMaxParagraphs = 1;
+    public const int MaxBatchMaxParagraphs = 100;
+    public const int MinMaxParallelRequests = 1;
+    public const int MaxMaxParallelRequests = 16;
+
     public string Provider { get; set; } = string.Empty;
     public string ApiBase { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
@@ -91,10 +100,10 @@ public sealed class Settings
             normalized.Temperature = 0.0;
         }
 
-        normalized.Temperature = Math.Clamp(normalized.Temperature, 0.0, 2.0);
-        normalized.BatchMaxChars = Math.Clamp(normalized.BatchMaxChars, 500, 50_000);
-        normalized.BatchMaxParagraphs = Math.Clamp(normalized.BatchMaxParagraphs, 1, 100);
-        normalized.MaxParallelRequests = Math.Clamp(normalized.MaxParallelRequests, 1, 16);
+        normalized.Temperature = Math.Clamp(normalized.Temperature, MinTemperature, MaxTemperature);
+        normalized.BatchMaxChars = Math.Clamp(normalized.BatchMaxChars, MinBatchMaxChars, MaxBatchMaxChars);
+        normalized.BatchMaxParagraphs = Math.Clamp(normalized.BatchMaxParagraphs, MinBatchMaxParagraphs, MaxBatchMaxParagraphs);
+        normalized.MaxParallelRequests = Math.Clamp(normalized.MaxParallelRequests, MinMaxParallelRequests, MaxMaxParallelRequests);
         return normalized;
     }
 

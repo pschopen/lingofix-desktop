@@ -9,12 +9,6 @@ namespace Lingofix.Backend.Documents;
 public static class ParagraphProcessor
 {
     private const int MaxChunkChars = 5000;
-    private const int MinBatchChars = 500;
-    private const int MaxBatchChars = 50000;
-    private const int MinBatchParagraphs = 1;
-    private const int MaxBatchParagraphs = 100;
-    private const int MinParallelRequests = 1;
-    private const int MaxParallelRequests = 16;
 
     public static async Task ProcessAsync(
         IEnumerable<Paragraph> paragraphs,
@@ -27,11 +21,11 @@ public static class ParagraphProcessor
         CancellationToken cancellationToken = default)
     {
         var enableBatching = settings.EnableBatching;
-        var batchMaxChars = Math.Clamp(settings.BatchMaxChars, MinBatchChars, MaxBatchChars);
-        var batchMaxParagraphs = Math.Clamp(settings.BatchMaxParagraphs, MinBatchParagraphs, MaxBatchParagraphs);
+        var batchMaxChars = Math.Clamp(settings.BatchMaxChars, Settings.MinBatchMaxChars, Settings.MaxBatchMaxChars);
+        var batchMaxParagraphs = Math.Clamp(settings.BatchMaxParagraphs, Settings.MinBatchMaxParagraphs, Settings.MaxBatchMaxParagraphs);
         var enableCache = settings.EnableCache;
         var enableParallel = settings.EnableParallelization;
-        var maxParallel = Math.Clamp(settings.MaxParallelRequests, MinParallelRequests, MaxParallelRequests);
+        var maxParallel = Math.Clamp(settings.MaxParallelRequests, Settings.MinMaxParallelRequests, Settings.MaxMaxParallelRequests);
         var cache = enableCache ? new ConcurrentDictionary<string, string>(StringComparer.Ordinal) : null;
 
         var batchItems = new List<ParagraphItem>();
