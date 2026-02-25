@@ -77,7 +77,7 @@ internal static class Program
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
-            return new Settings();
+            throw new InvalidOperationException("Settings file is missing. Open Settings > Advanced and use 'Reset app'.");
         }
 
         var text = await File.ReadAllTextAsync(path);

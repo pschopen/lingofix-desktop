@@ -155,12 +155,7 @@ function App() {
       setSettings(loaded);
     } catch (error) {
       console.error('Failed to load settings:', error);
-      try {
-        const defaults = await invoke<Settings>('get_default_settings');
-        setSettings(defaults);
-      } catch {
-        setSettings(null);
-      }
+      setSettings(null);
       setError(t('error.load_settings_reset', lang));
     }
   }, [lang, setError]);
@@ -1018,18 +1013,16 @@ function App() {
       </main>
 
       {/* === Settings Modal === */}
-      {settings && (
-        <SettingsModal
-          isOpen={isSettingsOpen}
-          onClose={() => setIsSettingsOpen(false)}
-          settings={settings}
-          onSave={handleSaveSettings}
-          onResetSettings={handleResetSettings}
-          onCheckUpdates={handleManualUpdateCheck}
-          lang={lang}
-          isDarkMode={isDarkMode}
-        />
-      )}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        onSave={handleSaveSettings}
+        onResetSettings={handleResetSettings}
+        onCheckUpdates={handleManualUpdateCheck}
+        lang={lang}
+        isDarkMode={isDarkMode}
+      />
 
       {/* === Diff Mode Consent Modal === */}
       {showDiffModeConsent && (

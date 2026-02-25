@@ -14,7 +14,7 @@ public static class ParagraphProcessor
     private const int MinBatchParagraphs = 1;
     private const int MaxBatchParagraphs = 100;
     private const int MinParallelRequests = 1;
-    private const int MaxParallelRequests = 32;
+    private const int MaxParallelRequests = 16;
 
     public static async Task ProcessAsync(
         IEnumerable<Paragraph> paragraphs,

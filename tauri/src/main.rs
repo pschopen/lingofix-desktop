@@ -120,7 +120,7 @@ impl Default for DocxSettings {
             batch_max_paragraphs: 20,
             enable_cache: true,
             enable_parallelization: true,
-            max_parallel_requests: 2,
+            max_parallel_requests: 4,
         }
     }
 }
@@ -484,11 +484,6 @@ async fn reset_settings(app: AppHandle) -> Result<FrontendSettings, String> {
     let defaults = FrontendSettings::default();
     write_settings_file(&path, defaults.clone()).await?;
     Ok(defaults)
-}
-
-#[tauri::command]
-fn get_default_settings() -> FrontendSettings {
-    FrontendSettings::default()
 }
 
 #[tauri::command]
@@ -2106,7 +2101,6 @@ fn main() {
             load_settings,
             save_settings,
             reset_settings,
-            get_default_settings,
             fetch_models,
             correct_text_streaming,
             cancel_correction,

@@ -7,7 +7,7 @@ import { Language, t } from '../i18n';
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  settings: Settings;
+  settings: Settings | null;
   onSave: (settings: Settings) => void;
   onResetSettings: () => Promise<Settings>;
   onCheckUpdates: () => Promise<{ status: 'update-available' | 'up-to-date' | 'error'; message: string }>;
@@ -53,7 +53,7 @@ export function SettingsModal({
   lang,
   isDarkMode = false,
 }: SettingsModalProps) {
-  const [formData, setFormData] = useState<Settings>(settings);
+  const [formData, setFormData] = useState<Settings | null>(settings);
   const [activeTab, setActiveTab] = useState<TabType>('general');
   const [models, setModels] = useState<string[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -81,6 +81,10 @@ export function SettingsModal({
   const isMac = navigator.userAgent.toLowerCase().includes('mac');
 
   const handleFetchModels = async () => {
+    if (!formData) {
+      return;
+    }
+
     if (!formData.api_url) {
       setModelError(t('settings.url_required', lang));
       return;
@@ -101,7 +105,7 @@ export function SettingsModal({
       setModels(fetchedModels);
       
       if (fetchedModels.length > 0 && !fetchedModels.includes(formData.model)) {
-        setFormData(prev => ({ ...prev, model: fetchedModels[0] }));
+        setFormData({ ...formData, model: fetchedModels[0] });
       }
     } catch (error) {
       console.error('Failed to fetch models:', error);
@@ -113,6 +117,10 @@ export function SettingsModal({
   };
 
   const handleProviderChange = (newProvider: Provider) => {
+    if (!formData) {
+      return;
+    }
+
     const updatedKeys = {
       ...formData.provider_keys,
       [formData.provider]: formData.api_key,
@@ -120,29 +128,37 @@ export function SettingsModal({
 
     const newApiKey = updatedKeys[newProvider] || null;
     
-    setFormData(prev => ({
-      ...prev,
+    setFormData({
+      ...formData,
       provider: newProvider,
-      api_url: PROVIDER_URLS[newProvider] || prev.api_url,
+      api_url: PROVIDER_URLS[newProvider] || formData.api_url,
       api_key: newApiKey,
       provider_keys: updatedKeys,
       model: '',
-    }));
+    });
     setModels([]);
   };
 
   const handleDocxSettingChange = <K extends keyof DocxSettings>(key: K, value: DocxSettings[K]) => {
-    setFormData(prev => ({
-      ...prev,
+    if (!formData) {
+      return;
+    }
+
+    setFormData({
+      ...formData,
       docx: {
-        ...prev.docx,
+        ...formData.docx,
         [key]: value,
       },
-    }));
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData) {
+      return;
+    }
+
     if (isCustom && formData.api_url) {
       try {
         new URL(formData.api_url);
@@ -155,6 +171,10 @@ export function SettingsModal({
   };
 
   const handleCompareAccessCheck = async () => {
+    if (!formData) {
+      return;
+    }
+
     setIsCheckingCompareAccess(true);
     const command = formData.docx.compare_mode === 'libreoffice-uno'
       ? 'check_libreoffice_compare_access'
@@ -229,6 +249,88 @@ export function SettingsModal({
   };
 
   if (!isOpen) return null;
+
+  if (!formData) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
+        <div className={`card w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in mx-4 ${isDarkMode ? '!bg-surface-800 !border-surface-700' : ''}`}>
+          <div className={`flex items-center justify-between px-6 py-4 border-b ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
+            <h2 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
+              {t('settings.title', lang)}
+            </h2>
+            <button
+              onClick={handleClose}
+              className="btn-ghost !p-1.5 !rounded-lg"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="px-6 pt-3 pb-0">
+            <span className={`inline-flex px-4 py-2 text-sm font-medium rounded-lg ${isDarkMode ? 'bg-accent-900/40 text-accent-300 shadow-premium' : 'bg-accent-50 text-accent-700 shadow-premium'}`}>
+              {t('settings.tab.advanced', lang)}
+            </span>
+          </div>
+
+          <div className="p-6 space-y-5 overflow-y-auto">
+            <FieldGroup
+              label={t('settings.app_reset', lang)}
+              hint={t('settings.app_reset.hint', lang)}
+              isDarkMode={isDarkMode}
+            >
+              <button
+                type="button"
+                onClick={handleResetApp}
+                disabled={isResettingApp}
+                className="btn-secondary !text-base"
+              >
+                {isResettingApp ? <Loader2 className="animate-spin" size={14} /> : null}
+                {t('settings.app_reset.button', lang)}
+              </button>
+              {resetMessage && (
+                <p className={`mt-2 text-sm ${resetMessageIsError ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  {resetMessage}
+                </p>
+              )}
+            </FieldGroup>
+
+            <div className={`pt-2 mt-1 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
+              <FieldGroup
+                label={t('settings.system_paths', lang)}
+                hint={t('settings.system_paths.hint', lang)}
+                isDarkMode={isDarkMode}
+              >
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenSettingsJson}
+                    className="btn-secondary !text-base"
+                  >
+                    {t('settings.system_paths.settings_json', lang)}
+                  </button>
+                </div>
+                {systemPathMessage && (
+                  <p className="mt-2 text-sm text-amber-600">
+                    {systemPathMessage}
+                  </p>
+                )}
+              </FieldGroup>
+            </div>
+          </div>
+
+          <div className={`sticky bottom-0 px-6 py-4 border-t flex justify-end ${isDarkMode ? 'bg-surface-900/50 border-surface-700' : 'bg-white border-surface-100'}`}>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="btn-secondary !text-base"
+            >
+              {t('error.close', lang)}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const isOllama = formData.provider === 'ollama';
   const isCustom = formData.provider === 'custom';
@@ -494,7 +596,7 @@ export function SettingsModal({
                   <div className="pl-4 border-l-2 border-accent-100">
                     <FieldGroup label={`${t('settings.docx.max_parallel_requests', lang)}: ${formData.docx.max_parallel_requests}`} isDarkMode={isDarkMode}>
                       <input
-                        type="range" min="1" max="32" step="1"
+                        type="range" min="1" max="16" step="1"
                         value={formData.docx.max_parallel_requests}
                         onChange={(e) => handleDocxSettingChange('max_parallel_requests', Number(e.target.value))}
                         className="w-full mt-1"
