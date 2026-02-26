@@ -7,6 +7,9 @@ public sealed class Settings
 {
     public const double MinTemperature = 0.0;
     public const double MaxTemperature = 2.0;
+    public const int DefaultChunkSize = 3_000;
+    public const int MinChunkSize = 500;
+    public const int MaxChunkSize = 50_000;
     public const int MinBatchMaxChars = 500;
     public const int MaxBatchMaxChars = 50_000;
     public const int MinBatchMaxParagraphs = 1;
@@ -22,6 +25,7 @@ public sealed class Settings
     public string SystemPrompt { get; set; } = string.Empty;
     public string CompareMode { get; set; } = string.Empty;
     public double Temperature { get; set; }
+    public int ChunkSize { get; set; }
     public bool EnableBatching { get; set; }
     public int BatchMaxChars { get; set; }
     public int BatchMaxParagraphs { get; set; }
@@ -85,6 +89,7 @@ public sealed class Settings
             SystemPrompt = RequireString(payload.SystemPrompt, "system_prompt"),
             Temperature = payload.Temperature,
             CompareMode = RequireString(docx.CompareMode, "docx.compare_mode"),
+            ChunkSize = docx.ChunkSize ?? DefaultChunkSize,
             EnableBatching = docx.EnableBatching,
             BatchMaxChars = docx.BatchMaxChars,
             BatchMaxParagraphs = docx.BatchMaxParagraphs,
@@ -99,6 +104,7 @@ public sealed class Settings
         }
 
         normalized.Temperature = Math.Clamp(normalized.Temperature, MinTemperature, MaxTemperature);
+        normalized.ChunkSize = Math.Clamp(normalized.ChunkSize, MinChunkSize, MaxChunkSize);
         normalized.BatchMaxChars = Math.Clamp(normalized.BatchMaxChars, MinBatchMaxChars, MaxBatchMaxChars);
         normalized.BatchMaxParagraphs = Math.Clamp(normalized.BatchMaxParagraphs, MinBatchMaxParagraphs, MaxBatchMaxParagraphs);
         normalized.MaxParallelRequests = Math.Clamp(normalized.MaxParallelRequests, MinMaxParallelRequests, MaxMaxParallelRequests);
@@ -153,6 +159,9 @@ internal sealed class FrontendDocxSettingsPayload
 {
     [JsonPropertyName("compare_mode")]
     public string? CompareMode { get; set; }
+
+    [JsonPropertyName("chunk_size")]
+    public int? ChunkSize { get; set; }
 
     [JsonPropertyName("enable_batching")]
     public bool EnableBatching { get; set; }

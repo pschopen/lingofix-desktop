@@ -476,6 +476,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Batching (experimentell)',
     en: 'Batching (experimental)',
   },
+  'settings.docx.chunk_size': {
+    de: 'Chunk-Größe',
+    en: 'Chunk size',
+  },
   'settings.docx.batch_max_chars': {
     de: 'Max. Zeichen pro Batch',
     en: 'Max chars per batch',

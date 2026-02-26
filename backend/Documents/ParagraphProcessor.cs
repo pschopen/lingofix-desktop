@@ -8,7 +8,6 @@ namespace Lingofix.Backend.Documents;
 
 public static class ParagraphProcessor
 {
-    private const int MaxChunkChars = 5000;
     private const string BatchProtocolInstruction =
         "Correct each item's text and return valid JSON only.";
 
@@ -23,6 +22,7 @@ public static class ParagraphProcessor
         CancellationToken cancellationToken = default)
     {
         var enableBatching = settings.EnableBatching;
+        var chunkSize = Math.Clamp(settings.ChunkSize, Settings.MinChunkSize, Settings.MaxChunkSize);
         var batchMaxChars = Math.Clamp(settings.BatchMaxChars, Settings.MinBatchMaxChars, Settings.MaxBatchMaxChars);
         var batchMaxParagraphs = Math.Clamp(settings.BatchMaxParagraphs, Settings.MinBatchMaxParagraphs, Settings.MaxBatchMaxParagraphs);
         var enableCache = settings.EnableCache;
@@ -122,7 +122,7 @@ public static class ParagraphProcessor
             foreach (var batch in work)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, null, cancellationToken);
+                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, chunkSize, null, cancellationToken);
                 ApplyBatchResult(result, cache);
                 completedBatches++;
                 processedParagraphs += batch.Items.Count;
@@ -149,7 +149,7 @@ public static class ParagraphProcessor
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
+                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
                     lock (progressLock)
                     {
                         ApplyBatchResult(result, cache);
@@ -184,14 +184,14 @@ public static class ParagraphProcessor
         await Task.WhenAll(running);
     }
 
-    private static async Task<string> CorrectWithChunkingAsync(string original, LlmClient llmClient, CancellationToken cancellationToken)
+    private static async Task<string> CorrectWithChunkingAsync(string original, int chunkSize, LlmClient llmClient, CancellationToken cancellationToken)
     {
-        if (original.Length <= MaxChunkChars)
+        if (original.Length <= chunkSize)
         {
             return await llmClient.CorrectAsync(original, cancellationToken);
         }
 
-        var chunks = SplitIntoChunks(original, MaxChunkChars);
+        var chunks = SplitIntoChunks(original, chunkSize);
         if (chunks.Count == 1)
         {
             return await llmClient.CorrectAsync(original, cancellationToken);
@@ -220,6 +220,7 @@ public static class ParagraphProcessor
         LlmClient llmClient,
         IRunLogger? logger,
         ConcurrentDictionary<string, string>? cache,
+        int chunkSize,
         AdaptiveConcurrency? concurrency,
         CancellationToken cancellationToken)
     {
@@ -234,7 +235,7 @@ public static class ParagraphProcessor
         {
             foreach (var item in batch.Items)
             {
-                var corrected = await CorrectWithCacheAsync(item.Original, llmClient, cache, cancellationToken);
+                var corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, cancellationToken);
                 if (string.IsNullOrWhiteSpace(corrected))
                 {
                     continue;
@@ -267,12 +268,12 @@ public static class ParagraphProcessor
             }
 
             logger?.Info($"Batching: rate limit, falling back to single requests (paragraphs: {batch.Items.Count}).");
-            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
+            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
         }
         catch
         {
             logger?.Info($"Batching: LLM error, falling back to single requests (paragraphs: {batch.Items.Count}).");
-            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
+            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
         }
 
         if (!TryParseBatchResponse(response, batch.Items, out var parsed, out var parseFailure))
@@ -287,7 +288,7 @@ public static class ParagraphProcessor
             }
 
             logger?.Info($"Batching: repair failed, falling back to single requests (paragraphs: {batch.Items.Count}).");
-            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
+            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
         }
 
         concurrency?.Success();
@@ -295,7 +296,7 @@ public static class ParagraphProcessor
         return new BatchResult(batch, parsed);
     }
 
-    private static async Task<BatchResult> ProcessBatchFallbackAsync(WorkBatch batch, LlmClient llmClient, IRunLogger? logger, ConcurrentDictionary<string, string>? cache, AdaptiveConcurrency? concurrency, CancellationToken cancellationToken)
+    private static async Task<BatchResult> ProcessBatchFallbackAsync(WorkBatch batch, LlmClient llmClient, IRunLogger? logger, ConcurrentDictionary<string, string>? cache, int chunkSize, AdaptiveConcurrency? concurrency, CancellationToken cancellationToken)
     {
         logger?.Info($"Batching: single fallback start (paragraphs: {batch.Items.Count}).");
         var results = new Dictionary<int, string>();
@@ -305,7 +306,7 @@ public static class ParagraphProcessor
             string corrected;
             try
             {
-                corrected = await CorrectWithCacheAsync(item.Original, llmClient, cache, cancellationToken);
+                corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, cancellationToken);
             }
             catch (LlmRateLimitException ex)
             {
@@ -320,7 +321,7 @@ public static class ParagraphProcessor
                     await Task.Delay(ex.RetryAfterSeconds.Value * 1000, cancellationToken);
                 }
 
-                corrected = await CorrectWithCacheAsync(item.Original, llmClient, cache, cancellationToken);
+                corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, cancellationToken);
             }
 
             if (string.IsNullOrWhiteSpace(corrected))
@@ -335,14 +336,14 @@ public static class ParagraphProcessor
         return new BatchResult(batch, results);
     }
 
-    private static async Task<string> CorrectWithCacheAsync(string original, LlmClient llmClient, ConcurrentDictionary<string, string>? cache, CancellationToken cancellationToken)
+    private static async Task<string> CorrectWithCacheAsync(string original, int chunkSize, LlmClient llmClient, ConcurrentDictionary<string, string>? cache, CancellationToken cancellationToken)
     {
         if (cache is not null && cache.TryGetValue(original, out var cached))
         {
             return cached;
         }
 
-        var corrected = await CorrectWithChunkingAsync(original, llmClient, cancellationToken);
+        var corrected = await CorrectWithChunkingAsync(original, chunkSize, llmClient, cancellationToken);
         if (cache is not null && !string.IsNullOrWhiteSpace(corrected))
         {
             cache.TryAdd(original, corrected);

@@ -847,6 +847,18 @@ export function SettingsModal({
                 )}
 
                 {/* Batching */}
+                <FieldGroup label={`${t('settings.docx.chunk_size', lang)}: ${formData.docx.chunk_size}`} isDarkMode={isDarkMode}>
+                  <input
+                    type="range"
+                    min={SETTINGS_LIMITS.chunkSize.min}
+                    max={SETTINGS_LIMITS.chunkSize.max}
+                    step={SETTINGS_LIMITS.chunkSize.step}
+                    value={formData.docx.chunk_size}
+                    onChange={(e) => handleDocxSettingChange('chunk_size', Number(e.target.value))}
+                    className="w-full mt-1"
+                  />
+                </FieldGroup>
+
                 <ToggleRow
                   label={t('settings.docx.batching', lang)}
                   checked={formData.docx.enable_batching}

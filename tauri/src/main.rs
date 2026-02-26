@@ -100,12 +100,18 @@ const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-u
 const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
 const MIN_TEMPERATURE: f64 = 0.0;
 const MAX_TEMPERATURE: f64 = 2.0;
+const MIN_DOCX_CHUNK_SIZE: i32 = 500;
+const MAX_DOCX_CHUNK_SIZE: i32 = 50_000;
 const MIN_BATCH_MAX_CHARS: i32 = 500;
 const MAX_BATCH_MAX_CHARS: i32 = 50_000;
 const MIN_BATCH_MAX_PARAGRAPHS: i32 = 1;
 const MAX_BATCH_MAX_PARAGRAPHS: i32 = 100;
 const MIN_MAX_PARALLEL_REQUESTS: i32 = 1;
 const MAX_MAX_PARALLEL_REQUESTS: i32 = 16;
+
+fn default_docx_chunk_size() -> i32 {
+    3_000
+}
 
 fn is_known_provider(provider: &str) -> bool {
     KNOWN_PROVIDERS
@@ -162,6 +168,8 @@ struct BatchJsonSupportStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DocxSettings {
     compare_mode: String,
+    #[serde(default = "default_docx_chunk_size")]
+    chunk_size: i32,
     enable_batching: bool,
     batch_max_chars: i32,
     batch_max_paragraphs: i32,
@@ -174,6 +182,7 @@ impl Default for DocxSettings {
     fn default() -> Self {
         Self {
             compare_mode: "openxml".into(),
+            chunk_size: default_docx_chunk_size(),
             enable_batching: false,
             batch_max_chars: 3_000,
             batch_max_paragraphs: 15,
@@ -705,6 +714,12 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         || settings.docx.batch_max_chars > MAX_BATCH_MAX_CHARS
     {
         return Err(format!("Invalid settings: docx.batch_max_chars is out of range. {reset_hint}"));
+    }
+
+    if settings.docx.chunk_size < MIN_DOCX_CHUNK_SIZE
+        || settings.docx.chunk_size > MAX_DOCX_CHUNK_SIZE
+    {
+        return Err(format!("Invalid settings: docx.chunk_size is out of range. {reset_hint}"));
     }
 
     if settings.docx.batch_max_paragraphs < MIN_BATCH_MAX_PARAGRAPHS
@@ -1754,6 +1769,7 @@ async fn run_docx_processor(
             "source_path": source_input_path,
             "source_kind": if source_kind == OfficeInputKind::Odt { "odt" } else { "docx" },
             "compare_mode": settings.docx.compare_mode.as_str(),
+            "chunk_size": settings.docx.chunk_size,
             "batching": settings.docx.enable_batching,
             "batch_max_chars": settings.docx.batch_max_chars,
             "batch_max_paragraphs": settings.docx.batch_max_paragraphs,

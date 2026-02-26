@@ -26,6 +26,7 @@ export type DocxCompareMode = (typeof DOCX_COMPARE_MODES)[number];
 
 export interface DocxSettings {
   compare_mode: DocxCompareMode;
+  chunk_size: number;
   enable_batching: boolean;
   batch_max_chars: number;
   batch_max_paragraphs: number;
@@ -47,6 +48,7 @@ export const FONT_SIZE_PX: Record<FontSize, number> = {
 
 export const SETTINGS_LIMITS = {
   temperature: { min: 0, max: 2, step: 0.1 },
+  chunkSize: { min: 500, max: 50000, step: 500 },
   batchMaxChars: { min: 500, max: 50000, step: 500 },
   batchMaxParagraphs: { min: 1, max: 100, step: 1 },
   maxParallelRequests: { min: 1, max: 16, step: 1 },
