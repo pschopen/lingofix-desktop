@@ -2700,30 +2700,8 @@ fn mac_word_compare_workspace_dir() -> anyhow::Result<PathBuf> {
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
     let canonical = normalize_existing_path(&path).map_err(|e| e.to_string())?;
-    let folder = if canonical.is_dir() {
-        canonical
-    } else {
-        canonical.parent().map(|p| p.to_path_buf()).unwrap_or(canonical)
-    };
-
-    if cfg!(target_os = "windows") {
-        std::process::Command::new("explorer")
-            .arg(folder)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open")
-            .arg(folder)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    } else {
-        std::process::Command::new("xdg-open")
-            .arg(folder)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-
-    Ok(())
+    let reveal_file = canonical.is_file();
+    open_path_in_system_explorer(&canonical, reveal_file)
 }
 
 fn open_path_in_system_explorer(path: &Path, reveal_file: bool) -> Result<(), String> {

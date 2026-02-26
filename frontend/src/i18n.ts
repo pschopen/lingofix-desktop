@@ -333,8 +333,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Error during DOCX correction',
   },
   'docx.openFolder': {
-    de: 'Ordner öffnen',
-    en: 'Open folder',
+    de: 'Datei anzeigen',
+    en: 'Show file',
   },
   'docx.logs': {
     de: 'Logs',
