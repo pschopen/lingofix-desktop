@@ -796,12 +796,26 @@ function App() {
                   )}
                 </div>
               ) : isDocxMode ? (
-                <span className={`inline-flex items-center gap-2 text-base font-medium ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
-                  <FileText size={16} />
-                  {isCorrecting && docxFile
-                    ? `${docxFile.name} (${activeDocxFileIndex + 1}/${docxFiles.length})`
-                    : t('editor.files_selected', lang).replace('{count}', String(docxFiles.length))}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className={`inline-flex items-center gap-2 text-base font-medium ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
+                    <FileText size={16} />
+                    {isCorrecting && docxFile
+                      ? `${docxFile.name} (${activeDocxFileIndex + 1}/${docxFiles.length})`
+                      : t('editor.files_selected', lang).replace('{count}', String(docxFiles.length))}
+                  </span>
+                  <button
+                    onClick={() => setShowLogs(!showLogs)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm font-medium transition-colors ${
+                      showLogs
+                        ? (isDarkMode ? 'bg-surface-700 text-accent-400' : 'bg-surface-200 text-accent-600')
+                        : (isDarkMode ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-800' : 'text-surface-500 hover:text-surface-700 hover:bg-surface-100')
+                    }`}
+                  >
+                    <Terminal size={14} />
+                    <span>{docxLogs.length}</span>
+                    {showLogs ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+                </div>
               ) : hasText ? (
                 <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
                   {text.trim().split(/\s+/).filter(w => w.length > 0).length} {t('stats.words', lang)}, {text.length} {t('stats.chars', lang)}
@@ -868,19 +882,10 @@ function App() {
           {/* --- Log Window --- */}
           {showLogs && (
             <div className={`border-b max-h-48 overflow-hidden flex flex-col ${isDarkMode ? 'bg-surface-900 border-surface-700' : 'bg-surface-50 border-surface-200'}`}>
-              <div className={`flex items-center justify-between px-4 py-2 border-b ${isDarkMode ? 'border-surface-800 bg-surface-800/50' : 'border-surface-200 bg-surface-100/50'}`}>
+              <div className={`px-4 py-2 border-b ${isDarkMode ? 'border-surface-800 bg-surface-800/50' : 'border-surface-200 bg-surface-100/50'}`}>
                 <span className={`text-sm font-medium ${isDarkMode ? 'text-surface-300' : 'text-surface-600'}`}>
                   {t('docx.logs', lang)}
                 </span>
-                <button 
-                  onClick={() => {
-                    setDocxLogs([]);
-                    setShowLogs(false);
-                  }}
-                  className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'text-surface-400 hover:bg-surface-700' : 'text-surface-500 hover:bg-surface-200'}`}
-                >
-                  {t('docx.clearLogs', lang)}
-                </button>
               </div>
               <div className="flex-1 overflow-y-auto p-3 space-y-1.5 font-mono text-sm">
                 {docxLogs.length === 0 && (
