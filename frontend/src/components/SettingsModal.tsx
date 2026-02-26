@@ -641,21 +641,6 @@ export function SettingsModal({
                 {/* Custom Prompt Presets */}
                 <FieldGroup label={t('settings.prompt_presets', lang)} isDarkMode={isDarkMode}>
                   <div className={`rounded-xl border p-3 space-y-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/50' : 'border-surface-200 bg-surface-50/80'}`}>
-                    <div className="space-y-1">
-                      <SelectField
-                        value={formData.active_custom_prompt_preset_id}
-                        onChange={(nextValue) => handleSelectCustomPromptPreset(nextValue)}
-                        menuBoundaryRef={modalPanelRef}
-                        isDarkMode={isDarkMode}
-                      >
-                        {formData.custom_prompt_presets.map((preset) => (
-                          <option key={preset.id} value={preset.id} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
-                            {preset.name}
-                          </option>
-                        ))}
-                      </SelectField>
-                    </div>
-
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -689,6 +674,21 @@ export function SettingsModal({
                         <Trash2 size={12} />
                         {t('settings.prompt_presets.delete', lang)}
                       </button>
+                    </div>
+
+                    <div className="space-y-1">
+                      <SelectField
+                        value={formData.active_custom_prompt_preset_id}
+                        onChange={(nextValue) => handleSelectCustomPromptPreset(nextValue)}
+                        menuBoundaryRef={modalPanelRef}
+                        isDarkMode={isDarkMode}
+                      >
+                        {formData.custom_prompt_presets.map((preset) => (
+                          <option key={preset.id} value={preset.id} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
+                            {preset.name}
+                          </option>
+                        ))}
+                      </SelectField>
                     </div>
 
                     <textarea
