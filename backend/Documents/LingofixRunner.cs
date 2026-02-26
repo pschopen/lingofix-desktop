@@ -104,10 +104,10 @@ public static class LingofixRunner
                     if (!canAcceptExistingTrackChanges)
                     {
                         throw new InvalidOperationException(
-                            "Diff mode requires accepting all existing track changes first. Start again and confirm that Lingofix may automatically accept existing changes before correction.");
+                            "OpenXML requires accepting all existing track changes first. Start again and confirm that Lingofix may automatically accept existing changes before correction.");
                     }
 
-                    logger.Warning("Diff mode detected existing track changes. Lingofix is accepting all existing changes before correction.");
+                    logger.Warning("OpenXML detected existing track changes. Lingofix is accepting all existing changes before correction.");
                     TrackChangesGenerator.AcceptAllTrackedChanges(tempOriginalPath);
                     TrackChangesGenerator.AcceptAllTrackedChanges(correctedPath);
                     logger.Info("Existing track changes were accepted automatically before correction.");

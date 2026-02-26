@@ -8,7 +8,6 @@ import { t, detectLanguage } from './i18n';
 import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
 
-const DOCX_COMPARE_FALLBACK_MANUAL_HINT = 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.';
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_STORAGE_KEY = 'lingofix.last_update_check_at';
 const UPDATE_CHECK_ETAG_STORAGE_KEY = 'lingofix.update_check_etag';
@@ -86,7 +85,7 @@ function saveCachedRelease(release: CachedRelease): void {
 function App() {
   const [lang] = useState(detectLanguage());
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
-  const [showDiffModeConsent, setShowDiffModeConsent] = useState(false);
+  const [showOpenXmlConsent, setShowOpenXmlConsent] = useState(false);
   const {
     text,
     setText,
@@ -125,6 +124,7 @@ function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
   const shownUpdateVersionRef = useRef<string | null>(null);
+  const cancelPendingDocxStartRef = useRef(false);
 
   // Apply font-size CSS custom property to document root
   useEffect(() => {
@@ -429,7 +429,7 @@ function App() {
 
   const handleDocxFile = useCallback((file: { name: string; path: string; size: number; originalPath?: string } | null) => {
     setDocxSelection(file);
-    setShowDiffModeConsent(false);
+    setShowOpenXmlConsent(false);
   }, [setDocxSelection]);
 
   const startDocxCorrection = useCallback(async (acceptExistingTrackChanges: boolean) => {
@@ -437,6 +437,7 @@ function App() {
       return;
     }
 
+    cancelPendingDocxStartRef.current = false;
     setIsCorrecting(true);
     setDocxProgress({ percent: 0, message: t('docx.processing', lang) });
     resetDocxRunState();
@@ -467,22 +468,41 @@ function App() {
     if (docxFile) {
       if (!docxFile.path) return;
 
+      cancelPendingDocxStartRef.current = false;
+      setIsCorrecting(true);
+      setDocxProgress({ percent: 0, message: t('docx.processing', lang) });
+
       try {
         if (settings.docx.compare_mode === 'openxml') {
           const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
             filePath: docxFile.path,
           });
 
+          if (cancelPendingDocxStartRef.current) {
+            return;
+          }
+
           if (inspection.hasTrackChanges) {
-            setShowDiffModeConsent(true);
+            setIsCorrecting(false);
+            setDocxProgress(null);
+            setShowOpenXmlConsent(true);
             return;
           }
         }
 
+        if (cancelPendingDocxStartRef.current) {
+          return;
+        }
+
         await startDocxCorrection(false);
       } catch (error) {
+        if (cancelPendingDocxStartRef.current) {
+          return;
+        }
         console.error('DOCX pre-check failed:', error);
         setError(String(error));
+        setIsCorrecting(false);
+        setDocxProgress(null);
       }
       return;
     }
@@ -519,20 +539,20 @@ function App() {
     text,
   ]);
 
-  const handleDiffModeConsentContinue = useCallback(async () => {
-    setShowDiffModeConsent(false);
+  const handleOpenXmlConsentContinue = useCallback(async () => {
+    setShowOpenXmlConsent(false);
     await startDocxCorrection(true);
   }, [startDocxCorrection]);
 
-  const handleDiffModeConsentCancel = useCallback(() => {
-    setShowDiffModeConsent(false);
-    setInfoMessage(t('docx.diff_mode.accept_existing.cancelled', lang));
+  const handleOpenXmlConsentCancel = useCallback(() => {
+    setShowOpenXmlConsent(false);
+    setInfoMessage(t('docx.openxml.accept_existing.cancelled', lang));
   }, [lang]);
 
   const handleNew = () => {
     clearAll();
     setDocxSelection(null);
-    setShowDiffModeConsent(false);
+    setShowOpenXmlConsent(false);
   };
 
   const handleReject = () => {
@@ -546,6 +566,7 @@ function App() {
   const handleStop = async () => {
     try {
       if (docxFile) {
+        cancelPendingDocxStartRef.current = true;
         await invoke('cancel_docx');
         setIsCorrecting(false);
         setDocxProgress(null);
@@ -591,7 +612,7 @@ function App() {
   };
 
   const localizeDocxLogMessage = useCallback((message: string) => {
-    if (message === DOCX_COMPARE_FALLBACK_MANUAL_HINT) {
+    if (message === t('docx.logs.compare_fallback_manual_hint.backend_source', 'en')) {
       return t('docx.logs.compare_fallback_manual_hint', lang);
     }
     return message;
@@ -635,7 +656,7 @@ function App() {
             {/* Dark mode toggle */}
             <button
               onClick={handleToggleDarkMode}
-              aria-label="Toggle dark mode"
+              aria-label={t('theme.toggle', lang)}
               className={`p-2 rounded-lg transition-all duration-200 ${
                 isDarkMode 
                   ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-700' 
@@ -1016,8 +1037,8 @@ function App() {
         isDarkMode={isDarkMode}
       />
 
-      {/* === Diff Mode Consent Modal === */}
-      {showDiffModeConsent && (
+      {/* === OpenXML Consent Modal === */}
+      {showOpenXmlConsent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
           <div className={`card w-full max-w-xl mx-4 animate-scale-in ${
             isDarkMode ? '!bg-surface-800 !border-surface-700' : ''
@@ -1030,12 +1051,12 @@ function App() {
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
-                  {t('docx.diff_mode.accept_existing.title', lang)}
+                  {t('docx.openxml.accept_existing.title', lang)}
                 </h3>
                 <p className={`mt-2 text-sm whitespace-pre-wrap leading-relaxed ${
                   isDarkMode ? 'text-surface-300' : 'text-surface-600'
                 }`}>
-                  {t('docx.diff_mode.accept_existing.message', lang)}
+                  {t('docx.openxml.accept_existing.message', lang)}
                 </p>
               </div>
             </div>
@@ -1045,16 +1066,16 @@ function App() {
                 : 'bg-surface-50 border-surface-100'
             }`}>
               <button
-                onClick={handleDiffModeConsentCancel}
+                onClick={handleOpenXmlConsentCancel}
                 className="btn-secondary !text-base"
               >
-                {t('docx.diff_mode.accept_existing.cancel', lang)}
+                {t('docx.openxml.accept_existing.cancel', lang)}
               </button>
               <button
-                onClick={handleDiffModeConsentContinue}
+                onClick={handleOpenXmlConsentContinue}
                 className="btn-primary !text-base"
               >
-                {t('docx.diff_mode.accept_existing.continue', lang)}
+                {t('docx.openxml.accept_existing.continue', lang)}
               </button>
             </div>
           </div>

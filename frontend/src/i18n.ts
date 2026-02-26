@@ -38,6 +38,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Streaming...',
     en: 'Streaming...',
   },
+  'theme.toggle': {
+    de: 'Dunkelmodus umschalten',
+    en: 'Toggle dark mode',
+  },
   'button.stop': {
     de: 'Stopp',
     en: 'Stop',
@@ -309,7 +313,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Correction complete',
   },
   'docx.trackChanges': {
-    de: 'Änderungen verfolgen',
+    de: 'Änderungsverfolgung',
     en: 'Track Changes',
   },
   'docx.trackChanges.created': {
@@ -345,8 +349,12 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'No logs yet.',
   },
   'docx.logs.compare_fallback_manual_hint': {
-    de: 'Korrigierte Datei ohne Track Changes bereitgestellt. Sie können den Vergleich manuell in Ihrer Office-Anwendung durchführen.',
+    de: 'Korrigierte Datei ohne Änderungsverfolgung bereitgestellt. Sie können den Vergleich manuell in Ihrer Office-Anwendung durchführen.',
     en: 'Returned corrected file without track changes. You can run the comparison manually in your office application.',
+  },
+  'docx.logs.compare_fallback_manual_hint.backend_source': {
+    de: 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.',
+    en: 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.',
   },
   'docx.cancelled': {
     de: 'DOCX-Verarbeitung wurde gestoppt.',
@@ -356,25 +364,25 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Hinweis',
     en: 'Notice',
   },
-  'docx.diff_mode.accept_existing.title': {
+  'docx.openxml.accept_existing.title': {
     de: 'Vorhandene Änderungen gefunden',
     en: 'Existing changes detected',
   },
-  'docx.diff_mode.accept_existing.message': {
-    de: 'Im Diff-Modus kann die Korrektur nur fortgesetzt werden, wenn Lingofix vorab alle vorhandenen Track Changes automatisch akzeptiert.\n\nMöchten Sie fortfahren?',
-    en: 'In diff mode, correction can continue only if Lingofix automatically accepts all existing track changes before correction.\n\nDo you want to continue?',
+  'docx.openxml.accept_existing.message': {
+    de: 'Im OpenXML-Modus kann die Korrektur nur fortgesetzt werden, wenn Lingofix vorab alle vorhandenen Änderungen automatisch akzeptiert.\n\nMöchten Sie fortfahren?',
+    en: 'In OpenXML mode, correction can continue only if Lingofix automatically accepts all existing tracked changes before correction.\n\nDo you want to continue?',
   },
-  'docx.diff_mode.accept_existing.cancel': {
+  'docx.openxml.accept_existing.cancel': {
     de: 'Abbrechen',
     en: 'Cancel',
   },
-  'docx.diff_mode.accept_existing.continue': {
+  'docx.openxml.accept_existing.continue': {
     de: 'Fortfahren',
     en: 'Continue',
   },
-  'docx.diff_mode.accept_existing.cancelled': {
-    de: 'DOCX-Korrektur im Diff-Modus wurde abgebrochen.',
-    en: 'DOCX correction in diff mode was cancelled.',
+  'docx.openxml.accept_existing.cancelled': {
+    de: 'DOCX-Korrektur im OpenXML-Modus wurde abgebrochen.',
+    en: 'DOCX correction in OpenXML mode was cancelled.',
   },
 
   // Settings Modal - Tabs
@@ -409,7 +417,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'LibreOffice UNO (native, soffice)',
   },
   'settings.docx.openxml.warning': {
-    de: 'OpenXML bietet keine odt.-Kompatibilität. Auch bei docx.-Dateien kann es zu Veränderungen im Layout kommen. Word wird für docx.-Dateien, LibreOffice für odt.-Dateien empfohlen.',
+    de: 'OpenXML bietet keine ODT-Kompatibilität. Auch bei DOCX-Dateien kann es zu Veränderungen im Layout kommen. Word wird für DOCX-Dateien, LibreOffice für ODT-Dateien empfohlen.',
     en: 'OpenXML does not offer odt compatibility. Even with docx files, there may be changes in layout. Word is recommended for docx files, LibreOffice for odt files.',
   },
   'settings.docx.word_check.hint': {
@@ -441,7 +449,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Could not verify compare mode access.',
   },
   'settings.temperature': {
-    de: 'Temperature',
+    de: 'Temperatur',
     en: 'Temperature',
   },
   'settings.docx.batching': {
