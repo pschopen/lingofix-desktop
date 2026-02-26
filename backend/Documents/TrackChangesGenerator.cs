@@ -349,7 +349,17 @@ public static class TrackChangesGenerator
             else
             {
                 var markers = CollectReferenceMarkers(outputParagraphs[i]);
-                var diffNodes = BuildWordDiffRuns(outText, corText, markers, author, revDate, ref revId);
+                var originalStyleSpans = BuildRunStyleSpans(outputParagraphs[i]);
+                var correctedStyleSpans = BuildRunStyleSpans(correctedParagraphs[i]);
+                var diffNodes = BuildWordDiffRuns(
+                    outText,
+                    corText,
+                    markers,
+                    author,
+                    revDate,
+                    ref revId,
+                    originalStyleSpans,
+                    correctedStyleSpans);
                 ReplaceParagraphRuns(outputParagraphs[i], diffNodes);
             }
         }
@@ -619,7 +629,15 @@ public static class TrackChangesGenerator
         }
     }
 
-    private static List<OpenXmlElement> BuildWordDiffRuns(string originalText, string correctedText, List<ReferenceMarker> markers, string author, DateTime revDate, ref int revId)
+    private static List<OpenXmlElement> BuildWordDiffRuns(
+        string originalText,
+        string correctedText,
+        List<ReferenceMarker> markers,
+        string author,
+        DateTime revDate,
+        ref int revId,
+        List<RunStyleSpan>? originalStyleSpans = null,
+        List<RunStyleSpan>? correctedStyleSpans = null)
     {
         var originalTokens = DiffUtils.TokenizeWords(originalText);
         var correctedTokens = DiffUtils.TokenizeWords(correctedText);
@@ -633,6 +651,7 @@ public static class TrackChangesGenerator
             .ToList();
         var markerIndex = 0;
         var originalPos = 0;
+        var correctedPos = 0;
 
         foreach (var op in ops)
         {
@@ -644,23 +663,53 @@ public static class TrackChangesGenerator
 
             if (op.Kind == DiffKind.Equal)
             {
-                AppendTextWithMarkers(op.Token, isDelete: false, ref markerIndex, orderedMarkers, ref originalPos, nodes, author, revDate, ref revId);
+                AppendTextWithMarkers(
+                    op.Token,
+                    isDelete: false,
+                    ref markerIndex,
+                    orderedMarkers,
+                    ref originalPos,
+                    nodes,
+                    author,
+                    revDate,
+                    ref revId,
+                    originalStyleSpans);
+                correctedPos += op.Token.Length;
             }
             else if (op.Kind == DiffKind.Insert)
             {
+                var runProps = ResolveRunPropertiesAtOffset(correctedStyleSpans, correctedPos);
                 var ins = new InsertedRun
                 {
                     Id = revId++.ToString(),
                     Author = author,
                     Date = revDate
                 };
-                ins.AppendChild(new RunProperties());
+                if (runProps is not null)
+                {
+                    ins.AppendChild(runProps);
+                }
+                else
+                {
+                    ins.AppendChild(new RunProperties());
+                }
                 ins.AppendChild(new Text(op.Token) { Space = SpaceProcessingModeValues.Preserve });
                 nodes.Add(new Run(ins));
+                correctedPos += op.Token.Length;
             }
             else if (op.Kind == DiffKind.Delete)
             {
-                AppendTextWithMarkers(op.Token, isDelete: true, ref markerIndex, orderedMarkers, ref originalPos, nodes, author, revDate, ref revId);
+                AppendTextWithMarkers(
+                    op.Token,
+                    isDelete: true,
+                    ref markerIndex,
+                    orderedMarkers,
+                    ref originalPos,
+                    nodes,
+                    author,
+                    revDate,
+                    ref revId,
+                    originalStyleSpans);
             }
         }
 
@@ -682,7 +731,8 @@ public static class TrackChangesGenerator
         List<OpenXmlElement> nodes,
         string author,
         DateTime revDate,
-        ref int revId)
+        ref int revId,
+        List<RunStyleSpan>? styleSpans)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -708,7 +758,9 @@ public static class TrackChangesGenerator
             var cut = markerOffset - originalPos;
             if (cut > localPos)
             {
-                AppendSegment(text.Substring(localPos, cut - localPos), isDelete, nodes, author, revDate, ref revId);
+                var segmentStart = originalPos + localPos;
+                var runProps = ResolveRunPropertiesAtOffset(styleSpans, segmentStart);
+                AppendSegment(text.Substring(localPos, cut - localPos), isDelete, nodes, author, revDate, ref revId, runProps);
             }
 
             nodes.Add(orderedMarkers[markerIndex].Run.CloneNode(true));
@@ -718,7 +770,9 @@ public static class TrackChangesGenerator
 
         if (localPos < text.Length)
         {
-            AppendSegment(text.Substring(localPos), isDelete, nodes, author, revDate, ref revId);
+            var segmentStart = originalPos + localPos;
+            var runProps = ResolveRunPropertiesAtOffset(styleSpans, segmentStart);
+            AppendSegment(text.Substring(localPos), isDelete, nodes, author, revDate, ref revId, runProps);
         }
 
         originalPos += text.Length;
@@ -730,7 +784,8 @@ public static class TrackChangesGenerator
         List<OpenXmlElement> nodes,
         string author,
         DateTime revDate,
-        ref int revId)
+        ref int revId,
+        RunProperties? runProps)
     {
         if (segment.Length == 0)
         {
@@ -745,17 +800,89 @@ public static class TrackChangesGenerator
                 Author = author,
                 Date = revDate
             };
-            del.AppendChild(new RunProperties());
+            if (runProps is not null)
+            {
+                del.AppendChild((RunProperties)runProps.CloneNode(true));
+            }
+            else
+            {
+                del.AppendChild(new RunProperties());
+            }
             del.AppendChild(new DeletedText(segment));
             nodes.Add(new Run(del));
         }
         else
         {
-            nodes.Add(new Run(new Text(segment) { Space = SpaceProcessingModeValues.Preserve }));
+            var run = new Run(new Text(segment) { Space = SpaceProcessingModeValues.Preserve });
+            if (runProps is not null)
+            {
+                run.RunProperties = (RunProperties)runProps.CloneNode(true);
+            }
+
+            nodes.Add(run);
         }
     }
 
+    private static List<RunStyleSpan> BuildRunStyleSpans(Paragraph paragraph)
+    {
+        var spans = new List<RunStyleSpan>();
+        var offset = 0;
+
+        foreach (var run in paragraph.Descendants<Run>())
+        {
+            var runText = string.Concat(run.Descendants<Text>().Select(t => t.Text));
+            if (runText.Length == 0)
+            {
+                continue;
+            }
+
+            var props = run.RunProperties is null
+                ? null
+                : (RunProperties)run.RunProperties.CloneNode(true);
+
+            var start = offset;
+            offset += runText.Length;
+            spans.Add(new RunStyleSpan(start, offset, props));
+        }
+
+        return spans;
+    }
+
+    private static RunProperties? ResolveRunPropertiesAtOffset(List<RunStyleSpan>? spans, int offset)
+    {
+        if (spans is null || spans.Count == 0)
+        {
+            return null;
+        }
+
+        var maxOffset = spans[^1].End;
+        var clampedOffset = Math.Clamp(offset, 0, maxOffset);
+
+        foreach (var span in spans)
+        {
+            if (clampedOffset >= span.Start && clampedOffset < span.End)
+            {
+                return span.RunProperties is null ? null : (RunProperties)span.RunProperties.CloneNode(true);
+            }
+        }
+
+        var previous = spans.LastOrDefault(span => span.End <= clampedOffset);
+        if (previous is not null)
+        {
+            return previous.RunProperties is null ? null : (RunProperties)previous.RunProperties.CloneNode(true);
+        }
+
+        var next = spans.FirstOrDefault(span => span.Start >= clampedOffset);
+        if (next is not null)
+        {
+            return next.RunProperties is null ? null : (RunProperties)next.RunProperties.CloneNode(true);
+        }
+
+        return null;
+    }
+
     private sealed record ReferenceMarker(int Offset, Run Run);
+    private sealed record RunStyleSpan(int Start, int End, RunProperties? RunProperties);
 
     public static void GenerateWithWord(string originalPath, string correctedPath, string outputPath, string author)
     {
