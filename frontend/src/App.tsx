@@ -1080,6 +1080,7 @@ function App() {
             <TextEditor
               text={text}
               onChange={handleTextChange}
+              onSubmitShortcut={handleCorrect}
               correctedText={correctedText}
               showDiff={showDiff}
               readOnly={showDiff || !!docxResult}

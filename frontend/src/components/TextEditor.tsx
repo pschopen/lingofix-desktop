@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState, useCallback } from 'react';
+import { useMemo, useEffect, useState, useCallback, type KeyboardEvent } from 'react';
 import { diffWordsWithSpace } from 'diff';
 import { invoke, listen, open } from '../lib/bridge';
 import { FileText, Upload, X } from 'lucide-react';
@@ -8,6 +8,7 @@ import { DocxFile } from '../types';
 interface TextEditorProps {
   text: string;
   onChange: (text: string) => void;
+  onSubmitShortcut?: () => void;
   correctedText: string;
   showDiff: boolean;
   readOnly: boolean;
@@ -22,6 +23,7 @@ interface TextEditorProps {
 export function TextEditor({
   text,
   onChange,
+  onSubmitShortcut,
   correctedText,
   showDiff,
   readOnly,
@@ -227,6 +229,19 @@ export function TextEditor({
     }
   };
 
+  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') {
+      return;
+    }
+
+    if (readOnly || isCorrecting) {
+      return;
+    }
+
+    event.preventDefault();
+    onSubmitShortcut?.();
+  };
+
   const formatFileSize = (bytes: number): string => {
     if (!bytes) return '';
     if (bytes < 1024) return bytes + ' B';
@@ -388,6 +403,7 @@ export function TextEditor({
       <textarea
         value={text}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={handleEditorKeyDown}
         placeholder={t('editor.placeholder', lang)}
         disabled={readOnly}
         className={`w-full h-full font-sans text-base leading-relaxed
