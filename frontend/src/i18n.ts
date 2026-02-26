@@ -160,6 +160,14 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Modelle laden',
     en: 'Load models',
   },
+  'settings.model.loading': {
+    de: 'Modelle werden geladen...',
+    en: 'Loading models...',
+  },
+  'settings.model.none': {
+    de: 'Keine Modelle verfügbar',
+    en: 'No models available',
+  },
   'settings.model.error': {
     de: 'Fehler beim Laden der Modelle',
     en: 'Error loading models',

@@ -1,4 +1,5 @@
 import { Children, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke } from '../lib/bridge';
 import { X, Loader2, ChevronDown, Plus, Copy, Pencil, Trash2 } from 'lucide-react';
 import {
@@ -47,6 +48,7 @@ export function SettingsModal({
   lang,
   isDarkMode = false,
 }: SettingsModalProps) {
+  const modalPanelRef = useRef<HTMLDivElement | null>(null);
   const [formData, setFormData] = useState<Settings | null>(settings);
   const [activeTab, setActiveTab] = useState<TabType>('general');
   const [models, setModels] = useState<string[]>([]);
@@ -483,7 +485,7 @@ export function SettingsModal({
   if (!formData) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
-        <div className={`card w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in mx-4 ${isDarkMode ? '!bg-surface-800 !border-surface-700' : ''}`}>
+        <div ref={modalPanelRef} className={`card w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in mx-4 ${isDarkMode ? '!bg-surface-800 !border-surface-700' : ''}`}>
           <div className={`flex items-center justify-between px-6 py-4 border-b ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
             <h2 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
               {t('settings.title', lang)}
@@ -567,7 +569,7 @@ export function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
-      <div className={`card w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in mx-4 ${isDarkMode ? '!bg-surface-800 !border-surface-700' : ''}`}>
+      <div ref={modalPanelRef} className={`card w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in mx-4 ${isDarkMode ? '!bg-surface-800 !border-surface-700' : ''}`}>
         {/* Header */}
         <div className={`flex items-center justify-between px-6 py-4 border-b ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
           <h2 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
@@ -627,6 +629,7 @@ export function SettingsModal({
                       <SelectField
                         value={formData.active_custom_prompt_preset_id}
                         onChange={(nextValue) => handleSelectCustomPromptPreset(nextValue)}
+                        menuBoundaryRef={modalPanelRef}
                         isDarkMode={isDarkMode}
                       >
                         {formData.custom_prompt_presets.map((preset) => (
@@ -692,6 +695,7 @@ export function SettingsModal({
                       <SelectField
                         value={formData.provider}
                         onChange={(nextValue) => handleProviderChange(nextValue as Provider)}
+                        menuBoundaryRef={modalPanelRef}
                         isDarkMode={isDarkMode}
                       >
                         {PROVIDERS.map((key) => (
@@ -737,13 +741,23 @@ export function SettingsModal({
                 {/* Model Selection */}
                 <FieldGroup label={t('settings.model', lang)} error={modelError} isDarkMode={isDarkMode}>
                   <SelectField
-                    value={formData.model}
-                    onChange={(nextValue) => setFormData({ ...formData, model: nextValue })}
+                    value={isLoadingModels ? (formData.model || '__loading__') : (models.length === 0 ? (formData.model || '__no_models__') : formData.model)}
+                    onChange={(nextValue) => {
+                      if (nextValue === '__loading__' || nextValue === '__no_models__') {
+                        return;
+                      }
+                      setFormData({ ...formData, model: nextValue });
+                    }}
                     onOpen={handleModelDropdownFocus}
+                    menuBoundaryRef={modalPanelRef}
                     isDarkMode={isDarkMode}
                   >
-                    {models.length === 0 ? (
-                      <option value={formData.model}>{isLoadingModels ? `${t('settings.model.load', lang)}...` : formData.model}</option>
+                    {isLoadingModels ? (
+                      <option value={formData.model || '__loading__'}>{t('settings.model.loading', lang)}</option>
+                    ) : models.length === 0 ? (
+                      <option value={formData.model || '__no_models__'}>
+                        {formData.model?.trim() ? formData.model : t('settings.model.none', lang)}
+                      </option>
                     ) : (
                       models.map((model) => (
                         <option key={model} value={model} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
@@ -762,6 +776,7 @@ export function SettingsModal({
                   <SelectField
                     value={formData.docx.compare_mode}
                     onChange={(nextValue) => handleDocxSettingChange('compare_mode', nextValue as DocxSettings['compare_mode'])}
+                    menuBoundaryRef={modalPanelRef}
                     isDarkMode={isDarkMode}
                   >
                     {DOCX_COMPARE_MODES.map((mode) => (
@@ -890,6 +905,7 @@ export function SettingsModal({
                   <SelectField
                     value={formData.font_size}
                     onChange={(nextValue) => setFormData({ ...formData, font_size: nextValue as FontSize })}
+                    menuBoundaryRef={modalPanelRef}
                     isDarkMode={isDarkMode}
                   >
                     {FONT_SIZES.map((size: FontSize) => (
@@ -1112,6 +1128,7 @@ function SelectField({
   value,
   onChange,
   onOpen,
+  menuBoundaryRef,
   children,
   className = '',
   isDarkMode = false,
@@ -1119,12 +1136,20 @@ function SelectField({
   value: string;
   onChange: (value: string) => void;
   onOpen?: () => void;
+  menuBoundaryRef?: React.RefObject<HTMLElement | null>;
   children: React.ReactNode;
   className?: string;
   isDarkMode?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuStyle, setMenuStyle] = useState<{ left: number; top: number; width: number; maxHeight: number }>({
+    left: 0,
+    top: 0,
+    width: 0,
+    maxHeight: 240,
+  });
 
   const options = useMemo(() => {
     return Children.toArray(children)
@@ -1152,24 +1177,98 @@ function SelectField({
 
   const selected = options.find((option) => option.value === value);
 
+  const recalculateMenuPosition = () => {
+    const trigger = containerRef.current;
+    if (!trigger) {
+      return;
+    }
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const boundaryRect = menuBoundaryRef?.current?.getBoundingClientRect() ?? {
+      top: 8,
+      right: window.innerWidth - 8,
+      bottom: window.innerHeight - 8,
+      left: 8,
+      width: window.innerWidth - 16,
+      height: window.innerHeight - 16,
+      x: 8,
+      y: 8,
+      toJSON: () => ({}),
+    };
+
+    const horizontalPadding = 8;
+    const verticalPadding = 8;
+    const minHeight = 96;
+    const preferredHeight = 256;
+
+    const availableBelow = boundaryRect.bottom - triggerRect.bottom - verticalPadding;
+    const availableAbove = triggerRect.top - boundaryRect.top - verticalPadding;
+    const openBelow = availableBelow >= availableAbove;
+    const availablePrimary = openBelow ? availableBelow : availableAbove;
+    const maxHeight = Math.max(minHeight, Math.min(preferredHeight, availablePrimary));
+
+    const estimatedMenuHeight = Math.min(preferredHeight, Math.max(40, options.length * 36 + 8));
+    const menuHeight = Math.min(maxHeight, estimatedMenuHeight);
+
+    const unclampedLeft = triggerRect.left;
+    const maxLeft = boundaryRect.right - triggerRect.width - horizontalPadding;
+    const minLeft = boundaryRect.left + horizontalPadding;
+    const left = Math.max(minLeft, Math.min(unclampedLeft, maxLeft));
+    const top = openBelow
+      ? triggerRect.bottom + 6
+      : triggerRect.top - menuHeight - 6;
+
+    setMenuStyle({
+      left,
+      top,
+      width: triggerRect.width,
+      maxHeight,
+    });
+  };
+
   useEffect(() => {
     if (!isOpen) {
       return;
     }
 
+    recalculateMenuPosition();
+
     const handleOutsideClick = (event: MouseEvent) => {
       const target = event.target as Node | null;
-      if (!containerRef.current || !target) {
+      if (!target) {
         return;
       }
-      if (!containerRef.current.contains(target)) {
-        setIsOpen(false);
+
+      if (containerRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
       }
+
+      setIsOpen(false);
+    };
+
+    const handleReposition = () => {
+      recalculateMenuPosition();
     };
 
     window.addEventListener('mousedown', handleOutsideClick);
-    return () => window.removeEventListener('mousedown', handleOutsideClick);
-  }, [isOpen]);
+    window.addEventListener('resize', handleReposition);
+    window.addEventListener('scroll', handleReposition, true);
+    return () => {
+      window.removeEventListener('mousedown', handleOutsideClick);
+      window.removeEventListener('resize', handleReposition);
+      window.removeEventListener('scroll', handleReposition, true);
+    };
+  }, [isOpen, menuBoundaryRef, options.length]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (!options.some((option) => option.value === value)) {
+      setIsOpen(false);
+    }
+  }, [isOpen, options, value]);
 
   const toggleOpen = () => {
     const next = !isOpen;
@@ -1197,9 +1296,17 @@ function SelectField({
         <ChevronDown size={16} className={isDarkMode ? 'text-surface-400' : 'text-surface-500'} />
       </div>
 
-      {isOpen && (
-        <div className={`absolute z-20 mt-1 w-full rounded-xl border shadow-premium overflow-hidden ${isDarkMode ? 'border-surface-600 bg-surface-800' : 'border-surface-200 bg-white'}`}>
-          <div className="max-h-64 overflow-y-auto p-1">
+      {isOpen && createPortal(
+        <div
+          ref={menuRef}
+          className={`fixed z-[70] rounded-xl border shadow-premium overflow-hidden ${isDarkMode ? 'border-surface-600 bg-surface-800' : 'border-surface-200 bg-white'}`}
+          style={{
+            left: `${menuStyle.left}px`,
+            top: `${menuStyle.top}px`,
+            width: `${menuStyle.width}px`,
+          }}
+        >
+          <div className="overflow-y-auto p-1" style={{ maxHeight: `${menuStyle.maxHeight}px` }}>
             {options.map((option) => {
               const active = option.value === value;
               return (
@@ -1217,7 +1324,8 @@ function SelectField({
               );
             })}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
