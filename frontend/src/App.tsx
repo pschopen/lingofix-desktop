@@ -761,6 +761,11 @@ function App() {
                       </div>
                     </div>
                     <span className={`text-base font-medium tabular-nums ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>{docxProgress.percent}%</span>
+                    {docxFiles.length > 1 && (
+                      <span className={`text-base font-medium tabular-nums ${isDarkMode ? 'text-accent-300' : 'text-accent-700'}`}>
+                        {activeDocxFileIndex + 1}/{docxFiles.length}
+                      </span>
+                    )}
                     <span className={`text-base truncate ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>{docxProgress.message}</span>
                   </div>
                   

@@ -516,7 +516,6 @@ export function SettingsModal({
           <div className="p-6 space-y-5 overflow-y-auto">
             <FieldGroup
               label={t('settings.app_reset', lang)}
-              hint={t('settings.app_reset.hint', lang)}
               isDarkMode={isDarkMode}
             >
               <button
@@ -538,7 +537,6 @@ export function SettingsModal({
             <div className={`pt-2 mt-1 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
               <FieldGroup
                 label={t('settings.system_paths', lang)}
-                hint={t('settings.system_paths.hint', lang)}
                 isDarkMode={isDarkMode}
               >
                 <div className="flex flex-wrap gap-2">
@@ -970,7 +968,6 @@ export function SettingsModal({
                 <div className={`pt-2 mt-1 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
                   <FieldGroup
                     label={t('settings.auto_check_updates', lang)}
-                    hint={t('settings.auto_check_updates.hint', lang)}
                     isDarkMode={isDarkMode}
                   >
                     <ToggleRow
@@ -999,7 +996,6 @@ export function SettingsModal({
                 <div className={`pt-2 mt-1 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
                   <FieldGroup
                     label={t('settings.app_reset', lang)}
-                    hint={t('settings.app_reset.hint', lang)}
                     isDarkMode={isDarkMode}
                   >
                     <button
@@ -1022,7 +1018,6 @@ export function SettingsModal({
                 <div className={`pt-2 mt-1 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
                   <FieldGroup
                     label={t('settings.system_paths', lang)}
-                    hint={t('settings.system_paths.hint', lang)}
                     isDarkMode={isDarkMode}
                   >
                     <div className="flex flex-wrap gap-2">
