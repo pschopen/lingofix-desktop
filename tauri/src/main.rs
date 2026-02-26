@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
 const MAX_OFFICE_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
@@ -26,21 +27,57 @@ const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
 const SOFFICE_PATH_ENV: &str = "LINGOFIX_SOFFICE_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
+#[cfg(target_os = "macos")]
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
 
-fn default_custom_prompt() -> String {
-    "Correct the following text while maintaining the style and tone.".to_string()
+const DEFAULT_CUSTOM_PROMPT_EN: &str = "Correct the following text while maintaining the style and tone.";
+const DEFAULT_CUSTOM_PROMPT_DE: &str = "Korrigiere den folgenden Text nach den Duden-Regeln. Korrigiere nur Fehler, alles andere lässt Du unverändert!";
+const DEFAULT_SYSTEM_PROMPT_EN: &str =
+    "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
+const DEFAULT_SYSTEM_PROMPT_DE: &str =
+    "Wichtig: Antworte nur mit dem korrigierten Text. Keine Erklärungen, keine Notizen, keine zusätzlichen Sätze.";
+const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_EN: &str = "Default";
+const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_DE: &str = "Standard";
+
+fn normalize_locale(locale: &str) -> &'static str {
+    if locale.trim().to_ascii_lowercase().starts_with("de") {
+        "de"
+    } else {
+        "en"
+    }
 }
 
-fn default_system_prompt() -> String {
-    "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences."
-        .to_string()
+fn default_custom_prompt(locale: &str) -> String {
+    if normalize_locale(locale) == "de" {
+        DEFAULT_CUSTOM_PROMPT_DE.to_string()
+    } else {
+        DEFAULT_CUSTOM_PROMPT_EN.to_string()
+    }
 }
 
-fn default_batch_prompt() -> String {
-    "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
-        .to_string()
+fn default_system_prompt(locale: &str) -> String {
+    if normalize_locale(locale) == "de" {
+        DEFAULT_SYSTEM_PROMPT_DE.to_string()
+    } else {
+        DEFAULT_SYSTEM_PROMPT_EN.to_string()
+    }
+}
+
+fn default_custom_prompt_preset(locale: &str) -> CustomPromptPreset {
+    let normalized_locale = normalize_locale(locale);
+    let name = if normalized_locale == "de" {
+        DEFAULT_CUSTOM_PROMPT_PRESET_NAME_DE
+    } else {
+        DEFAULT_CUSTOM_PROMPT_PRESET_NAME_EN
+    };
+
+    CustomPromptPreset {
+        id: "default".to_string(),
+        name: name.to_string(),
+        value: default_custom_prompt(normalized_locale),
+        locale: normalized_locale.to_string(),
+    }
 }
 
 fn default_auto_check_updates() -> bool {
@@ -56,6 +93,16 @@ const KNOWN_PROVIDERS: [&str; 7] = [
     "custom",
     "mistral",
 ];
+const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
+const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
+const MIN_TEMPERATURE: f64 = 0.0;
+const MAX_TEMPERATURE: f64 = 2.0;
+const MIN_BATCH_MAX_CHARS: i32 = 500;
+const MAX_BATCH_MAX_CHARS: i32 = 50_000;
+const MIN_BATCH_MAX_PARAGRAPHS: i32 = 1;
+const MAX_BATCH_MAX_PARAGRAPHS: i32 = 100;
+const MIN_MAX_PARALLEL_REQUESTS: i32 = 1;
+const MAX_MAX_PARALLEL_REQUESTS: i32 = 16;
 
 fn is_known_provider(provider: &str) -> bool {
     KNOWN_PROVIDERS
@@ -63,12 +110,15 @@ fn is_known_provider(provider: &str) -> bool {
         .any(|known| known.eq_ignore_ascii_case(provider))
 }
 
-fn normalize_provider(provider: &str) -> String {
+fn canonical_provider(provider: &str) -> Result<String, String> {
     let trimmed = provider.trim();
     if is_known_provider(trimmed) {
-        trimmed.to_ascii_lowercase()
+        Ok(trimmed.to_ascii_lowercase())
     } else {
-        "openai".to_string()
+        Err(
+            "Invalid settings: provider is unknown. Open Settings > Advanced and use 'Reset app'."
+                .to_string(),
+        )
     }
 }
 
@@ -93,6 +143,19 @@ struct CancellationState {
     docx: Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
 }
 
+#[derive(Default)]
+struct ModelCapabilityState {
+    temperature_support: Mutex<HashMap<String, bool>>,
+    reasoning_effort_support: Mutex<HashMap<String, bool>>,
+    structured_json_support: Mutex<HashMap<String, bool>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BatchJsonSupportStatus {
+    supported: bool,
+    details: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DocxSettings {
     compare_mode: String,
@@ -108,14 +171,22 @@ impl Default for DocxSettings {
     fn default() -> Self {
         Self {
             compare_mode: "openxml".into(),
-            enable_batching: true,
-            batch_max_chars: 50_000,
-            batch_max_paragraphs: 100,
+            enable_batching: false,
+            batch_max_chars: 3_000,
+            batch_max_paragraphs: 15,
             enable_cache: true,
             enable_parallelization: true,
-            max_parallel_requests: 2,
+            max_parallel_requests: 4,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CustomPromptPreset {
+    id: String,
+    name: String,
+    value: String,
+    locale: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,13 +195,10 @@ struct FrontendSettings {
     api_url: String,
     api_key: Option<String>,
     model: String,
-    #[serde(default = "default_custom_prompt")]
     custom_prompt: String,
-    #[serde(default = "default_system_prompt")]
+    custom_prompt_presets: Vec<CustomPromptPreset>,
+    active_custom_prompt_preset_id: String,
     system_prompt: String,
-    #[serde(default = "default_batch_prompt")]
-    batch_prompt: String,
-    #[serde(default = "default_auto_check_updates")]
     auto_check_updates: bool,
     temperature: f64,
     provider_keys: HashMap<String, Option<String>>,
@@ -153,17 +221,26 @@ struct DocxTrackChangesInspection {
 
 impl Default for FrontendSettings {
     fn default() -> Self {
+        Self::default_for_locale("en")
+    }
+}
+
+impl FrontendSettings {
+    fn default_for_locale(locale: &str) -> Self {
+        let normalized_locale = normalize_locale(locale);
+        let default_preset = default_custom_prompt_preset(normalized_locale);
         Self {
             provider: "openai".into(),
             api_url: "https://api.openai.com/v1".into(),
             api_key: None,
             model: "gpt-4".into(),
-            custom_prompt: default_custom_prompt(),
-            system_prompt: default_system_prompt(),
-            batch_prompt: default_batch_prompt(),
+            custom_prompt: default_preset.value.clone(),
+            custom_prompt_presets: vec![default_preset.clone()],
+            active_custom_prompt_preset_id: default_preset.id,
+            system_prompt: default_system_prompt(normalized_locale),
             auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
-            provider_keys: HashMap::new(),
+            provider_keys: empty_provider_keys(),
             docx: DocxSettings::default(),
             font_size: "default".into(),
         }
@@ -297,7 +374,6 @@ fn encrypt_settings_secrets(mut settings: FrontendSettings) -> FrontendSettings 
 }
 
 fn sanitize_settings_for_disk(mut settings: FrontendSettings) -> FrontendSettings {
-    settings.provider = normalize_provider(&settings.provider);
     settings.api_key = None;
     let mut cleaned_keys: HashMap<String, Option<String>> = HashMap::new();
     for provider in KNOWN_PROVIDERS {
@@ -395,16 +471,24 @@ fn clear_temp_lingofix_dir() {
 }
 
 #[tauri::command]
-async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
+async fn load_settings(app: AppHandle, locale: Option<String>) -> Result<FrontendSettings, String> {
+    let locale = locale.as_deref().unwrap_or("en");
     let path = settings_path(&app).map_err(|e| e.to_string())?;
     if !path.exists() {
-        return Ok(FrontendSettings::default());
+        let defaults = FrontendSettings::default_for_locale(locale);
+        validate_settings(&defaults)?;
+        write_settings_file(&path, defaults.clone()).await?;
+        return Ok(defaults);
     }
 
     let content = tokio::fs::read_to_string(&path)
         .await
         .map_err(|e| e.to_string())?;
-    let raw_settings: FrontendSettings = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let raw_settings: FrontendSettings = serde_json::from_str(&content).map_err(|e| {
+        format!(
+            "Could not parse settings.json: {e}. Open Settings > Advanced and use 'Reset app'."
+        )
+    })?;
     let has_plain_secrets = raw_settings
         .api_key
         .as_ref()
@@ -418,7 +502,9 @@ async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
         });
 
     let mut settings = decrypt_settings_secrets(raw_settings);
-    settings.provider = normalize_provider(&settings.provider);
+    settings.provider = canonical_provider(&settings.provider)?;
+    sync_custom_prompt_with_active_preset(&mut settings)?;
+    validate_settings(&settings)?;
 
     if settings.api_key.as_ref().map(|v| v.trim().is_empty()).unwrap_or(true) {
         settings.api_key = settings
@@ -430,20 +516,165 @@ async fn load_settings(app: AppHandle) -> Result<FrontendSettings, String> {
     }
 
     if has_plain_secrets {
-        let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(settings.clone()));
-        if let Ok(serialized) = serde_json::to_string_pretty(&encrypted) {
-            let _ = tokio::fs::write(&path, serialized).await;
-        }
+        let _ = write_settings_file(&path, settings.clone()).await;
     }
 
     Ok(settings)
 }
 
+fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
+    let reset_hint = "Open Settings > Advanced and use 'Reset app'.";
+    canonical_provider(&settings.provider)?;
+
+    if settings.api_url.trim().is_empty() {
+        return Err(format!("Invalid settings: api_url is missing. {reset_hint}"));
+    }
+
+    if settings.model.trim().is_empty() {
+        return Err(format!("Invalid settings: model is missing. {reset_hint}"));
+    }
+
+    if settings.custom_prompt.trim().is_empty() {
+        return Err(format!("Invalid settings: custom_prompt is missing. {reset_hint}"));
+    }
+
+    if settings.system_prompt.trim().is_empty() {
+        return Err(format!("Invalid settings: system_prompt is missing. {reset_hint}"));
+    }
+
+    if settings.custom_prompt_presets.is_empty() {
+        return Err(format!("Invalid settings: custom_prompt_presets is empty. {reset_hint}"));
+    }
+
+    if settings.active_custom_prompt_preset_id.trim().is_empty() {
+        return Err(format!("Invalid settings: active_custom_prompt_preset_id is missing. {reset_hint}"));
+    }
+
+    let mut seen_ids = HashSet::new();
+    let mut active_found = false;
+    for preset in &settings.custom_prompt_presets {
+        if preset.id.trim().is_empty() {
+            return Err(format!("Invalid settings: custom prompt preset id is missing. {reset_hint}"));
+        }
+        if !seen_ids.insert(preset.id.to_ascii_lowercase()) {
+            return Err(format!("Invalid settings: duplicate custom prompt preset ids. {reset_hint}"));
+        }
+        if preset.name.trim().is_empty() {
+            return Err(format!("Invalid settings: custom prompt preset name is missing. {reset_hint}"));
+        }
+        if preset.value.trim().is_empty() {
+            return Err(format!("Invalid settings: custom prompt preset value is missing. {reset_hint}"));
+        }
+        if normalize_locale(&preset.locale) != preset.locale.trim().to_ascii_lowercase() {
+            return Err(format!("Invalid settings: custom prompt preset locale is invalid. {reset_hint}"));
+        }
+        if preset.id.eq_ignore_ascii_case(&settings.active_custom_prompt_preset_id) {
+            active_found = true;
+        }
+    }
+
+    if !active_found {
+        return Err(format!("Invalid settings: active custom prompt preset does not exist. {reset_hint}"));
+    }
+
+    if !settings
+        .provider_keys
+        .keys()
+        .all(|key| KNOWN_PROVIDERS.iter().any(|provider| provider == &key.as_str()))
+    {
+        return Err(format!("Invalid settings: provider_keys contains unknown providers. {reset_hint}"));
+    }
+
+    if settings.provider_keys.len() != KNOWN_PROVIDERS.len() {
+        return Err(format!("Invalid settings: provider_keys is incomplete. {reset_hint}"));
+    }
+
+    if !KNOWN_COMPARE_MODES
+        .iter()
+        .any(|mode| mode.eq_ignore_ascii_case(settings.docx.compare_mode.trim()))
+    {
+        return Err(format!("Invalid settings: docx.compare_mode is invalid. {reset_hint}"));
+    }
+
+    if !KNOWN_FONT_SIZES
+        .iter()
+        .any(|size| size.eq_ignore_ascii_case(settings.font_size.trim()))
+    {
+        return Err(format!("Invalid settings: font_size is invalid. {reset_hint}"));
+    }
+
+    if settings.temperature.is_nan()
+        || settings.temperature.is_infinite()
+        || settings.temperature < MIN_TEMPERATURE
+        || settings.temperature > MAX_TEMPERATURE
+    {
+        return Err(format!("Invalid settings: temperature is out of range. {reset_hint}"));
+    }
+
+    if settings.docx.batch_max_chars < MIN_BATCH_MAX_CHARS
+        || settings.docx.batch_max_chars > MAX_BATCH_MAX_CHARS
+    {
+        return Err(format!("Invalid settings: docx.batch_max_chars is out of range. {reset_hint}"));
+    }
+
+    if settings.docx.batch_max_paragraphs < MIN_BATCH_MAX_PARAGRAPHS
+        || settings.docx.batch_max_paragraphs > MAX_BATCH_MAX_PARAGRAPHS
+    {
+        return Err(format!("Invalid settings: docx.batch_max_paragraphs is out of range. {reset_hint}"));
+    }
+
+    if settings.docx.max_parallel_requests < MIN_MAX_PARALLEL_REQUESTS
+        || settings.docx.max_parallel_requests > MAX_MAX_PARALLEL_REQUESTS
+    {
+        return Err(format!("Invalid settings: docx.max_parallel_requests is out of range. {reset_hint}"));
+    }
+
+    Ok(())
+}
+
+fn sync_custom_prompt_with_active_preset(settings: &mut FrontendSettings) -> Result<(), String> {
+    let active_id = settings.active_custom_prompt_preset_id.trim();
+    if active_id.is_empty() {
+        return Err("Invalid settings: active custom prompt preset id is missing. Open Settings > Advanced and use 'Reset app'.".to_string());
+    }
+
+    let Some(active_preset) = settings
+        .custom_prompt_presets
+        .iter_mut()
+        .find(|preset| preset.id.eq_ignore_ascii_case(active_id))
+    else {
+        return Err("Invalid settings: active custom prompt preset does not exist. Open Settings > Advanced and use 'Reset app'.".to_string());
+    };
+
+    active_preset.locale = normalize_locale(&active_preset.locale).to_string();
+    settings.active_custom_prompt_preset_id = active_preset.id.trim().to_string();
+    settings.custom_prompt = active_preset.value.trim().to_string();
+    Ok(())
+}
+
+fn empty_provider_keys() -> HashMap<String, Option<String>> {
+    let mut keys = HashMap::new();
+    for provider in KNOWN_PROVIDERS {
+        keys.insert(provider.to_string(), None);
+    }
+    keys
+}
+
+async fn write_settings_file(path: &Path, settings: FrontendSettings) -> Result<(), String> {
+    let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(settings));
+    let content = serde_json::to_string_pretty(&encrypted)
+        .map_err(|e| e.to_string())?;
+    tokio::fs::write(path, content)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(), String> {
-    let normalized_provider = normalize_provider(&settings.provider);
+    let normalized_provider = canonical_provider(&settings.provider)?;
     let mut normalized_settings = settings;
     normalized_settings.provider = normalized_provider.clone();
+    sync_custom_prompt_with_active_preset(&mut normalized_settings)?;
     if let Some(active) = normalized_settings
         .api_key
         .as_ref()
@@ -455,13 +686,19 @@ async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(),
             .insert(normalized_provider, Some(active));
     }
 
+    validate_settings(&normalized_settings)?;
+
     let path = settings_path(&app).map_err(|e| e.to_string())?;
-    let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(normalized_settings));
-    let content = serde_json::to_string_pretty(&encrypted)
-        .map_err(|e| e.to_string())?;
-    tokio::fs::write(path, content)
-        .await
-        .map_err(|e| e.to_string())
+    write_settings_file(&path, normalized_settings).await
+}
+
+#[tauri::command]
+async fn reset_settings(app: AppHandle, locale: Option<String>) -> Result<FrontendSettings, String> {
+    let path = settings_path(&app).map_err(|e| e.to_string())?;
+    let defaults = FrontendSettings::default_for_locale(locale.as_deref().unwrap_or("en"));
+    validate_settings(&defaults)?;
+    write_settings_file(&path, defaults.clone()).await?;
+    Ok(defaults)
 }
 
 #[tauri::command]
@@ -524,6 +761,7 @@ async fn cancel_correction(state: State<'_, CancellationState>) -> Result<(), St
 async fn correct_text_streaming(
     app: AppHandle,
     state: State<'_, CancellationState>,
+    capability_state: State<'_, ModelCapabilityState>,
     text: String,
     settings: FrontendSettings,
 ) -> Result<(), String> {
@@ -552,7 +790,14 @@ async fn correct_text_streaming(
     let result = if effective_settings.provider.eq_ignore_ascii_case("ollama") {
         stream_ollama(&app, &cancel_flag, &text, &effective_settings).await
     } else {
-        stream_openai_like(&app, &cancel_flag, &text, &effective_settings).await
+        stream_openai_like(
+            &app,
+            &cancel_flag,
+            &text,
+            &effective_settings,
+            capability_state.inner(),
+        )
+        .await
     };
 
     {
@@ -648,6 +893,7 @@ async fn stream_openai_like(
     cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
     text: &str,
     settings: &FrontendSettings,
+    capability_state: &ModelCapabilityState,
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", settings.api_url.trim_end_matches('/'));
@@ -655,20 +901,50 @@ async fn stream_openai_like(
         "{}\n\n{}\n\nText:\n{}",
         settings.custom_prompt, settings.system_prompt, text
     );
-    let mut include_reasoning_effort = true;
-    let mut include_temperature = true;
+    let cache_key = temperature_capability_key(settings);
+    let mut include_temperature = {
+        let cache = capability_state.temperature_support.lock().await;
+        cache.get(&cache_key).copied().unwrap_or(true)
+    };
+    let mut include_reasoning_effort = {
+        let cache = capability_state.reasoning_effort_support.lock().await;
+        cache.get(&cache_key).copied().unwrap_or(true)
+    };
+
     let resp = loop {
-        let response = send_openai_like_request(
+        let request_future = send_openai_like_request(
             &client,
             &url,
             settings,
             &prompt,
             include_reasoning_effort,
             include_temperature,
-        )
-        .await?;
+        );
+        tokio::pin!(request_future);
+
+        let response = loop {
+            tokio::select! {
+                result = &mut request_future => {
+                    break result?;
+                }
+                _ = sleep(Duration::from_millis(120)) => {
+                    if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        let _ = app.emit("correction_complete", text.to_string());
+                        return Ok(());
+                    }
+                }
+            }
+        };
 
         if response.status().is_success() {
+            if include_temperature {
+                let mut cache = capability_state.temperature_support.lock().await;
+                cache.insert(cache_key.clone(), true);
+            }
+            if include_reasoning_effort {
+                let mut cache = capability_state.reasoning_effort_support.lock().await;
+                cache.insert(cache_key.clone(), true);
+            }
             break response;
         }
 
@@ -681,6 +957,8 @@ async fn stream_openai_like(
             && is_temperature_unsupported_error(&detail)
         {
             include_temperature = false;
+            let mut cache = capability_state.temperature_support.lock().await;
+            cache.insert(cache_key.clone(), false);
             continue;
         }
 
@@ -689,6 +967,8 @@ async fn stream_openai_like(
             && is_reasoning_or_thinking_error(&detail)
         {
             include_reasoning_effort = false;
+            let mut cache = capability_state.reasoning_effort_support.lock().await;
+            cache.insert(cache_key.clone(), false);
             continue;
         }
 
@@ -699,43 +979,47 @@ async fn stream_openai_like(
     let mut buf = String::new();
     let mut all = String::new();
 
-    while let Some(chunk) = stream.next().await {
-        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = app.emit("correction_complete", remove_markdown(&all));
-            return Ok(());
-        }
-
-        let chunk = chunk?;
-        buf.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(pos) = buf.find('\n') {
-            let line = buf[..pos].trim().to_string();
-            buf = buf[pos + 1..].to_string();
-
-            if !line.starts_with("data: ") {
-                continue;
-            }
-
-            let data = &line[6..];
-            if data == "[DONE]" {
-                let final_text = remove_markdown(&all);
-                if final_text.trim().is_empty() {
-                    return Err(anyhow!("LLM returned an empty correction result"));
+    loop {
+        tokio::select! {
+            _ = sleep(Duration::from_millis(120)) => {
+                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    let partial = remove_markdown(&all);
+                    let payload = if partial.trim().is_empty() { text.to_string() } else { partial };
+                    let _ = app.emit("correction_complete", payload);
+                    return Ok(());
                 }
-                let _ = app.emit("correction_complete", final_text);
-                return Ok(());
             }
+            maybe_chunk = stream.next() => {
+                let Some(chunk) = maybe_chunk else { break; };
+                let chunk = chunk?;
+                buf.push_str(&String::from_utf8_lossy(&chunk));
 
-            if let Ok(value) = serde_json::from_str::<Value>(data) {
-                if let Some(content) = value
-                    .get("choices")
-                    .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|c| c.get("delta"))
-                    .and_then(|d| d.get("content"))
-                    .and_then(|c| c.as_str())
-                {
-                    all.push_str(content);
-                    let _ = app.emit("correction_chunk", remove_markdown(&all));
+                while let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].trim().to_string();
+                    buf = buf[pos + 1..].to_string();
+
+                    if !line.starts_with("data: ") {
+                        continue;
+                    }
+
+                    let data = &line[6..];
+                    if data == "[DONE]" {
+                        let final_text = remove_markdown(&all);
+                        if final_text.trim().is_empty() {
+                            return Err(anyhow!("LLM returned an empty correction result"));
+                        }
+                        let _ = app.emit("correction_complete", final_text);
+                        return Ok(());
+                    }
+
+                    if let Ok(value) = serde_json::from_str::<Value>(data) {
+                        if let Some(content) = extract_openai_like_stream_content(&value) {
+                            if !content.is_empty() {
+                                all.push_str(&content);
+                                let _ = app.emit("correction_chunk", remove_markdown(&all));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -795,6 +1079,274 @@ fn is_temperature_unsupported_error(message: &str) -> bool {
             || m.contains("unsupported")
             || m.contains("not allowed")
             || m.contains("invalid"))
+}
+
+fn is_response_format_unsupported_error(message: &str) -> bool {
+    let m = message.to_lowercase();
+    if m.contains("unsupported_parameter") || m.contains("param\":\"response_format") {
+        return true;
+    }
+
+    m.contains("response_format")
+        && (m.contains("not support")
+            || m.contains("does not support")
+            || m.contains("unsupported")
+            || m.contains("not allowed")
+            || m.contains("invalid"))
+}
+
+fn build_backend_chat_completions_url(api_base: &str) -> anyhow::Result<String> {
+    let trimmed = api_base.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(anyhow!("api_url is missing"));
+    }
+
+    if trimmed.ends_with("/chat/completions") {
+        return Ok(trimmed.to_string());
+    }
+
+    if trimmed.ends_with("/v1") {
+        return Ok(format!("{trimmed}/chat/completions"));
+    }
+
+    Ok(format!("{trimmed}/v1/chat/completions"))
+}
+
+#[tauri::command]
+async fn check_batch_json_support(
+    settings: FrontendSettings,
+    capability_state: State<'_, ModelCapabilityState>,
+) -> Result<BatchJsonSupportStatus, String> {
+    if !settings.docx.enable_batching {
+        return Ok(BatchJsonSupportStatus {
+            supported: true,
+            details: None,
+        });
+    }
+
+    let mut effective_settings = settings;
+    effective_settings.api_key = resolve_provider_key(&effective_settings);
+
+    if !effective_settings.provider.eq_ignore_ascii_case("ollama")
+        && effective_settings
+            .api_key
+            .as_ref()
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+    {
+        return Err("API key missing. Please open settings and provide an API key.".to_string());
+    }
+
+    let cache_key = temperature_capability_key(&effective_settings);
+    {
+        let cache = capability_state.structured_json_support.lock().await;
+        if let Some(supported) = cache.get(&cache_key) {
+            return Ok(BatchJsonSupportStatus {
+                supported: *supported,
+                details: if *supported {
+                    None
+                } else {
+                    Some("response_format json_schema is not supported by this model.".to_string())
+                },
+            });
+        }
+    }
+
+    let url = build_backend_chat_completions_url(&effective_settings.api_url).map_err(|e| e.to_string())?;
+    let client = reqwest::Client::new();
+    let body = json!({
+        "model": effective_settings.model,
+        "messages": [{"role": "user", "content": "Return exactly this JSON object: {\"ok\":true}"}],
+        "stream": false,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "lingofix_batch_probe",
+                "strict": true,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "ok": { "type": "boolean" }
+                    },
+                    "required": ["ok"]
+                }
+            }
+        }
+    });
+
+    let mut request = client.post(url).json(&body);
+    if let Some(api_key) = effective_settings.api_key.as_ref() {
+        if !api_key.trim().is_empty() {
+            request = request.bearer_auth(api_key);
+        }
+    }
+
+    let response = request.send().await.map_err(|e| e.to_string())?;
+    if response.status().is_success() {
+        let mut cache = capability_state.structured_json_support.lock().await;
+        cache.insert(cache_key, true);
+        return Ok(BatchJsonSupportStatus {
+            supported: true,
+            details: None,
+        });
+    }
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let detail = extract_api_error_message(&body);
+    if status.as_u16() == 400 && is_response_format_unsupported_error(&detail) {
+        let mut cache = capability_state.structured_json_support.lock().await;
+        cache.insert(cache_key, false);
+        return Ok(BatchJsonSupportStatus {
+            supported: false,
+            details: Some(detail),
+        });
+    }
+
+    Err(format!(
+        "JSON support check failed ({}): {}",
+        status,
+        detail
+    ))
+}
+
+fn extract_openai_like_stream_content(value: &Value) -> Option<String> {
+    if let Some(event_type) = value.get("type").and_then(Value::as_str) {
+        if event_type.contains("output_text") {
+            if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                if !delta.is_empty() {
+                    return Some(delta.to_string());
+                }
+            }
+            if let Some(text) = value.get("text").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+        }
+    }
+
+    if let Some(first_choice) = value
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+    {
+        if let Some(delta) = first_choice.get("delta") {
+            if let Some(content) = delta.get("content") {
+                if let Some(text) = read_text_content_value(content) {
+                    return Some(text);
+                }
+            }
+
+            if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+        }
+
+        if let Some(message) = first_choice.get("message") {
+            if let Some(content) = message.get("content") {
+                if let Some(text) = read_text_content_value(content) {
+                    return Some(text);
+                }
+            }
+        }
+
+        if let Some(text) = first_choice.get("text").and_then(Value::as_str) {
+            if !text.is_empty() {
+                return Some(text.to_string());
+            }
+        }
+    }
+
+    if let Some(output_text) = value.get("output_text") {
+        if let Some(text) = read_text_content_value(output_text) {
+            return Some(text);
+        }
+    }
+
+    if let Some(output) = value.get("output").and_then(Value::as_array) {
+        let mut parts = Vec::new();
+        for item in output {
+            if let Some(content) = item.get("content") {
+                if let Some(text) = read_text_content_value(content) {
+                    if !text.is_empty() {
+                        parts.push(text);
+                    }
+                }
+            }
+        }
+        if !parts.is_empty() {
+            return Some(parts.join(""));
+        }
+    }
+
+    None
+}
+
+fn read_text_content_value(content: &Value) -> Option<String> {
+    match content {
+        Value::String(s) => {
+            if s.is_empty() {
+                None
+            } else {
+                Some(s.clone())
+            }
+        }
+        Value::Array(items) => {
+            let mut parts = Vec::new();
+            for item in items {
+                if let Some(text) = read_text_content_value(item) {
+                    if !text.is_empty() {
+                        parts.push(text);
+                    }
+                }
+            }
+
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(""))
+            }
+        }
+        Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+
+            if let Some(value) = map.get("value").and_then(Value::as_str) {
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+
+            if let Some(nested) = map.get("content") {
+                if let Some(text) = read_text_content_value(nested) {
+                    if !text.is_empty() {
+                        return Some(text);
+                    }
+                }
+            }
+
+            None
+        }
+        _ => None,
+    }
+}
+
+fn temperature_capability_key(settings: &FrontendSettings) -> String {
+    let provider = settings.provider.trim().to_ascii_lowercase();
+    let api_url = settings
+        .api_url
+        .trim()
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    let model = settings.model.trim().to_ascii_lowercase();
+    format!("{}|{}|{}", provider, api_url, model)
 }
 
 fn extract_api_error_message(body: &str) -> String {
@@ -943,6 +1495,14 @@ async fn run_docx_processor(
     let settings_json = serde_json::to_string(&backend_settings)?;
     let settings_temp = std::env::temp_dir().join(format!("lingofix-settings-{}.json", uuid_like()));
     tokio::fs::write(&settings_temp, settings_json).await?;
+    let source_kind_arg = if source_kind == OfficeInputKind::Odt { "odt" } else { "docx" };
+    let source_original_path_arg = if source_kind == OfficeInputKind::Odt {
+        original_path
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(source_input_path)
+    } else {
+        source_input_path
+    };
     let run_result = async {
         let (mut cmd, launch_mode) = if let Some(backend_bin) = resolve_bundled_backend_executable(app) {
             let mut command = Command::new(&backend_bin);
@@ -950,7 +1510,11 @@ async fn run_docx_processor(
                 .arg("--input")
                 .arg(backend_input_path)
                 .arg("--settings-path")
-                .arg(&settings_temp);
+                .arg(&settings_temp)
+                .arg("--source-kind")
+                .arg(source_kind_arg)
+                .arg("--source-original-path")
+                .arg(source_original_path_arg);
             if accept_existing_track_changes {
                 command.arg("--accept-existing-track-changes");
             }
@@ -982,7 +1546,11 @@ async fn run_docx_processor(
                 .arg("--input")
                 .arg(backend_input_path)
                 .arg("--settings-path")
-                .arg(&settings_temp);
+                .arg(&settings_temp)
+                .arg("--source-kind")
+                .arg(source_kind_arg)
+                .arg("--source-original-path")
+                .arg(source_original_path_arg);
             if accept_existing_track_changes {
                 command.arg("--accept-existing-track-changes");
             }
@@ -1128,28 +1696,34 @@ async fn run_docx_processor(
                 );
             } else {
                 let target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Odt)?;
-                match convert_docx_to_odt(Path::new(&final_output), &target).await {
-                    Ok(()) => {
-                        final_output = target.to_string_lossy().to_string();
-                    }
-                    Err(conversion_error) => {
-                        let fallback_docx_target = build_output_path(
-                            Path::new(naming_source),
-                            output_suffix,
-                            OfficeInputKind::Docx,
-                        )?;
-                        tokio::fs::copy(&final_output, &fallback_docx_target).await?;
-                        final_output = fallback_docx_target.to_string_lossy().to_string();
-                        let _ = app.emit(
-                            "docx_log",
-                            json!({
-                                "level": "warning",
-                                "message": format!(
-                                    "ODT re-conversion failed; returning DOCX fallback: {}",
-                                    conversion_error
-                                )
-                            }),
-                        );
+                let final_output_is_odt = office_input_kind(Path::new(&final_output)) == Some(OfficeInputKind::Odt);
+                if final_output_is_odt {
+                    tokio::fs::copy(&final_output, &target).await?;
+                    final_output = target.to_string_lossy().to_string();
+                } else {
+                    match convert_docx_to_odt(Path::new(&final_output), &target).await {
+                        Ok(()) => {
+                            final_output = target.to_string_lossy().to_string();
+                        }
+                        Err(conversion_error) => {
+                            let fallback_docx_target = build_output_path(
+                                Path::new(naming_source),
+                                output_suffix,
+                                OfficeInputKind::Docx,
+                            )?;
+                            tokio::fs::copy(&final_output, &fallback_docx_target).await?;
+                            final_output = fallback_docx_target.to_string_lossy().to_string();
+                            let _ = app.emit(
+                                "docx_log",
+                                json!({
+                                    "level": "warning",
+                                    "message": format!(
+                                        "ODT re-conversion failed; returning DOCX fallback: {}",
+                                        conversion_error
+                                    )
+                                }),
+                            );
+                        }
                     }
                 }
             }
@@ -1578,12 +2152,71 @@ fn combine_backend_error(message: &str, stderr: &str) -> String {
 
 #[tauri::command]
 fn check_word_compare_access() -> Result<WordCompareAccessStatus, String> {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let script = "$ErrorActionPreference='Stop'; $word=$null; try { $word = New-Object -ComObject Word.Application; $word.Visible = $false; $name = $word.Name; if ([string]::IsNullOrWhiteSpace($name)) { Write-Output 'Microsoft Word'; } else { Write-Output $name; } } finally { if ($null -ne $word) { try { $word.Quit() } catch { } [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) } }";
+
+        let mut command = std::process::Command::new("powershell.exe");
+        command.arg("-NoProfile").arg("-Sta").arg("-Command").arg(script);
+
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+
+        let output = command
+            .output()
+            .map_err(|e| format!("failed to run PowerShell: {e}"))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let details = if stdout.is_empty() {
+                "Microsoft Word detected via COM automation.".to_string()
+            } else {
+                format!("Detected: {stdout}")
+            };
+
+            return Ok(WordCompareAccessStatus {
+                ok: true,
+                message: "Word compare setup is ready.".to_string(),
+                details,
+            });
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let details = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("PowerShell exited with status {}", output.status)
+        };
+
+        return Ok(WordCompareAccessStatus {
+            ok: false,
+            message: "Word compare access is not ready yet.".to_string(),
+            details: format!(
+                "Check Microsoft Word installation and COM availability.\n\n{}",
+                details
+            ),
+        });
+    }
+
+    #[cfg(target_os = "linux")]
     {
         return Ok(WordCompareAccessStatus {
-            ok: true,
-            message: "Word compare access check is only required on macOS.".to_string(),
-            details: String::new(),
+            ok: false,
+            message: "Word compare access is not supported on this operating system.".to_string(),
+            details: "Use LibreOffice UNO compare mode on Linux.".to_string(),
+        });
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        return Ok(WordCompareAccessStatus {
+            ok: false,
+            message: "Word compare access is not supported on this operating system.".to_string(),
+            details: "Use OpenXML or LibreOffice UNO compare mode instead.".to_string(),
         });
     }
 
@@ -2021,9 +2654,11 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .manage(CancellationState::default())
+        .manage(ModelCapabilityState::default())
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,
+            reset_settings,
             fetch_models,
             correct_text_streaming,
             cancel_correction,
@@ -2031,6 +2666,7 @@ fn main() {
             cancel_docx,
             check_word_compare_access,
             check_libreoffice_compare_access,
+            check_batch_json_support,
             inspect_docx_track_changes,
             open_folder,
             open_temp_lingofix_folder,

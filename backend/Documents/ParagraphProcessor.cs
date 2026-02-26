@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text;
-using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Threading;
 using DocumentFormat.OpenXml.Wordprocessing;
 
@@ -9,15 +9,8 @@ namespace Lingofix.Backend.Documents;
 public static class ParagraphProcessor
 {
     private const int MaxChunkChars = 5000;
-    private const int MinBatchChars = 500;
-    private const int MaxBatchChars = 50000;
-    private const int MinBatchParagraphs = 1;
-    private const int MaxBatchParagraphs = 100;
-    private const int MinParallelRequests = 1;
-    private const int MaxParallelRequests = 32;
-    private static readonly Regex BatchRegex = new(
-        @"<<P:(\d+)>>\s*(.*?)\s*<</P:\1>>",
-        RegexOptions.Singleline | RegexOptions.Compiled);
+    private const string BatchProtocolInstruction =
+        "Correct each item's text and return valid JSON only.";
 
     public static async Task ProcessAsync(
         IEnumerable<Paragraph> paragraphs,
@@ -30,11 +23,11 @@ public static class ParagraphProcessor
         CancellationToken cancellationToken = default)
     {
         var enableBatching = settings.EnableBatching;
-        var batchMaxChars = Math.Clamp(settings.BatchMaxChars, MinBatchChars, MaxBatchChars);
-        var batchMaxParagraphs = Math.Clamp(settings.BatchMaxParagraphs, MinBatchParagraphs, MaxBatchParagraphs);
+        var batchMaxChars = Math.Clamp(settings.BatchMaxChars, Settings.MinBatchMaxChars, Settings.MaxBatchMaxChars);
+        var batchMaxParagraphs = Math.Clamp(settings.BatchMaxParagraphs, Settings.MinBatchMaxParagraphs, Settings.MaxBatchMaxParagraphs);
         var enableCache = settings.EnableCache;
         var enableParallel = settings.EnableParallelization;
-        var maxParallel = Math.Clamp(settings.MaxParallelRequests, MinParallelRequests, MaxParallelRequests);
+        var maxParallel = Math.Clamp(settings.MaxParallelRequests, Settings.MinMaxParallelRequests, Settings.MaxMaxParallelRequests);
         var cache = enableCache ? new ConcurrentDictionary<string, string>(StringComparer.Ordinal) : null;
 
         var batchItems = new List<ParagraphItem>();
@@ -129,7 +122,7 @@ public static class ParagraphProcessor
             foreach (var batch in work)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, null, settings.BatchPrompt, cancellationToken);
+                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, null, cancellationToken);
                 ApplyBatchResult(result, cache);
                 completedBatches++;
                 processedParagraphs += batch.Items.Count;
@@ -156,7 +149,7 @@ public static class ParagraphProcessor
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, concurrency, settings.BatchPrompt, cancellationToken);
+                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
                     lock (progressLock)
                     {
                         ApplyBatchResult(result, cache);
@@ -222,7 +215,13 @@ public static class ParagraphProcessor
         return builder.ToString();
     }
 
-    private static async Task<BatchResult> ExecuteWorkBatchAsync(WorkBatch batch, LlmClient llmClient, IRunLogger? logger, ConcurrentDictionary<string, string>? cache, AdaptiveConcurrency? concurrency, string batchPrompt, CancellationToken cancellationToken)
+    private static async Task<BatchResult> ExecuteWorkBatchAsync(
+        WorkBatch batch,
+        LlmClient llmClient,
+        IRunLogger? logger,
+        ConcurrentDictionary<string, string>? cache,
+        AdaptiveConcurrency? concurrency,
+        CancellationToken cancellationToken)
     {
         var results = new Dictionary<int, string>();
 
@@ -248,11 +247,11 @@ public static class ParagraphProcessor
             return new BatchResult(batch, results);
         }
 
-        var request = BuildBatchRequest(batch.Items, batchPrompt);
+        var request = BuildBatchRequest(batch.Items);
         string response;
         try
         {
-            response = await llmClient.CorrectAsync(request, cancellationToken);
+            response = await llmClient.CorrectStructuredAsync(request, cancellationToken);
         }
         catch (LlmRateLimitException ex)
         {
@@ -276,9 +275,18 @@ public static class ParagraphProcessor
             return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
         }
 
-        if (!TryParseBatchResponse(response, batch.Items.Count, out var parsed))
+        if (!TryParseBatchResponse(response, batch.Items, out var parsed, out var parseFailure))
         {
-            logger?.Info($"Batching: invalid response, falling back to single requests (paragraphs: {batch.Items.Count}).");
+            logger?.Info($"Batching: invalid response ({parseFailure}), attempting repair (paragraphs: {batch.Items.Count}).");
+            var repaired = await TryRepairBatchResponseAsync(batch.Items, response, llmClient, logger, cancellationToken);
+            if (repaired is not null)
+            {
+                concurrency?.Success();
+                logger?.Info($"Batching: repair successful (paragraphs: {batch.Items.Count}).");
+                return new BatchResult(batch, repaired);
+            }
+
+            logger?.Info($"Batching: repair failed, falling back to single requests (paragraphs: {batch.Items.Count}).");
             return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
         }
 
@@ -366,67 +374,205 @@ public static class ParagraphProcessor
         }
     }
 
-    private static string BuildBatchRequest(List<ParagraphItem> items, string batchPrompt)
+    private static async Task<Dictionary<int, string>?> TryRepairBatchResponseAsync(
+        List<ParagraphItem> items,
+        string invalidResponse,
+        LlmClient llmClient,
+        IRunLogger? logger,
+        CancellationToken cancellationToken)
     {
-        var builder = new StringBuilder();
-        var normalizedPrompt = string.IsNullOrWhiteSpace(batchPrompt)
-            ? "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
-            : batchPrompt.Trim();
-        builder.AppendLine(normalizedPrompt);
-        builder.AppendLine();
-
-        foreach (var item in items)
+        var repairRequest = BuildBatchRepairRequest(items, invalidResponse);
+        string repairedResponse;
+        try
         {
-            builder.Append("<<P:");
-            builder.Append(item.Id);
-            builder.AppendLine(">>");
-            builder.AppendLine(item.Original);
-            builder.Append("<<");
-            builder.Append("/P:");
-            builder.Append(item.Id);
-            builder.AppendLine(">>");
+            repairedResponse = await llmClient.CorrectStructuredAsync(repairRequest, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger?.Info($"Batching: repair request failed ({ex.GetType().Name}).");
+            return null;
         }
 
+        if (!TryParseBatchResponse(repairedResponse, items, out var repaired, out var repairFailure))
+        {
+            logger?.Info($"Batching: repair response invalid ({repairFailure}).");
+            return null;
+        }
+
+        return repaired;
+    }
+
+    private static string BuildBatchRequest(List<ParagraphItem> items)
+    {
+        var payload = new BatchInputPayload
+        {
+            Items = items.Select(item => new BatchInputItem
+            {
+                Id = item.Id,
+                Text = item.Original
+            }).ToList()
+        };
+
+        var inputJson = JsonSerializer.Serialize(payload, JsonOptions.Default);
+        var builder = new StringBuilder();
+        builder.AppendLine(BatchProtocolInstruction);
+        builder.AppendLine("Input JSON:");
+        builder.Append(inputJson);
         return builder.ToString();
     }
 
-    private static bool TryParseBatchResponse(string response, int expectedCount, out Dictionary<int, string> results)
+    private static string BuildBatchRepairRequest(List<ParagraphItem> items, string invalidResponse)
+    {
+        var payload = new BatchInputPayload
+        {
+            Items = items.Select(item => new BatchInputItem
+            {
+                Id = item.Id,
+                Text = item.Original
+            }).ToList()
+        };
+
+        var inputJson = JsonSerializer.Serialize(payload, JsonOptions.Default);
+        var builder = new StringBuilder();
+        builder.AppendLine("Your last answer was not valid for automatic parsing.");
+        builder.AppendLine(BatchProtocolInstruction);
+        builder.AppendLine("Return only valid JSON with this exact shape: {\"items\":[{\"id\":123,\"text\":\"...\"}]}.");
+        builder.AppendLine("Rules: include every input id exactly once, no additional keys, no markdown.");
+        builder.AppendLine("Input JSON:");
+        builder.AppendLine(inputJson);
+        builder.AppendLine("Invalid previous response:");
+        builder.Append(invalidResponse);
+        return builder.ToString();
+    }
+
+    private static bool TryParseBatchResponse(
+        string response,
+        IReadOnlyList<ParagraphItem> expectedItems,
+        out Dictionary<int, string> results,
+        out string failureCode)
     {
         results = new Dictionary<int, string>();
+        failureCode = "unknown";
         if (string.IsNullOrWhiteSpace(response))
         {
+            failureCode = "empty_response";
             return false;
         }
 
-        var matches = BatchRegex.Matches(response);
-        if (matches.Count != expectedCount)
+        if (!TryExtractJson(response, out var jsonText))
         {
+            failureCode = "json_not_found";
             return false;
         }
 
-        var remainder = BatchRegex.Replace(response, string.Empty);
-        if (!string.IsNullOrWhiteSpace(remainder))
+        BatchOutputPayload? payload;
+        try
         {
+            payload = JsonSerializer.Deserialize<BatchOutputPayload>(jsonText, JsonOptions.Default);
+        }
+        catch (JsonException)
+        {
+            failureCode = "invalid_json";
             return false;
         }
 
-        foreach (Match match in matches)
+        if (payload?.Items is null)
         {
-            if (!int.TryParse(match.Groups[1].Value, out var id))
+            failureCode = "missing_items";
+            return false;
+        }
+
+        if (payload.Items.Count != expectedItems.Count)
+        {
+            failureCode = "count_mismatch";
+            return false;
+        }
+
+        var expectedIds = expectedItems.Select(item => item.Id).ToHashSet();
+        foreach (var item in payload.Items)
+        {
+            if (!expectedIds.Contains(item.Id))
             {
+                failureCode = "unknown_id";
                 return false;
             }
 
-            if (results.ContainsKey(id))
+            if (results.ContainsKey(item.Id))
             {
+                failureCode = "duplicate_id";
                 return false;
             }
 
-            var text = match.Groups[2].Value;
-            results[id] = text.Trim();
+            if (item.Text is null)
+            {
+                failureCode = "missing_text";
+                return false;
+            }
+
+            results[item.Id] = LlmClient.SanitizeCorrection(item.Text);
         }
 
-        return results.Count == expectedCount;
+        if (results.Count != expectedItems.Count)
+        {
+            failureCode = "missing_id";
+            return false;
+        }
+
+        failureCode = "ok";
+        return true;
+    }
+
+    private static bool TryExtractJson(string response, out string json)
+    {
+        json = string.Empty;
+        var trimmed = response.Trim();
+        if (trimmed.Length == 0)
+        {
+            return false;
+        }
+
+        if (trimmed.StartsWith("```", StringComparison.Ordinal))
+        {
+            var lines = trimmed.Split('\n').ToList();
+            if (lines.Count >= 2)
+            {
+                if (lines[0].StartsWith("```", StringComparison.Ordinal))
+                {
+                    lines.RemoveAt(0);
+                }
+
+                if (lines.Count > 0 && lines[^1].Trim().Equals("```", StringComparison.Ordinal))
+                {
+                    lines.RemoveAt(lines.Count - 1);
+                }
+
+                trimmed = string.Join("\n", lines).Trim();
+            }
+        }
+
+        if (trimmed.StartsWith("{", StringComparison.Ordinal) && trimmed.EndsWith("}", StringComparison.Ordinal))
+        {
+            json = trimmed;
+            return true;
+        }
+
+        var start = trimmed.IndexOf('{');
+        var end = trimmed.LastIndexOf('}');
+        if (start < 0 || end <= start)
+        {
+            return false;
+        }
+
+        var candidate = trimmed.Substring(start, end - start + 1).Trim();
+        var prefix = trimmed.Substring(0, start).Trim();
+        var suffix = trimmed.Substring(end + 1).Trim();
+        if (prefix.Length > 0 || suffix.Length > 0)
+        {
+            return false;
+        }
+
+        json = candidate;
+        return true;
     }
 
     private static int EstimateBatchLength(int currentLength, int nextParagraphLength)
@@ -495,6 +641,28 @@ public static class ParagraphProcessor
     private sealed record WorkBatch(List<ParagraphItem> Items, bool UseBatch);
 
     private sealed record BatchResult(WorkBatch Batch, Dictionary<int, string> Corrections);
+
+    private sealed class BatchInputPayload
+    {
+        public List<BatchInputItem> Items { get; set; } = [];
+    }
+
+    private sealed class BatchInputItem
+    {
+        public int Id { get; set; }
+        public string Text { get; set; } = string.Empty;
+    }
+
+    private sealed class BatchOutputPayload
+    {
+        public List<BatchOutputItem>? Items { get; set; }
+    }
+
+    private sealed class BatchOutputItem
+    {
+        public int Id { get; set; }
+        public string? Text { get; set; }
+    }
 
     private sealed class AdaptiveConcurrency
     {

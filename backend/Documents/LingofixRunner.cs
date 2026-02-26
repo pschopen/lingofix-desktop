@@ -43,6 +43,8 @@ public static class LingofixRunner
         var compareMode = options.CompareModeOverride ?? Settings.NormalizeCompareMode(settings.CompareMode);
         var isWordCompare = compareMode == CompareModeKind.Word;
         var isLibreOfficeCompare = compareMode == CompareModeKind.LibreOffice;
+        var isSourceOdt = options.SourceKind == SourceInputKind.Odt;
+        var useNativeOdtLibreOfficeCompare = isSourceOdt && isLibreOfficeCompare;
         var isExternalCompare = isWordCompare || isLibreOfficeCompare;
         var canAcceptExistingTrackChanges = options.AcceptExistingTrackChanges;
         var apiKey = Settings.ResolveApiKey(settings.ApiKey);
@@ -54,9 +56,11 @@ public static class LingofixRunner
 
         var trackOutputPath = PathUtils.BuildOutputPath(normalizedInputPath, "_lingofix");
         var correctedOutputPath = PathUtils.BuildOutputPath(normalizedInputPath, "_corrected");
-        var finalOutputPath = trackOutputPath;
+        var finalOutputPath = useNativeOdtLibreOfficeCompare
+            ? Path.ChangeExtension(trackOutputPath, ".odt")
+            : trackOutputPath;
         var tempOutputPath = isExternalCompare
-            ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "output.docx")
+            ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, useNativeOdtLibreOfficeCompare ? "output.odt" : "output.docx")
             : PathUtils.BuildTempOutputPath(trackOutputPath);
         var tempOriginalPath = isExternalCompare
             ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "original.docx")
@@ -100,10 +104,10 @@ public static class LingofixRunner
                     if (!canAcceptExistingTrackChanges)
                     {
                         throw new InvalidOperationException(
-                            "Diff mode requires accepting all existing track changes first. Start again and confirm that Lingofix may automatically accept existing changes before correction.");
+                            "OpenXML requires accepting all existing track changes first. Start again and confirm that Lingofix may automatically accept existing changes before correction.");
                     }
 
-                    logger.Warning("Diff mode detected existing track changes. Lingofix is accepting all existing changes before correction.");
+                    logger.Warning("OpenXML detected existing track changes. Lingofix is accepting all existing changes before correction.");
                     TrackChangesGenerator.AcceptAllTrackedChanges(tempOriginalPath);
                     TrackChangesGenerator.AcceptAllTrackedChanges(correctedPath);
                     logger.Info("Existing track changes were accepted automatically before correction.");
@@ -232,9 +236,30 @@ public static class LingofixRunner
                 }
                 else if (compareMode == CompareModeKind.LibreOffice)
                 {
-                    TrackChangesGenerator.GenerateWithLibreOffice(tempOriginalPath, correctedPath, tempOutputPath, "Lingofix");
+                    if (useNativeOdtLibreOfficeCompare)
+                    {
+                        var sourceOriginalPath = PathUtils.NormalizeInputPath(options.SourceOriginalPath ?? string.Empty);
+                        if (string.IsNullOrWhiteSpace(sourceOriginalPath) || !File.Exists(sourceOriginalPath))
+                        {
+                            throw new InvalidOperationException("Native ODT compare requires the original ODT source path.");
+                        }
+
+                        if (!sourceOriginalPath.EndsWith(".odt", StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new InvalidOperationException("Native ODT compare requires an .odt source file.");
+                        }
+
+                        var correctedOdtPath = PathUtils.BuildWordCompareFilePath(normalizedInputPath, "corrected.odt");
+                        TrackChangesGenerator.ConvertWithLibreOffice(correctedPath, correctedOdtPath, ".odt");
+                        TrackChangesGenerator.GenerateWithLibreOffice(sourceOriginalPath, correctedOdtPath, tempOutputPath, "Lingofix");
+                        logger.Info("Track changes generated with LibreOffice (native ODT compare)");
+                    }
+                    else
+                    {
+                        TrackChangesGenerator.GenerateWithLibreOffice(tempOriginalPath, correctedPath, tempOutputPath, "Lingofix");
+                        logger.Info("Track changes generated with LibreOffice");
+                    }
                     trackCreated = true;
-                    logger.Info("Track changes generated with LibreOffice");
                 }
                 else
                 {
@@ -267,7 +292,16 @@ public static class LingofixRunner
 
             try
             {
-                if (isExternalCompare)
+                if (useNativeOdtLibreOfficeCompare)
+                {
+                    if (!File.Exists(tempOutputPath))
+                    {
+                        throw new FileNotFoundException($"ODT output file was not created: {tempOutputPath}", tempOutputPath);
+                    }
+
+                    using var _ = new System.IO.Compression.ZipArchive(File.OpenRead(tempOutputPath), System.IO.Compression.ZipArchiveMode.Read);
+                }
+                else if (isExternalCompare)
                 {
                     DocxIntegrityValidator.ValidateForWordCompare(tempOriginalPath, tempOutputPath);
                 }

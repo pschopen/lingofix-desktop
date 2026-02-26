@@ -780,7 +780,107 @@ public static class TrackChangesGenerator
     {
         var sofficePath = ResolveUsableLibreOfficeExecutable();
         LibreOfficeUnoCompareRunner.GenerateWithUno(sofficePath, originalPath, correctedPath, outputPath, author, ExternalCompareTimeout);
-        RejectFormattingChanges(outputPath);
+        if (outputPath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+        {
+            RejectFormattingChanges(outputPath);
+        }
+    }
+
+    public static void ConvertWithLibreOffice(string inputPath, string outputPath, string targetExtension)
+    {
+        if (string.IsNullOrWhiteSpace(inputPath))
+        {
+            throw new ArgumentException("Missing input path for LibreOffice conversion.", nameof(inputPath));
+        }
+
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            throw new ArgumentException("Missing output path for LibreOffice conversion.", nameof(outputPath));
+        }
+
+        var normalizedTarget = targetExtension.Trim();
+        if (!normalizedTarget.StartsWith(".", StringComparison.Ordinal))
+        {
+            normalizedTarget = "." + normalizedTarget;
+        }
+
+        var sofficePath = ResolveUsableLibreOfficeExecutable();
+        var workDir = Path.Combine(Path.GetTempPath(), "Lingofix", "libreoffice-convert", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workDir);
+        try
+        {
+            var expectedOutput = Path.Combine(
+                workDir,
+                Path.GetFileNameWithoutExtension(inputPath) + normalizedTarget);
+
+            if (File.Exists(expectedOutput))
+            {
+                File.Delete(expectedOutput);
+            }
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = sofficePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+            };
+            psi.ArgumentList.Add("--headless");
+            psi.ArgumentList.Add("--convert-to");
+            psi.ArgumentList.Add(normalizedTarget.TrimStart('.'));
+            psi.ArgumentList.Add("--outdir");
+            psi.ArgumentList.Add(workDir);
+            psi.ArgumentList.Add(inputPath);
+
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null)
+            {
+                throw new InvalidOperationException("Failed to start LibreOffice conversion process.");
+            }
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+
+            if (!proc.WaitForExit((int)ExternalCompareTimeout.TotalMilliseconds))
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+
+                throw new TimeoutException($"LibreOffice conversion timed out after {ExternalCompareTimeout.TotalSeconds:0} seconds.");
+            }
+
+            Task.WaitAll([stdoutTask, stderrTask]);
+            if (proc.ExitCode != 0)
+            {
+                var stderr = stderrTask.GetAwaiter().GetResult();
+                var stdout = stdoutTask.GetAwaiter().GetResult();
+                var details = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                throw new InvalidOperationException($"LibreOffice conversion failed: {details.Trim()}");
+            }
+
+            if (!File.Exists(expectedOutput))
+            {
+                throw new FileNotFoundException($"LibreOffice conversion did not produce expected file: {expectedOutput}", expectedOutput);
+            }
+
+            var outputDir = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrWhiteSpace(outputDir))
+            {
+                Directory.CreateDirectory(outputDir);
+            }
+            File.Copy(expectedOutput, outputPath, overwrite: true);
+        }
+        finally
+        {
+            TryDeleteDirectory(workDir);
+        }
     }
 
     private static void RejectFormattingChanges(string documentPath)
@@ -1050,11 +1150,13 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     $doc1 = $null
     $doc2 = $null
     $comp = $null
+    $previousUserName = $null
 
     try {
         $word = New-Object -ComObject Word.Application
         $word.Visible = $false
         $word.DisplayAlerts = 0
+        try { $previousUserName = [string]$word.UserName } catch { $previousUserName = $null }
         $word.UserName = $author
 
         try { $word.ScreenUpdating = $false } catch { }
@@ -1112,6 +1214,9 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             try { $doc1.Close($false) } catch { }
         }
         if ($null -ne $word) {
+            if ($null -ne $previousUserName) {
+                try { $word.UserName = $previousUserName } catch { }
+            }
             try { $word.Quit() } catch { }
         }
 
@@ -1230,6 +1335,25 @@ if ($null -ne $lastError) {
             }
             
             throw new InvalidOperationException(errorMsg.Trim());
+        }
+    }
+
+    private static void TryDeleteDirectory(string directoryPath)
+    {
+        if (string.IsNullOrWhiteSpace(directoryPath))
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(directoryPath))
+            {
+                Directory.Delete(directoryPath, recursive: true);
+            }
+        }
+        catch
+        {
         }
     }
 

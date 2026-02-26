@@ -32,6 +32,10 @@ internal static class LibreOfficeUnoCompareRunner
 
         var compareOriginalPath = originalPath;
         var compareCorrectedPath = correctedPath;
+        var outputFormat = string.Equals(Path.GetExtension(outputPath), ".odt", StringComparison.OrdinalIgnoreCase)
+            ? "odt"
+            : "docx";
+        var changeFilterMode = outputFormat == "odt" ? "text-only" : "all";
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
             string.Equals(Path.GetExtension(originalPath), ".docx", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(Path.GetExtension(correctedPath), ".docx", StringComparison.OrdinalIgnoreCase))
@@ -81,7 +85,7 @@ internal static class LibreOfficeUnoCompareRunner
                 pythonPath,
                 scriptPath,
                 timeout,
-                ["compare", "127.0.0.1", port.ToString(), compareOriginalPath, compareCorrectedPath, outputPath, author]);
+                ["compare", "127.0.0.1", port.ToString(), compareOriginalPath, compareCorrectedPath, outputPath, author, outputFormat, changeFilterMode]);
 
             if (compareExitCode != 0)
             {

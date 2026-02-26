@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -6,23 +5,29 @@ namespace Lingofix.Backend.Documents;
 
 public sealed class Settings
 {
-    public string Provider { get; set; } = "openai";
-    public string ApiBase { get; set; } = "https://api.openai.com/v1";
-    public string Model { get; set; } = "gpt-4.1-mini";
-    public string ApiKey { get; set; } = "ENV:OPENAI_API_KEY";
-    public string Prompt { get; set; } = "Correct the following text while maintaining the style and tone.";
-    public string SystemPrompt { get; set; } =
-        "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
-    public string BatchPrompt { get; set; } =
-        "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.";
-    public string CompareMode { get; set; } = "openxml";
-    public double Temperature { get; set; } = 0.0;
-    public bool EnableBatching { get; set; } = true;
-    public int BatchMaxChars { get; set; } = 50000;
-    public int BatchMaxParagraphs { get; set; } = 100;
-    public bool EnableCache { get; set; } = true;
-    public bool EnableParallelization { get; set; } = true;
-    public int MaxParallelRequests { get; set; } = 2;
+    public const double MinTemperature = 0.0;
+    public const double MaxTemperature = 2.0;
+    public const int MinBatchMaxChars = 500;
+    public const int MaxBatchMaxChars = 50_000;
+    public const int MinBatchMaxParagraphs = 1;
+    public const int MaxBatchMaxParagraphs = 100;
+    public const int MinMaxParallelRequests = 1;
+    public const int MaxMaxParallelRequests = 16;
+
+    public string Provider { get; set; } = string.Empty;
+    public string ApiBase { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public string ApiKey { get; set; } = string.Empty;
+    public string Prompt { get; set; } = string.Empty;
+    public string SystemPrompt { get; set; } = string.Empty;
+    public string CompareMode { get; set; } = string.Empty;
+    public double Temperature { get; set; }
+    public bool EnableBatching { get; set; }
+    public int BatchMaxChars { get; set; }
+    public int BatchMaxParagraphs { get; set; }
+    public bool EnableCache { get; set; }
+    public bool EnableParallelization { get; set; }
+    public int MaxParallelRequests { get; set; }
 
     public static string ResolveApiKey(string raw)
     {
@@ -60,40 +65,32 @@ public sealed class Settings
     {
         if (string.IsNullOrWhiteSpace(json))
         {
-            return new Settings();
+            throw InvalidSettings("settings payload is empty");
         }
 
         var payload = JsonSerializer.Deserialize<FrontendSettingsPayload>(json, new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
-        });
+        }) ?? throw InvalidSettings("settings payload could not be parsed");
 
-        if (payload is null)
-        {
-            return new Settings();
-        }
+        var docx = payload.Docx ?? throw InvalidSettings("docx settings are missing");
 
         var normalized = new Settings
         {
-            Provider = string.IsNullOrWhiteSpace(payload.Provider) ? "openai" : payload.Provider,
-            ApiBase = string.IsNullOrWhiteSpace(payload.ApiUrl) ? "https://api.openai.com/v1" : payload.ApiUrl,
-            ApiKey = payload.ApiKey ?? string.Empty,
-            Model = string.IsNullOrWhiteSpace(payload.Model) ? "gpt-4" : payload.Model,
-            Prompt = string.IsNullOrWhiteSpace(payload.CustomPrompt) ? "Correct the following text while maintaining the style and tone." : payload.CustomPrompt,
-            SystemPrompt = string.IsNullOrWhiteSpace(payload.SystemPrompt)
-                ? "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences."
-                : payload.SystemPrompt,
-            BatchPrompt = string.IsNullOrWhiteSpace(payload.BatchPrompt)
-                ? "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
-                : payload.BatchPrompt,
+            Provider = RequireString(payload.Provider, "provider"),
+            ApiBase = RequireString(payload.ApiUrl, "api_url"),
+            ApiKey = payload.ApiKey?.Trim() ?? string.Empty,
+            Model = RequireString(payload.Model, "model"),
+            Prompt = RequireString(payload.CustomPrompt, "custom_prompt"),
+            SystemPrompt = RequireString(payload.SystemPrompt, "system_prompt"),
             Temperature = payload.Temperature,
-            CompareMode = string.IsNullOrWhiteSpace(payload.Docx.CompareMode) ? "openxml" : payload.Docx.CompareMode,
-            EnableBatching = payload.Docx.EnableBatching,
-            BatchMaxChars = payload.Docx.BatchMaxChars,
-            BatchMaxParagraphs = payload.Docx.BatchMaxParagraphs,
-            EnableCache = payload.Docx.EnableCache,
-            EnableParallelization = payload.Docx.EnableParallelization,
-            MaxParallelRequests = payload.Docx.MaxParallelRequests
+            CompareMode = RequireString(docx.CompareMode, "docx.compare_mode"),
+            EnableBatching = docx.EnableBatching,
+            BatchMaxChars = docx.BatchMaxChars,
+            BatchMaxParagraphs = docx.BatchMaxParagraphs,
+            EnableCache = docx.EnableCache,
+            EnableParallelization = docx.EnableParallelization,
+            MaxParallelRequests = docx.MaxParallelRequests
         };
 
         if (double.IsNaN(normalized.Temperature) || double.IsInfinity(normalized.Temperature))
@@ -101,116 +98,77 @@ public sealed class Settings
             normalized.Temperature = 0.0;
         }
 
-        normalized.Temperature = Math.Clamp(normalized.Temperature, 0.0, 2.0);
-        normalized.BatchMaxChars = Math.Clamp(normalized.BatchMaxChars, 500, 50_000);
-        normalized.BatchMaxParagraphs = Math.Clamp(normalized.BatchMaxParagraphs, 1, 100);
-        normalized.MaxParallelRequests = Math.Clamp(normalized.MaxParallelRequests, 1, 32);
+        normalized.Temperature = Math.Clamp(normalized.Temperature, MinTemperature, MaxTemperature);
+        normalized.BatchMaxChars = Math.Clamp(normalized.BatchMaxChars, MinBatchMaxChars, MaxBatchMaxChars);
+        normalized.BatchMaxParagraphs = Math.Clamp(normalized.BatchMaxParagraphs, MinBatchMaxParagraphs, MaxBatchMaxParagraphs);
+        normalized.MaxParallelRequests = Math.Clamp(normalized.MaxParallelRequests, MinMaxParallelRequests, MaxMaxParallelRequests);
         return normalized;
+    }
+
+    private static string RequireString(string? value, string field)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw InvalidSettings($"missing or empty field '{field}'");
+        }
+
+        return value.Trim();
+    }
+
+    private static InvalidOperationException InvalidSettings(string reason)
+    {
+        return new InvalidOperationException(
+            $"Invalid settings: {reason}. Open Settings > Advanced and use 'Reset app'.");
     }
 }
 
 internal sealed class FrontendSettingsPayload
 {
     [JsonPropertyName("provider")]
-    public string Provider { get; set; } = "openai";
+    public string? Provider { get; set; }
 
     [JsonPropertyName("api_url")]
-    public string ApiUrl { get; set; } = "https://api.openai.com/v1";
+    public string? ApiUrl { get; set; }
 
     [JsonPropertyName("api_key")]
     public string? ApiKey { get; set; }
 
     [JsonPropertyName("model")]
-    public string Model { get; set; } = "gpt-4";
+    public string? Model { get; set; }
 
     [JsonPropertyName("custom_prompt")]
-    public string CustomPrompt { get; set; } = "Correct the following text while maintaining the style and tone.";
+    public string? CustomPrompt { get; set; }
 
     [JsonPropertyName("system_prompt")]
-    public string SystemPrompt { get; set; } = "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
-
-    [JsonPropertyName("batch_prompt")]
-    public string BatchPrompt { get; set; } = "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.";
+    public string? SystemPrompt { get; set; }
 
     [JsonPropertyName("temperature")]
     public double Temperature { get; set; }
 
     [JsonPropertyName("docx")]
-    public FrontendDocxSettingsPayload Docx { get; set; } = new();
+    public FrontendDocxSettingsPayload? Docx { get; set; }
 }
 
 internal sealed class FrontendDocxSettingsPayload
 {
     [JsonPropertyName("compare_mode")]
-    public string CompareMode { get; set; } = "openxml";
+    public string? CompareMode { get; set; }
 
     [JsonPropertyName("enable_batching")]
-    public bool EnableBatching { get; set; } = true;
+    public bool EnableBatching { get; set; }
 
     [JsonPropertyName("batch_max_chars")]
-    public int BatchMaxChars { get; set; } = 50000;
+    public int BatchMaxChars { get; set; }
 
     [JsonPropertyName("batch_max_paragraphs")]
-    public int BatchMaxParagraphs { get; set; } = 100;
+    public int BatchMaxParagraphs { get; set; }
 
     [JsonPropertyName("enable_cache")]
-    public bool EnableCache { get; set; } = true;
+    public bool EnableCache { get; set; }
 
     [JsonPropertyName("enable_parallelization")]
-    public bool EnableParallelization { get; set; } = true;
+    public bool EnableParallelization { get; set; }
 
     [JsonPropertyName("max_parallel_requests")]
-    public int MaxParallelRequests { get; set; } = 2;
-}
-
-public static class SettingsStore
-{
-    public static Settings LoadOrCreate(string path, out bool created)
-    {
-        if (!File.Exists(path))
-        {
-            created = true;
-            var settings = new Settings();
-            Save(path, settings);
-            return settings;
-        }
-
-        try
-        {
-            var text = File.ReadAllText(path, Encoding.UTF8);
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                created = true;
-                var settings = new Settings();
-                Save(path, settings);
-                return settings;
-            }
-
-            var parsed = JsonSerializer.Deserialize<Settings>(text, JsonOptions.Default);
-            if (parsed is null)
-            {
-                created = true;
-                var settings = new Settings();
-                Save(path, settings);
-                return settings;
-            }
-
-            created = false;
-            return parsed;
-        }
-        catch (JsonException)
-        {
-            created = true;
-            var settings = new Settings();
-            Save(path, settings);
-            return settings;
-        }
-    }
-
-    public static void Save(string path, Settings settings)
-    {
-        var json = JsonSerializer.Serialize(settings, JsonOptions.Default);
-        Directory.CreateDirectory(Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory());
-        File.WriteAllText(path, json, Encoding.UTF8);
-    }
+    public int MaxParallelRequests { get; set; }
 }

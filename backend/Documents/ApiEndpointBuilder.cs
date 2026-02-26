@@ -6,7 +6,8 @@ public static class ApiEndpointBuilder
     {
         if (string.IsNullOrWhiteSpace(apiBase))
         {
-            return "https://api.openai.com/v1/chat/completions";
+            throw new InvalidOperationException(
+                "Invalid settings: api_url is missing. Open Settings > Advanced and use 'Reset app'.");
         }
 
         var trimmed = apiBase.TrimEnd('/');
