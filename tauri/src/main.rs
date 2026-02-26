@@ -27,6 +27,9 @@ const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
 const SOFFICE_PATH_ENV: &str = "LINGOFIX_SOFFICE_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
+const DEBUG_LOG_FILE_NAME: &str = "debug.log";
+const DEBUG_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
+const DEBUG_LOG_ROTATIONS: usize = 3;
 #[cfg(target_os = "macos")]
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
@@ -254,6 +257,93 @@ fn settings_path(app: &AppHandle) -> anyhow::Result<PathBuf> {
         .map_err(|e| anyhow!("failed to resolve app config dir: {e}"))?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("settings.json"))
+}
+
+fn debug_log_path(app: &AppHandle) -> anyhow::Result<PathBuf> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| anyhow!("failed to resolve app config dir: {e}"))?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join(DEBUG_LOG_FILE_NAME))
+}
+
+fn truncate_debug_message(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut count = 0usize;
+    for ch in value.chars() {
+        if count >= max_chars {
+            break;
+        }
+        out.push(ch);
+        count += 1;
+    }
+    if value.chars().count() > max_chars {
+        out.push_str("...(truncated)");
+    }
+    out
+}
+
+fn rotate_debug_logs_if_needed(path: &Path) {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() < DEBUG_LOG_MAX_BYTES {
+        return;
+    }
+
+    for index in (1..=DEBUG_LOG_ROTATIONS).rev() {
+        let source = if index == 1 {
+            path.to_path_buf()
+        } else {
+            path.with_extension(format!("log.{}", index - 1))
+        };
+        let target = path.with_extension(format!("log.{index}"));
+
+        if source.exists() {
+            let _ = std::fs::remove_file(&target);
+            let _ = std::fs::rename(&source, &target);
+        }
+    }
+}
+
+fn debug_log_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+fn write_debug_event(app: &AppHandle, event: &str, details: Value) {
+    let Ok(path) = debug_log_path(app) else {
+        return;
+    };
+
+    let Ok(_guard) = debug_log_lock().lock() else {
+        return;
+    };
+
+    rotate_debug_logs_if_needed(&path);
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let payload = json!({
+        "ts_ms": timestamp_ms,
+        "event": event,
+        "details": details
+    });
+
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return;
+    };
+
+    if let Ok(line) = serde_json::to_string(&payload) {
+        let _ = std::io::Write::write_all(&mut file, line.as_bytes());
+        let _ = std::io::Write::write_all(&mut file, b"\n");
+    }
 }
 
 fn weak_device_secret() -> Vec<u8> {
@@ -702,10 +792,21 @@ async fn reset_settings(app: AppHandle, locale: Option<String>) -> Result<Fronte
 }
 
 #[tauri::command]
-async fn fetch_models(api_url: String, api_key: Option<String>, provider: String) -> Result<Vec<String>, String> {
+async fn fetch_models(app: AppHandle, api_url: String, api_key: Option<String>, provider: String) -> Result<Vec<String>, String> {
     let client = reqwest::Client::new();
+    let started_at = std::time::Instant::now();
     let effective_key = api_key
         .filter(|v| !v.trim().is_empty());
+
+    write_debug_event(
+        &app,
+        "models.fetch.start",
+        json!({
+            "provider": provider.as_str(),
+            "api_url": api_url.as_str(),
+            "has_api_key": effective_key.is_some()
+        }),
+    );
 
     if provider.eq_ignore_ascii_case("ollama") {
         let url = format!("{}/api/tags", api_url.trim_end_matches('/'));
@@ -720,6 +821,15 @@ async fn fetch_models(api_url: String, api_key: Option<String>, provider: String
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        write_debug_event(
+            &app,
+            "models.fetch.success",
+            json!({
+                "provider": provider.as_str(),
+                "model_count": models.len(),
+                "duration_ms": started_at.elapsed().as_millis()
+            }),
+        );
         return Ok(models);
     }
 
@@ -745,6 +855,15 @@ async fn fetch_models(api_url: String, api_key: Option<String>, provider: String
             }
         }
     }
+    write_debug_event(
+        &app,
+        "models.fetch.success",
+        json!({
+            "provider": provider.as_str(),
+            "model_count": models.len(),
+            "duration_ms": started_at.elapsed().as_millis()
+        }),
+    );
     Ok(models)
 }
 
@@ -765,8 +884,22 @@ async fn correct_text_streaming(
     text: String,
     settings: FrontendSettings,
 ) -> Result<(), String> {
+    let started_at = std::time::Instant::now();
     let mut effective_settings = settings;
     effective_settings.api_key = resolve_provider_key(&effective_settings);
+
+    write_debug_event(
+        &app,
+        "editor.correction.start",
+        json!({
+            "provider": effective_settings.provider.as_str(),
+            "model": effective_settings.model.as_str(),
+            "api_url": effective_settings.api_url.as_str(),
+            "input_chars": text.chars().count(),
+            "temperature": effective_settings.temperature,
+            "has_api_key": effective_settings.api_key.as_ref().map(|v| !v.trim().is_empty()).unwrap_or(false)
+        }),
+    );
 
     if !effective_settings.provider.eq_ignore_ascii_case("ollama")
         && effective_settings
@@ -776,6 +909,16 @@ async fn correct_text_streaming(
             .unwrap_or(true)
     {
         let message = "API key missing. Please open settings and provide an API key.".to_string();
+        write_debug_event(
+            &app,
+            "editor.correction.error",
+            json!({
+                "provider": effective_settings.provider.as_str(),
+                "model": effective_settings.model.as_str(),
+                "duration_ms": started_at.elapsed().as_millis(),
+                "error": message
+            }),
+        );
         let _ = app.emit("correction_error", message.clone());
         return Err(message);
     }
@@ -807,9 +950,29 @@ async fn correct_text_streaming(
 
     if let Err(err) = result {
         let message = err.to_string();
+        write_debug_event(
+            &app,
+            "editor.correction.error",
+            json!({
+                "provider": effective_settings.provider.as_str(),
+                "model": effective_settings.model.as_str(),
+                "duration_ms": started_at.elapsed().as_millis(),
+                "error": truncate_debug_message(&message, 1200)
+            }),
+        );
         let _ = app.emit("correction_error", message.clone());
         return Err(message);
     }
+
+    write_debug_event(
+        &app,
+        "editor.correction.success",
+        json!({
+            "provider": effective_settings.provider.as_str(),
+            "model": effective_settings.model.as_str(),
+            "duration_ms": started_at.elapsed().as_millis()
+        }),
+    );
 
     Ok(())
 }
@@ -822,6 +985,8 @@ async fn stream_ollama(
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/api/chat", settings.api_url.trim_end_matches('/'));
+    let request_started_at = std::time::Instant::now();
+    let mut first_token_ms: Option<u128> = None;
     let prompt = format!(
         "{}\n\n{}\n\nText:\n{}",
         settings.custom_prompt, settings.system_prompt, text
@@ -838,6 +1003,17 @@ async fn stream_ollama(
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         let detail = extract_api_error_message(&body);
+        write_debug_event(
+            app,
+            "editor.ollama.http_error",
+            json!({
+                "provider": settings.provider.as_str(),
+                "model": settings.model.as_str(),
+                "status": status.as_u16(),
+                "error": truncate_debug_message(&detail, 1000),
+                "elapsed_ms": request_started_at.elapsed().as_millis()
+            }),
+        );
         return Err(anyhow!("Ollama request failed ({}): {}", status, detail));
     }
     let mut stream = resp.bytes_stream();
@@ -864,6 +1040,9 @@ async fn stream_ollama(
                     .and_then(|m| m.get("content"))
                     .and_then(|c| c.as_str())
                 {
+                    if first_token_ms.is_none() {
+                        first_token_ms = Some(request_started_at.elapsed().as_millis());
+                    }
                     all.push_str(content);
                     let _ = app.emit("correction_chunk", remove_markdown(&all));
                 }
@@ -872,6 +1051,17 @@ async fn stream_ollama(
                     if final_text.trim().is_empty() {
                         return Err(anyhow!("Ollama returned an empty correction result"));
                     }
+                    write_debug_event(
+                        app,
+                        "editor.ollama.complete",
+                        json!({
+                            "provider": settings.provider.as_str(),
+                            "model": settings.model.as_str(),
+                            "output_chars": final_text.chars().count(),
+                            "first_token_ms": first_token_ms,
+                            "elapsed_ms": request_started_at.elapsed().as_millis()
+                        }),
+                    );
                     let _ = app.emit("correction_complete", final_text);
                     return Ok(());
                 }
@@ -883,6 +1073,18 @@ async fn stream_ollama(
     if final_text.trim().is_empty() {
         return Err(anyhow!("Ollama returned an empty correction result"));
     }
+
+    write_debug_event(
+        app,
+        "editor.ollama.complete",
+        json!({
+            "provider": settings.provider.as_str(),
+            "model": settings.model.as_str(),
+            "output_chars": final_text.chars().count(),
+            "first_token_ms": first_token_ms,
+            "elapsed_ms": request_started_at.elapsed().as_millis()
+        }),
+    );
 
     let _ = app.emit("correction_complete", final_text);
     Ok(())
@@ -897,6 +1099,8 @@ async fn stream_openai_like(
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/chat/completions", settings.api_url.trim_end_matches('/'));
+    let request_started_at = std::time::Instant::now();
+    let mut first_token_ms: Option<u128> = None;
     let prompt = format!(
         "{}\n\n{}\n\nText:\n{}",
         settings.custom_prompt, settings.system_prompt, text
@@ -951,12 +1155,35 @@ async fn stream_openai_like(
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         let detail = extract_api_error_message(&body);
+        write_debug_event(
+            app,
+            "editor.stream.http_error",
+            json!({
+                "provider": settings.provider.as_str(),
+                "model": settings.model.as_str(),
+                "status": status.as_u16(),
+                "include_temperature": include_temperature,
+                "include_reasoning_effort": include_reasoning_effort,
+                "error": truncate_debug_message(&detail, 1000),
+                "elapsed_ms": request_started_at.elapsed().as_millis()
+            }),
+        );
 
         if status.as_u16() == 400
             && include_temperature
             && is_temperature_unsupported_error(&detail)
         {
             include_temperature = false;
+            write_debug_event(
+                app,
+                "editor.stream.fallback",
+                json!({
+                    "provider": settings.provider.as_str(),
+                    "model": settings.model.as_str(),
+                    "kind": "temperature",
+                    "elapsed_ms": request_started_at.elapsed().as_millis()
+                }),
+            );
             let mut cache = capability_state.temperature_support.lock().await;
             cache.insert(cache_key.clone(), false);
             continue;
@@ -967,6 +1194,16 @@ async fn stream_openai_like(
             && is_reasoning_or_thinking_error(&detail)
         {
             include_reasoning_effort = false;
+            write_debug_event(
+                app,
+                "editor.stream.fallback",
+                json!({
+                    "provider": settings.provider.as_str(),
+                    "model": settings.model.as_str(),
+                    "kind": "reasoning_effort",
+                    "elapsed_ms": request_started_at.elapsed().as_millis()
+                }),
+            );
             let mut cache = capability_state.reasoning_effort_support.lock().await;
             cache.insert(cache_key.clone(), false);
             continue;
@@ -1008,6 +1245,17 @@ async fn stream_openai_like(
                         if final_text.trim().is_empty() {
                             return Err(anyhow!("LLM returned an empty correction result"));
                         }
+                        write_debug_event(
+                            app,
+                            "editor.stream.complete",
+                            json!({
+                                "provider": settings.provider.as_str(),
+                                "model": settings.model.as_str(),
+                                "output_chars": final_text.chars().count(),
+                                "first_token_ms": first_token_ms,
+                                "elapsed_ms": request_started_at.elapsed().as_millis()
+                            }),
+                        );
                         let _ = app.emit("correction_complete", final_text);
                         return Ok(());
                     }
@@ -1015,6 +1263,9 @@ async fn stream_openai_like(
                     if let Ok(value) = serde_json::from_str::<Value>(data) {
                         if let Some(content) = extract_openai_like_stream_content(&value) {
                             if !content.is_empty() {
+                                if first_token_ms.is_none() {
+                                    first_token_ms = Some(request_started_at.elapsed().as_millis());
+                                }
                                 all.push_str(&content);
                                 let _ = app.emit("correction_chunk", remove_markdown(&all));
                             }
@@ -1029,6 +1280,18 @@ async fn stream_openai_like(
     if final_text.trim().is_empty() {
         return Err(anyhow!("LLM returned an empty correction result"));
     }
+
+    write_debug_event(
+        app,
+        "editor.stream.complete",
+        json!({
+            "provider": settings.provider.as_str(),
+            "model": settings.model.as_str(),
+            "output_chars": final_text.chars().count(),
+            "first_token_ms": first_token_ms,
+            "elapsed_ms": request_started_at.elapsed().as_millis()
+        }),
+    );
 
     let _ = app.emit("correction_complete", final_text);
     Ok(())
@@ -1480,6 +1743,25 @@ async fn run_docx_processor(
 ) -> anyhow::Result<()> {
     const DOCX_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3 * 60 * 60);
 
+    write_debug_event(
+        app,
+        "docx.run.start",
+        json!({
+            "provider": settings.provider.as_str(),
+            "model": settings.model.as_str(),
+            "api_url": settings.api_url.as_str(),
+            "input_path": backend_input_path,
+            "source_path": source_input_path,
+            "source_kind": if source_kind == OfficeInputKind::Odt { "odt" } else { "docx" },
+            "compare_mode": settings.docx.compare_mode.as_str(),
+            "batching": settings.docx.enable_batching,
+            "batch_max_chars": settings.docx.batch_max_chars,
+            "batch_max_paragraphs": settings.docx.batch_max_paragraphs,
+            "parallelization": settings.docx.enable_parallelization,
+            "max_parallel_requests": settings.docx.max_parallel_requests
+        }),
+    );
+
     let mut backend_settings = settings.clone();
     let env_api_key = backend_settings
         .api_key
@@ -1615,11 +1897,29 @@ async fn run_docx_processor(
                                     .unwrap_or_default()
                                     .to_string();
                                 let _ = app.emit("docx_progress", json!({ "percent": percent, "message": message }));
+                                write_debug_event(
+                                    app,
+                                    "docx.run.progress",
+                                    json!({
+                                        "percent": percent,
+                                        "message": truncate_debug_message(&message, 800),
+                                        "elapsed_ms": started_at.elapsed().as_millis()
+                                    }),
+                                );
                             }
                             "log" => {
                                 let level = value.get("level").and_then(|v| v.as_str()).unwrap_or("info");
                                 let message = value.get("message").and_then(|v| v.as_str()).unwrap_or_default();
                                 let _ = app.emit("docx_log", json!({ "level": level, "message": message }));
+                                write_debug_event(
+                                    app,
+                                    "docx.run.log",
+                                    json!({
+                                        "level": level,
+                                        "message": truncate_debug_message(message, 1200),
+                                        "elapsed_ms": started_at.elapsed().as_millis()
+                                    }),
+                                );
                             }
                             "result" => {
                                 output_path = value.get("outputPath").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -1631,6 +1931,14 @@ async fn run_docx_processor(
                             "error" => {
                                 let message = value.get("message").and_then(|v| v.as_str()).unwrap_or("DOCX failed");
                                 backend_error = Some(message.to_string());
+                                write_debug_event(
+                                    app,
+                                    "docx.run.backend_error",
+                                    json!({
+                                        "error": truncate_debug_message(message, 1200),
+                                        "elapsed_ms": started_at.elapsed().as_millis()
+                                    }),
+                                );
                             }
                             _ => {}
                         }
@@ -1652,17 +1960,41 @@ async fn run_docx_processor(
         };
 
         if cancelled {
+            write_debug_event(
+                app,
+                "docx.run.cancelled",
+                json!({
+                    "elapsed_ms": started_at.elapsed().as_millis()
+                }),
+            );
             return Err(anyhow!("DOCX processing cancelled"));
         }
 
         if let Some(message) = backend_error {
             let combined = combine_backend_error(&message, &stderr_output);
+            write_debug_event(
+                app,
+                "docx.run.error",
+                json!({
+                    "error": truncate_debug_message(&combined, 1500),
+                    "elapsed_ms": started_at.elapsed().as_millis()
+                }),
+            );
             let _ = app.emit("docx_error", combined.clone());
             return Err(anyhow!(combined));
         }
 
         if !status.success() {
             let message = combine_backend_error("DOCX processor failed", &stderr_output);
+            write_debug_event(
+                app,
+                "docx.run.error",
+                json!({
+                    "error": truncate_debug_message(&message, 1500),
+                    "elapsed_ms": started_at.elapsed().as_millis(),
+                    "exit_status": status.code()
+                }),
+            );
             let _ = app.emit("docx_error", message.clone());
             return Err(anyhow!(message));
         }
@@ -1749,6 +2081,16 @@ async fn run_docx_processor(
             json!({
                 "outputPath": frontend_path(&final_output),
                 "trackChanges": track_changes
+            }),
+        );
+
+        write_debug_event(
+            app,
+            "docx.run.success",
+            json!({
+                "output_path": final_output.as_str(),
+                "track_changes": track_changes,
+                "elapsed_ms": started_at.elapsed().as_millis()
             }),
         );
 
@@ -2437,6 +2779,15 @@ fn open_settings_json(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_debug_log(app: AppHandle) -> Result<(), String> {
+    let path = debug_log_path(&app).map_err(|e| e.to_string())?;
+    if !path.exists() {
+        std::fs::write(&path, "").map_err(|e| e.to_string())?;
+    }
+    open_path_in_system_explorer(&path, true)
+}
+
+#[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     let parsed = reqwest::Url::parse(url.trim()).map_err(|e| e.to_string())?;
     let scheme = parsed.scheme().to_ascii_lowercase();
@@ -2625,6 +2976,7 @@ fn main() {
             open_folder,
             open_temp_lingofix_folder,
             open_settings_json,
+            open_debug_log,
             open_external_url,
             get_app_version,
             get_file_size,

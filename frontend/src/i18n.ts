@@ -563,8 +563,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Could not reset app',
   },
   'settings.system_paths.hint': {
-    de: 'Temp-Ordner und settings.json direkt im Dateiexplorer öffnen.',
-    en: 'Open the temp folder and settings.json directly in your file explorer.',
+    de: 'Temp-Ordner, settings.json und debug.log direkt im Dateiexplorer öffnen.',
+    en: 'Open the temp folder, settings.json, and debug.log directly in your file explorer.',
   },
   'settings.system_paths.temp_folder': {
     de: 'Temp-Ordner öffnen',
@@ -573,6 +573,10 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.system_paths.settings_json': {
     de: 'settings.json öffnen',
     en: 'Open settings.json',
+  },
+  'settings.system_paths.debug_log': {
+    de: 'debug.log öffnen',
+    en: 'Open debug.log',
   },
   'settings.system_paths.open_failed': {
     de: 'Konnte Pfad nicht öffnen',

@@ -462,6 +462,15 @@ export function SettingsModal({
     }
   };
 
+  const handleOpenDebugLog = async () => {
+    setSystemPathMessage('');
+    try {
+      await invoke('open_debug_log');
+    } catch (error) {
+      setSystemPathMessage(`${t('settings.system_paths.open_failed', lang)}: ${error}`);
+    }
+  };
+
   const handleResetApp = async () => {
     setResetMessage('');
     setResetMessageIsError(false);
@@ -539,6 +548,13 @@ export function SettingsModal({
                     className="btn-secondary !text-base"
                   >
                     {t('settings.system_paths.settings_json', lang)}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenDebugLog}
+                    className="btn-secondary !text-base"
+                  >
+                    {t('settings.system_paths.debug_log', lang)}
                   </button>
                 </div>
                 {systemPathMessage && (
@@ -1011,6 +1027,13 @@ export function SettingsModal({
                         className="btn-secondary !text-base"
                       >
                         {t('settings.system_paths.settings_json', lang)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenDebugLog}
+                        className="btn-secondary !text-base"
+                      >
+                        {t('settings.system_paths.debug_log', lang)}
                       </button>
                     </div>
                     {systemPathMessage && (
