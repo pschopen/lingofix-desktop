@@ -16,7 +16,7 @@ internal static class Program
 
         try
         {
-            var (input, settingsPath, inspectTrackChanges, acceptExistingTrackChanges) = ParseArgs(args);
+            var (input, settingsPath, inspectTrackChanges, acceptExistingTrackChanges, sourceKind, sourceOriginalPath) = ParseArgs(args);
             if (string.IsNullOrWhiteSpace(input))
             {
                 EmitError("Missing --input argument");
@@ -47,7 +47,9 @@ internal static class Program
                     input,
                     settings,
                     Settings.NormalizeCompareMode(settings.CompareMode),
-                    acceptExistingTrackChanges),
+                    acceptExistingTrackChanges,
+                    sourceKind,
+                    sourceOriginalPath),
                 logger,
                 cts.Token);
 
@@ -84,12 +86,14 @@ internal static class Program
         return Settings.FromFrontendJson(text);
     }
 
-    private static (string? input, string? settingsPath, bool inspectTrackChanges, bool acceptExistingTrackChanges) ParseArgs(string[] args)
+    private static (string? input, string? settingsPath, bool inspectTrackChanges, bool acceptExistingTrackChanges, SourceInputKind sourceKind, string? sourceOriginalPath) ParseArgs(string[] args)
     {
         string? input = null;
         string? settingsPath = null;
+        string? sourceOriginalPath = null;
         var inspectTrackChanges = false;
         var acceptExistingTrackChanges = false;
+        var sourceKind = SourceInputKind.Docx;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -115,10 +119,30 @@ internal static class Program
             if (arg == "--accept-existing-track-changes")
             {
                 acceptExistingTrackChanges = true;
+                continue;
+            }
+
+            if (arg == "--source-kind" && i + 1 < args.Length)
+            {
+                var value = args[++i].Trim();
+                if (string.Equals(value, "odt", StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceKind = SourceInputKind.Odt;
+                }
+                else
+                {
+                    sourceKind = SourceInputKind.Docx;
+                }
+                continue;
+            }
+
+            if (arg == "--source-original-path" && i + 1 < args.Length)
+            {
+                sourceOriginalPath = args[++i];
             }
         }
 
-        return (input, settingsPath, inspectTrackChanges, acceptExistingTrackChanges);
+        return (input, settingsPath, inspectTrackChanges, acceptExistingTrackChanges, sourceKind, sourceOriginalPath);
     }
 
     private static void EmitError(string message)

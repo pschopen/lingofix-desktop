@@ -1376,6 +1376,14 @@ async fn run_docx_processor(
     let settings_json = serde_json::to_string(&backend_settings)?;
     let settings_temp = std::env::temp_dir().join(format!("lingofix-settings-{}.json", uuid_like()));
     tokio::fs::write(&settings_temp, settings_json).await?;
+    let source_kind_arg = if source_kind == OfficeInputKind::Odt { "odt" } else { "docx" };
+    let source_original_path_arg = if source_kind == OfficeInputKind::Odt {
+        original_path
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(source_input_path)
+    } else {
+        source_input_path
+    };
     let run_result = async {
         let (mut cmd, launch_mode) = if let Some(backend_bin) = resolve_bundled_backend_executable(app) {
             let mut command = Command::new(&backend_bin);
@@ -1383,7 +1391,11 @@ async fn run_docx_processor(
                 .arg("--input")
                 .arg(backend_input_path)
                 .arg("--settings-path")
-                .arg(&settings_temp);
+                .arg(&settings_temp)
+                .arg("--source-kind")
+                .arg(source_kind_arg)
+                .arg("--source-original-path")
+                .arg(source_original_path_arg);
             if accept_existing_track_changes {
                 command.arg("--accept-existing-track-changes");
             }
@@ -1415,7 +1427,11 @@ async fn run_docx_processor(
                 .arg("--input")
                 .arg(backend_input_path)
                 .arg("--settings-path")
-                .arg(&settings_temp);
+                .arg(&settings_temp)
+                .arg("--source-kind")
+                .arg(source_kind_arg)
+                .arg("--source-original-path")
+                .arg(source_original_path_arg);
             if accept_existing_track_changes {
                 command.arg("--accept-existing-track-changes");
             }
@@ -1561,28 +1577,34 @@ async fn run_docx_processor(
                 );
             } else {
                 let target = build_output_path(Path::new(naming_source), output_suffix, OfficeInputKind::Odt)?;
-                match convert_docx_to_odt(Path::new(&final_output), &target).await {
-                    Ok(()) => {
-                        final_output = target.to_string_lossy().to_string();
-                    }
-                    Err(conversion_error) => {
-                        let fallback_docx_target = build_output_path(
-                            Path::new(naming_source),
-                            output_suffix,
-                            OfficeInputKind::Docx,
-                        )?;
-                        tokio::fs::copy(&final_output, &fallback_docx_target).await?;
-                        final_output = fallback_docx_target.to_string_lossy().to_string();
-                        let _ = app.emit(
-                            "docx_log",
-                            json!({
-                                "level": "warning",
-                                "message": format!(
-                                    "ODT re-conversion failed; returning DOCX fallback: {}",
-                                    conversion_error
-                                )
-                            }),
-                        );
+                let final_output_is_odt = office_input_kind(Path::new(&final_output)) == Some(OfficeInputKind::Odt);
+                if final_output_is_odt {
+                    tokio::fs::copy(&final_output, &target).await?;
+                    final_output = target.to_string_lossy().to_string();
+                } else {
+                    match convert_docx_to_odt(Path::new(&final_output), &target).await {
+                        Ok(()) => {
+                            final_output = target.to_string_lossy().to_string();
+                        }
+                        Err(conversion_error) => {
+                            let fallback_docx_target = build_output_path(
+                                Path::new(naming_source),
+                                output_suffix,
+                                OfficeInputKind::Docx,
+                            )?;
+                            tokio::fs::copy(&final_output, &fallback_docx_target).await?;
+                            final_output = fallback_docx_target.to_string_lossy().to_string();
+                            let _ = app.emit(
+                                "docx_log",
+                                json!({
+                                    "level": "warning",
+                                    "message": format!(
+                                        "ODT re-conversion failed; returning DOCX fallback: {}",
+                                        conversion_error
+                                    )
+                                }),
+                            );
+                        }
                     }
                 }
             }
