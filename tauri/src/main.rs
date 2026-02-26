@@ -37,10 +37,6 @@ const DEFAULT_SYSTEM_PROMPT_EN: &str =
     "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
 const DEFAULT_SYSTEM_PROMPT_DE: &str =
     "Wichtig: Antworte nur mit dem korrigierten Text. Keine Erklärungen, keine Notizen, keine zusätzlichen Sätze.";
-const DEFAULT_BATCH_PROMPT_EN: &str =
-    "Correct each item and return ONLY valid JSON in this exact format: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Keep the same IDs and order. No extra keys or text.";
-const DEFAULT_BATCH_PROMPT_DE: &str =
-    "Korrigiere jedes Element und gib NUR gueltiges JSON in genau diesem Format zurueck: {\"items\":[{\"id\":123,\"text\":\"...\"}]}. Behalte dieselben IDs und die Reihenfolge bei. Keine zusaetzlichen Schluessel oder Texte.";
 const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_EN: &str = "Default";
 const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_DE: &str = "Standard";
 
@@ -65,14 +61,6 @@ fn default_system_prompt(locale: &str) -> String {
         DEFAULT_SYSTEM_PROMPT_DE.to_string()
     } else {
         DEFAULT_SYSTEM_PROMPT_EN.to_string()
-    }
-}
-
-fn default_batch_prompt(locale: &str) -> String {
-    if normalize_locale(locale) == "de" {
-        DEFAULT_BATCH_PROMPT_DE.to_string()
-    } else {
-        DEFAULT_BATCH_PROMPT_EN.to_string()
     }
 }
 
@@ -159,6 +147,13 @@ struct CancellationState {
 struct ModelCapabilityState {
     temperature_support: Mutex<HashMap<String, bool>>,
     reasoning_effort_support: Mutex<HashMap<String, bool>>,
+    structured_json_support: Mutex<HashMap<String, bool>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BatchJsonSupportStatus {
+    supported: bool,
+    details: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,8 +172,8 @@ impl Default for DocxSettings {
         Self {
             compare_mode: "openxml".into(),
             enable_batching: false,
-            batch_max_chars: 8_000,
-            batch_max_paragraphs: 20,
+            batch_max_chars: 3_000,
+            batch_max_paragraphs: 15,
             enable_cache: true,
             enable_parallelization: true,
             max_parallel_requests: 4,
@@ -204,7 +199,6 @@ struct FrontendSettings {
     custom_prompt_presets: Vec<CustomPromptPreset>,
     active_custom_prompt_preset_id: String,
     system_prompt: String,
-    batch_prompt: String,
     auto_check_updates: bool,
     temperature: f64,
     provider_keys: HashMap<String, Option<String>>,
@@ -244,7 +238,6 @@ impl FrontendSettings {
             custom_prompt_presets: vec![default_preset.clone()],
             active_custom_prompt_preset_id: default_preset.id,
             system_prompt: default_system_prompt(normalized_locale),
-            batch_prompt: default_batch_prompt(normalized_locale),
             auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
             provider_keys: empty_provider_keys(),
@@ -547,10 +540,6 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
 
     if settings.system_prompt.trim().is_empty() {
         return Err(format!("Invalid settings: system_prompt is missing. {reset_hint}"));
-    }
-
-    if settings.batch_prompt.trim().is_empty() {
-        return Err(format!("Invalid settings: batch_prompt is missing. {reset_hint}"));
     }
 
     if settings.custom_prompt_presets.is_empty() {
@@ -1090,6 +1079,136 @@ fn is_temperature_unsupported_error(message: &str) -> bool {
             || m.contains("unsupported")
             || m.contains("not allowed")
             || m.contains("invalid"))
+}
+
+fn is_response_format_unsupported_error(message: &str) -> bool {
+    let m = message.to_lowercase();
+    if m.contains("unsupported_parameter") || m.contains("param\":\"response_format") {
+        return true;
+    }
+
+    m.contains("response_format")
+        && (m.contains("not support")
+            || m.contains("does not support")
+            || m.contains("unsupported")
+            || m.contains("not allowed")
+            || m.contains("invalid"))
+}
+
+fn build_backend_chat_completions_url(api_base: &str) -> anyhow::Result<String> {
+    let trimmed = api_base.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(anyhow!("api_url is missing"));
+    }
+
+    if trimmed.ends_with("/chat/completions") {
+        return Ok(trimmed.to_string());
+    }
+
+    if trimmed.ends_with("/v1") {
+        return Ok(format!("{trimmed}/chat/completions"));
+    }
+
+    Ok(format!("{trimmed}/v1/chat/completions"))
+}
+
+#[tauri::command]
+async fn check_batch_json_support(
+    settings: FrontendSettings,
+    capability_state: State<'_, ModelCapabilityState>,
+) -> Result<BatchJsonSupportStatus, String> {
+    if !settings.docx.enable_batching {
+        return Ok(BatchJsonSupportStatus {
+            supported: true,
+            details: None,
+        });
+    }
+
+    let mut effective_settings = settings;
+    effective_settings.api_key = resolve_provider_key(&effective_settings);
+
+    if !effective_settings.provider.eq_ignore_ascii_case("ollama")
+        && effective_settings
+            .api_key
+            .as_ref()
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+    {
+        return Err("API key missing. Please open settings and provide an API key.".to_string());
+    }
+
+    let cache_key = temperature_capability_key(&effective_settings);
+    {
+        let cache = capability_state.structured_json_support.lock().await;
+        if let Some(supported) = cache.get(&cache_key) {
+            return Ok(BatchJsonSupportStatus {
+                supported: *supported,
+                details: if *supported {
+                    None
+                } else {
+                    Some("response_format json_schema is not supported by this model.".to_string())
+                },
+            });
+        }
+    }
+
+    let url = build_backend_chat_completions_url(&effective_settings.api_url).map_err(|e| e.to_string())?;
+    let client = reqwest::Client::new();
+    let body = json!({
+        "model": effective_settings.model,
+        "messages": [{"role": "user", "content": "Return exactly this JSON object: {\"ok\":true}"}],
+        "stream": false,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "lingofix_batch_probe",
+                "strict": true,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "ok": { "type": "boolean" }
+                    },
+                    "required": ["ok"]
+                }
+            }
+        }
+    });
+
+    let mut request = client.post(url).json(&body);
+    if let Some(api_key) = effective_settings.api_key.as_ref() {
+        if !api_key.trim().is_empty() {
+            request = request.bearer_auth(api_key);
+        }
+    }
+
+    let response = request.send().await.map_err(|e| e.to_string())?;
+    if response.status().is_success() {
+        let mut cache = capability_state.structured_json_support.lock().await;
+        cache.insert(cache_key, true);
+        return Ok(BatchJsonSupportStatus {
+            supported: true,
+            details: None,
+        });
+    }
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let detail = extract_api_error_message(&body);
+    if status.as_u16() == 400 && is_response_format_unsupported_error(&detail) {
+        let mut cache = capability_state.structured_json_support.lock().await;
+        cache.insert(cache_key, false);
+        return Ok(BatchJsonSupportStatus {
+            supported: false,
+            details: Some(detail),
+        });
+    }
+
+    Err(format!(
+        "JSON support check failed ({}): {}",
+        status,
+        detail
+    ))
 }
 
 fn extract_openai_like_stream_content(value: &Value) -> Option<String> {
@@ -2501,6 +2620,7 @@ fn main() {
             cancel_docx,
             check_word_compare_access,
             check_libreoffice_compare_access,
+            check_batch_json_support,
             inspect_docx_track_changes,
             open_folder,
             open_temp_lingofix_folder,

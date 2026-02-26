@@ -21,6 +21,30 @@ public sealed class LlmClient
     private readonly IRunLogger? _logger;
     private string _apiKey = string.Empty;
     private int _temperatureSupport = TemperatureSupportUnknown;
+    private static readonly object BatchResponseJsonSchema = new
+    {
+        type = "object",
+        additionalProperties = false,
+        properties = new
+        {
+            items = new
+            {
+                type = "array",
+                items = new
+                {
+                    type = "object",
+                    additionalProperties = false,
+                    properties = new
+                    {
+                        id = new { type = "integer" },
+                        text = new { type = "string" }
+                    },
+                    required = new[] { "id", "text" }
+                }
+            }
+        },
+        required = new[] { "items" }
+    };
 
     public LlmClient(string apiBase, string model, string prompt, string systemPromptOverride, double temperature, IRunLogger? logger = null)
     {
@@ -52,7 +76,10 @@ public sealed class LlmClient
             Temperature = _temperature
         };
 
-        return await SendWithTemperatureFallbackAsync(baseRequest, sanitizeOutput: true, cancellationToken);
+        return await SendWithTemperatureFallbackAsync(
+            baseRequest,
+            sanitizeOutput: true,
+            cancellationToken: cancellationToken);
     }
 
     public async Task<string> CorrectStructuredAsync(string input, CancellationToken cancellationToken = default)
@@ -67,11 +94,21 @@ public sealed class LlmClient
             Temperature = _temperature,
             ResponseFormat = new ChatResponseFormat
             {
-                Type = "json_object"
+                Type = "json_schema",
+                JsonSchema = new ChatResponseFormatJsonSchema
+                {
+                    Name = "lingofix_batch_items",
+                    Schema = BatchResponseJsonSchema,
+                    Strict = true
+                }
             }
         };
 
-        return await SendWithTemperatureFallbackAsync(baseRequest, sanitizeOutput: false, cancellationToken);
+        return await SendWithTemperatureFallbackAsync(
+            baseRequest,
+            sanitizeOutput: false,
+            allowResponseFormatFallback: false,
+            cancellationToken);
     }
 
     public void ApplyAuth(string apiKey)
@@ -211,7 +248,11 @@ public sealed class LlmClient
         return baseDelay;
     }
 
-    private async Task<string> SendWithTemperatureFallbackAsync(ChatCompletionsRequest request, bool sanitizeOutput, CancellationToken cancellationToken)
+    private async Task<string> SendWithTemperatureFallbackAsync(
+        ChatCompletionsRequest request,
+        bool sanitizeOutput,
+        bool allowResponseFormatFallback = true,
+        CancellationToken cancellationToken = default)
     {
         var includeTemperature = request.Temperature.HasValue && Volatile.Read(ref _temperatureSupport) != TemperatureSupportUnsupported;
         if (!includeTemperature)
@@ -220,7 +261,7 @@ public sealed class LlmClient
         }
 
         var allowTemperatureFallback = includeTemperature;
-        var allowResponseFormatFallback = request.ResponseFormat is not null;
+        var allowResponseFormatRetry = allowResponseFormatFallback && request.ResponseFormat is not null;
         for (int attempt = 1; attempt <= 3; attempt++)
         {
             var payload = JsonSerializer.Serialize(request, JsonOptions.Default);
@@ -271,11 +312,11 @@ public sealed class LlmClient
                 continue;
             }
 
-            if (allowResponseFormatFallback && IsResponseFormatUnsupported(responseBody))
+            if (allowResponseFormatRetry && IsResponseFormatUnsupported(responseBody))
             {
                 _logger?.Info("Note: response_format not accepted by the model. Retrying without response_format.");
                 request.ResponseFormat = null;
-                allowResponseFormatFallback = false;
+                allowResponseFormatRetry = false;
                 attempt = 0;
                 continue;
             }

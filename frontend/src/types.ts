@@ -68,7 +68,6 @@ export interface Settings {
   custom_prompt_presets: CustomPromptPreset[];
   active_custom_prompt_preset_id: string;
   system_prompt: string;
-  batch_prompt: string;
   auto_check_updates: boolean;
   temperature: number;
   provider_keys: Record<Provider, string | null>;

@@ -384,6 +384,26 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'DOCX-Korrektur im OpenXML-Modus wurde abgebrochen.',
     en: 'DOCX correction in OpenXML mode was cancelled.',
   },
+  'docx.batching.json_check.title': {
+    de: 'Batching ist für dieses Modell nicht verfügbar',
+    en: 'Batching is not available for this model',
+  },
+  'docx.batching.json_check.message': {
+    de: 'Dieses Modell unterstützt kein strukturiertes JSON für Batching. Möchten Sie ohne Batching fortfahren oder die Korrektur abbrechen?',
+    en: 'This model does not support structured JSON for batching. Do you want to continue without batching or cancel the correction?',
+  },
+  'docx.batching.json_check.continue_without_batching': {
+    de: 'Ohne Batching fortfahren',
+    en: 'Continue without batching',
+  },
+  'docx.batching.json_check.cancel': {
+    de: 'Abbrechen',
+    en: 'Cancel',
+  },
+  'docx.batching.json_check.cancelled': {
+    de: 'Dokumentkorrektur wurde abgebrochen.',
+    en: 'Document correction was cancelled.',
+  },
 
   // Settings Modal - Tabs
   'settings.tab.general': {

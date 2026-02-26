@@ -9,6 +9,8 @@ namespace Lingofix.Backend.Documents;
 public static class ParagraphProcessor
 {
     private const int MaxChunkChars = 5000;
+    private const string BatchProtocolInstruction =
+        "Correct each item's text and return valid JSON only.";
 
     public static async Task ProcessAsync(
         IEnumerable<Paragraph> paragraphs,
@@ -120,7 +122,7 @@ public static class ParagraphProcessor
             foreach (var batch in work)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, null, settings.BatchPrompt, cancellationToken);
+                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, null, cancellationToken);
                 ApplyBatchResult(result, cache);
                 completedBatches++;
                 processedParagraphs += batch.Items.Count;
@@ -147,7 +149,7 @@ public static class ParagraphProcessor
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, concurrency, settings.BatchPrompt, cancellationToken);
+                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
                     lock (progressLock)
                     {
                         ApplyBatchResult(result, cache);
@@ -213,7 +215,13 @@ public static class ParagraphProcessor
         return builder.ToString();
     }
 
-    private static async Task<BatchResult> ExecuteWorkBatchAsync(WorkBatch batch, LlmClient llmClient, IRunLogger? logger, ConcurrentDictionary<string, string>? cache, AdaptiveConcurrency? concurrency, string batchPrompt, CancellationToken cancellationToken)
+    private static async Task<BatchResult> ExecuteWorkBatchAsync(
+        WorkBatch batch,
+        LlmClient llmClient,
+        IRunLogger? logger,
+        ConcurrentDictionary<string, string>? cache,
+        AdaptiveConcurrency? concurrency,
+        CancellationToken cancellationToken)
     {
         var results = new Dictionary<int, string>();
 
@@ -239,7 +247,7 @@ public static class ParagraphProcessor
             return new BatchResult(batch, results);
         }
 
-        var request = BuildBatchRequest(batch.Items, batchPrompt);
+        var request = BuildBatchRequest(batch.Items);
         string response;
         try
         {
@@ -270,7 +278,7 @@ public static class ParagraphProcessor
         if (!TryParseBatchResponse(response, batch.Items, out var parsed, out var parseFailure))
         {
             logger?.Info($"Batching: invalid response ({parseFailure}), attempting repair (paragraphs: {batch.Items.Count}).");
-            var repaired = await TryRepairBatchResponseAsync(batch.Items, response, batchPrompt, llmClient, logger, cancellationToken);
+            var repaired = await TryRepairBatchResponseAsync(batch.Items, response, llmClient, logger, cancellationToken);
             if (repaired is not null)
             {
                 concurrency?.Success();
@@ -369,12 +377,11 @@ public static class ParagraphProcessor
     private static async Task<Dictionary<int, string>?> TryRepairBatchResponseAsync(
         List<ParagraphItem> items,
         string invalidResponse,
-        string batchPrompt,
         LlmClient llmClient,
         IRunLogger? logger,
         CancellationToken cancellationToken)
     {
-        var repairRequest = BuildBatchRepairRequest(items, invalidResponse, batchPrompt);
+        var repairRequest = BuildBatchRepairRequest(items, invalidResponse);
         string repairedResponse;
         try
         {
@@ -395,10 +402,8 @@ public static class ParagraphProcessor
         return repaired;
     }
 
-    private static string BuildBatchRequest(List<ParagraphItem> items, string batchPrompt)
+    private static string BuildBatchRequest(List<ParagraphItem> items)
     {
-        var normalizedPrompt = batchPrompt.Trim();
-
         var payload = new BatchInputPayload
         {
             Items = items.Select(item => new BatchInputItem
@@ -410,17 +415,14 @@ public static class ParagraphProcessor
 
         var inputJson = JsonSerializer.Serialize(payload, JsonOptions.Default);
         var builder = new StringBuilder();
-        builder.AppendLine(normalizedPrompt);
-        builder.AppendLine("Return only JSON. Do not wrap in markdown.");
-        builder.AppendLine("Use exactly this output shape: {\"items\":[{\"id\":123,\"text\":\"...\"}]}.");
+        builder.AppendLine(BatchProtocolInstruction);
         builder.AppendLine("Input JSON:");
         builder.Append(inputJson);
         return builder.ToString();
     }
 
-    private static string BuildBatchRepairRequest(List<ParagraphItem> items, string invalidResponse, string batchPrompt)
+    private static string BuildBatchRepairRequest(List<ParagraphItem> items, string invalidResponse)
     {
-        var normalizedPrompt = batchPrompt.Trim();
         var payload = new BatchInputPayload
         {
             Items = items.Select(item => new BatchInputItem
@@ -433,7 +435,7 @@ public static class ParagraphProcessor
         var inputJson = JsonSerializer.Serialize(payload, JsonOptions.Default);
         var builder = new StringBuilder();
         builder.AppendLine("Your last answer was not valid for automatic parsing.");
-        builder.AppendLine(normalizedPrompt);
+        builder.AppendLine(BatchProtocolInstruction);
         builder.AppendLine("Return only valid JSON with this exact shape: {\"items\":[{\"id\":123,\"text\":\"...\"}]}.");
         builder.AppendLine("Rules: include every input id exactly once, no additional keys, no markdown.");
         builder.AppendLine("Input JSON:");

@@ -644,33 +644,33 @@ export function SettingsModal({
                       <button
                         type="button"
                         onClick={handleCreateCustomPromptPreset}
-                        className="btn-secondary !text-base"
+                        className="btn-secondary !text-sm !px-2.5 !py-1.5 !rounded-md !gap-1"
                       >
-                        <Plus size={14} />
+                        <Plus size={12} />
                         {t('settings.prompt_presets.new', lang)}
                       </button>
                       <button
                         type="button"
                         onClick={handleDuplicateCustomPromptPreset}
-                        className="btn-secondary !text-base"
+                        className="btn-secondary !text-sm !px-2.5 !py-1.5 !rounded-md !gap-1"
                       >
-                        <Copy size={14} />
+                        <Copy size={12} />
                         {t('settings.prompt_presets.duplicate', lang)}
                       </button>
                       <button
                         type="button"
                         onClick={handleRenameCustomPromptPreset}
-                        className="btn-secondary !text-base"
+                        className="btn-secondary !text-sm !px-2.5 !py-1.5 !rounded-md !gap-1"
                       >
-                        <Pencil size={14} />
+                        <Pencil size={12} />
                         {t('settings.prompt_presets.rename', lang)}
                       </button>
                       <button
                         type="button"
                         onClick={handleDeleteCustomPromptPreset}
-                        className="btn-secondary !text-base"
+                        className="btn-secondary !text-sm !px-2.5 !py-1.5 !rounded-md !gap-1"
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={12} />
                         {t('settings.prompt_presets.delete', lang)}
                       </button>
                     </div>
