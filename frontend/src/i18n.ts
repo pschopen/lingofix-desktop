@@ -290,6 +290,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Oder klicken, um eine Datei auszuwählen',
     en: 'Or click to choose a file',
   },
+  'editor.files_selected': {
+    de: '{count} Datei(en) ausgewählt',
+    en: '{count} file(s) selected',
+  },
   'editor.dropHere': {
     de: 'Hier ablegen',
     en: 'Drop here',

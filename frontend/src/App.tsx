@@ -3,7 +3,7 @@ import { invoke, listen } from './lib/bridge';
 import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal, ExternalLink } from 'lucide-react';
 import { TextEditor } from './components/TextEditor';
 import { SettingsModal } from './components/SettingsModal';
-import { Settings, FontSize, FONT_SIZE_PX } from './types';
+import { Settings, FontSize, FONT_SIZE_PX, DocxFile } from './types';
 import { t, detectLanguage } from './i18n';
 import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
@@ -112,20 +112,22 @@ function App() {
     clearAll,
   } = useCorrectionState();
   const {
+    docxFiles,
+    activeDocxFileIndex,
+    setActiveDocxFileIndex,
     docxFile,
     docxProgress,
-    docxResult,
+    docxResults,
     docxWarning,
     docxLogs,
     showLogs,
     setShowLogs,
     setDocxSelection,
     setDocxProgress,
-    setDocxResult,
+    setDocxResults,
     setDocxWarning,
     setDocxLogs,
     appendDocxLog,
-    resetDocxRunState,
   } = useDocxState();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -133,6 +135,7 @@ function App() {
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
   const shownUpdateVersionRef = useRef<string | null>(null);
   const cancelPendingDocxStartRef = useRef(false);
+  const currentProcessingDocxRef = useRef<DocxFile | null>(null);
 
   // Apply font-size CSS custom property to document root
   useEffect(() => {
@@ -359,16 +362,20 @@ function App() {
     });
 
     const unlistenDocxComplete = listen<{ outputPath: string; trackChanges: boolean }>('docx_complete', (event) => {
-      setDocxResult(event.payload);
-      setIsCorrecting(false);
-      setDocxProgress(null);
+      const inputName = currentProcessingDocxRef.current?.name ?? event.payload.outputPath;
+      setDocxResults((prev) => [
+        ...prev,
+        {
+          inputName,
+          outputPath: event.payload.outputPath,
+          trackChanges: event.payload.trackChanges,
+        },
+      ]);
     });
 
     const unlistenDocxError = listen<string>('docx_error', (event) => {
       setInfoMessage(null);
       setError(event.payload);
-      setIsCorrecting(false);
-      setDocxProgress(null);
     });
 
     const unlistenDocxLog = listen<{ level: string; message: string }>('docx_log', (event) => {
@@ -394,7 +401,7 @@ function App() {
     loadSettings,
     setCorrectedText,
     setDocxProgress,
-    setDocxResult,
+    setDocxResults,
     setDocxWarning,
     setError,
     setInfoMessage,
@@ -430,119 +437,98 @@ function App() {
     if (infoMessage) {
       setInfoMessage(null);
     }
-    if (newText.trim() && docxFile) {
+    if (newText.trim() && docxFiles.length > 0) {
       setDocxSelection(null);
     }
   };
 
-  const handleDocxFile = useCallback((file: { name: string; path: string; size: number; originalPath?: string } | null) => {
-    setDocxSelection(file);
+  const handleDocxFiles = useCallback((files: { name: string; path: string; size: number; originalPath?: string }[] | null) => {
+    setDocxSelection(files);
     setShowOpenXmlConsent(false);
     setShowBatchingJsonConsent(false);
     setBatchingJsonDetails(null);
     setPendingDocxRunSettings(null);
   }, [setDocxSelection]);
 
-  const startDocxCorrection = useCallback(async (acceptExistingTrackChanges: boolean, runSettings?: Settings) => {
-    if (!docxFile?.path) {
-      return;
+  const runSingleDocxWithPrechecks = useCallback(async (file: DocxFile, settingsForRun: Settings) => {
+    let effectiveSettings = settingsForRun;
+
+    if (effectiveSettings.docx.enable_batching) {
+      const batchSupport = await invoke<BatchJsonSupportStatus>('check_batch_json_support', {
+        settings: effectiveSettings,
+      });
+
+      if (!batchSupport.supported) {
+        effectiveSettings = {
+          ...effectiveSettings,
+          docx: {
+            ...effectiveSettings.docx,
+            enable_batching: false,
+          },
+        };
+      }
     }
 
-    const settingsForRun = runSettings ?? settings;
-    if (!settingsForRun) {
+    if (effectiveSettings.docx.compare_mode === 'openxml') {
+      const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
+        filePath: file.path,
+      });
+
+      if (inspection.hasTrackChanges) {
+        throw new Error(`${file.name}: ${t('docx.openxml.accept_existing.cancelled', lang)}`);
+      }
+    }
+
+    currentProcessingDocxRef.current = file;
+    await invoke('correct_docx', {
+      filePath: file.path,
+      originalPath: file.originalPath,
+      acceptExistingTrackChanges: false,
+      settings: effectiveSettings,
+    });
+  }, [lang]);
+
+  const runDocxQueue = useCallback(async (files: DocxFile[], settingsForRun: Settings) => {
+    if (files.length === 0) {
       return;
     }
 
     setPendingDocxRunSettings(null);
     cancelPendingDocxStartRef.current = false;
     setIsCorrecting(true);
-    setDocxProgress({ percent: 0, message: t('docx.processing', lang) });
-    resetDocxRunState();
     setError(null);
     setInfoMessage(null);
+    setDocxResults([]);
+    setDocxWarning(null);
+    setDocxLogs([]);
 
-    try {
-      await invoke('correct_docx', {
-        filePath: docxFile.path,
-        originalPath: docxFile.originalPath,
-        acceptExistingTrackChanges,
-        settings: settingsForRun,
-      });
-    } catch (error) {
-      console.error('DOCX correction failed:', error);
-      setError(String(error));
-      setIsCorrecting(false);
-      setDocxProgress(null);
-    }
-  }, [docxFile, lang, resetDocxRunState, setDocxProgress, setError, setInfoMessage, setIsCorrecting, settings]);
-
-  const runDocxWithPrechecks = useCallback(async (settingsForRun: Settings) => {
-    if (!docxFile?.path) return;
-
-    cancelPendingDocxStartRef.current = false;
-    setIsCorrecting(true);
-    setDocxProgress({ percent: 0, message: t('docx.processing', lang) });
-
-    try {
-      if (settingsForRun.docx.enable_batching) {
-        const batchSupport = await invoke<BatchJsonSupportStatus>('check_batch_json_support', {
-          settings: settingsForRun,
-        });
-
-        if (cancelPendingDocxStartRef.current) {
-          return;
-        }
-
-        if (!batchSupport.supported) {
-          const fallbackSettings: Settings = {
-            ...settingsForRun,
-            docx: {
-              ...settingsForRun.docx,
-              enable_batching: false,
-            },
-          };
-          setPendingDocxRunSettings(fallbackSettings);
-          setBatchingJsonDetails(batchSupport.details ?? null);
-          setIsCorrecting(false);
-          setDocxProgress(null);
-          setShowBatchingJsonConsent(true);
-          return;
-        }
-      }
-
-      if (settingsForRun.docx.compare_mode === 'openxml') {
-        const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
-          filePath: docxFile.path,
-        });
-
-        if (cancelPendingDocxStartRef.current) {
-          return;
-        }
-
-        if (inspection.hasTrackChanges) {
-          setPendingDocxRunSettings(settingsForRun);
-          setIsCorrecting(false);
-          setDocxProgress(null);
-          setShowOpenXmlConsent(true);
-          return;
-        }
-      }
-
+    for (let index = 0; index < files.length; index += 1) {
       if (cancelPendingDocxStartRef.current) {
-        return;
+        break;
       }
 
-      await startDocxCorrection(false, settingsForRun);
-    } catch (error) {
-      if (cancelPendingDocxStartRef.current) {
-        return;
+      const file = files[index];
+      setActiveDocxFileIndex(index);
+      setDocxProgress({ percent: 0, message: `${t('docx.processing', lang)} (${index + 1}/${files.length})` });
+
+      try {
+        await runSingleDocxWithPrechecks(file, settingsForRun);
+      } catch (error) {
+        if (cancelPendingDocxStartRef.current) {
+          break;
+        }
+        console.error('DOCX correction failed:', error);
+        const message = String(error);
+        setError(message);
+        appendDocxLog('error', message);
       }
-      console.error('DOCX pre-check failed:', error);
-      setError(String(error));
-      setIsCorrecting(false);
-      setDocxProgress(null);
     }
-  }, [docxFile?.path, lang, setDocxProgress, setError, setIsCorrecting, startDocxCorrection]);
+
+    currentProcessingDocxRef.current = null;
+    setIsCorrecting(false);
+    setDocxProgress(null);
+    setActiveDocxFileIndex(0);
+  }, [appendDocxLog, lang, runSingleDocxWithPrechecks, setActiveDocxFileIndex, setDocxProgress, setDocxResults, setDocxWarning, setError, setInfoMessage, setIsCorrecting, setDocxLogs]);
 
   const handleCorrect = useCallback(async () => {
     if (!settings) {
@@ -550,8 +536,8 @@ function App() {
       return;
     }
 
-    if (docxFile) {
-      await runDocxWithPrechecks(settings);
+    if (docxFiles.length > 0) {
+      await runDocxQueue(docxFiles, settings);
       return;
     }
     
@@ -576,21 +562,24 @@ function App() {
       setShowDiff(false);
     }
   }, [
-    docxFile,
+    docxFiles,
     lang,
+    runDocxQueue,
     setError,
     setInfoMessage,
     setIsStreaming,
     setShowDiff,
     settings,
-    runDocxWithPrechecks,
     text,
   ]);
 
   const handleOpenXmlConsentContinue = useCallback(async () => {
     setShowOpenXmlConsent(false);
-    await startDocxCorrection(true, pendingDocxRunSettings ?? undefined);
-  }, [pendingDocxRunSettings, startDocxCorrection]);
+    if (!docxFile || !pendingDocxRunSettings) {
+      return;
+    }
+    await runSingleDocxWithPrechecks(docxFile, pendingDocxRunSettings);
+  }, [docxFile, pendingDocxRunSettings, runSingleDocxWithPrechecks]);
 
   const handleOpenXmlConsentCancel = useCallback(() => {
     setShowOpenXmlConsent(false);
@@ -602,11 +591,11 @@ function App() {
     const fallbackSettings = pendingDocxRunSettings;
     setShowBatchingJsonConsent(false);
     setBatchingJsonDetails(null);
-    if (!fallbackSettings) {
+    if (!fallbackSettings || !docxFile) {
       return;
     }
-    await runDocxWithPrechecks(fallbackSettings);
-  }, [pendingDocxRunSettings, runDocxWithPrechecks]);
+    await runSingleDocxWithPrechecks(docxFile, fallbackSettings);
+  }, [docxFile, pendingDocxRunSettings, runSingleDocxWithPrechecks]);
 
   const handleBatchingJsonConsentCancel = useCallback(() => {
     setShowBatchingJsonConsent(false);
@@ -634,7 +623,7 @@ function App() {
 
   const handleStop = async () => {
     try {
-      if (docxFile) {
+      if (docxFiles.length > 0) {
         cancelPendingDocxStartRef.current = true;
         await invoke('cancel_docx');
         setIsCorrecting(false);
@@ -667,7 +656,7 @@ function App() {
     return reset;
   }, [lang, setError]);
 
-  const isDocxMode = !!docxFile;
+  const isDocxMode = docxFiles.length > 0;
   const hasText = text.trim().length > 0;
 
   const handleToggleDarkMode = () => {
@@ -809,7 +798,9 @@ function App() {
               ) : isDocxMode ? (
                 <span className={`inline-flex items-center gap-2 text-base font-medium ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
                   <FileText size={16} />
-                  {docxFile?.name}
+                  {isCorrecting && docxFile
+                    ? `${docxFile.name} (${activeDocxFileIndex + 1}/${docxFiles.length})`
+                    : t('editor.files_selected', lang).replace('{count}', String(docxFiles.length))}
                 </span>
               ) : hasText ? (
                 <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
@@ -846,7 +837,7 @@ function App() {
                 </>
               ) : (
                 <>
-                  {(hasText || docxFile) && (
+                  {(hasText || docxFiles.length > 0) && (
                   <button onClick={handleNew} className="btn-secondary !py-2 !text-base">
                       <Trash2 size={16} />
                       {t('button.clear', lang)}
@@ -854,7 +845,7 @@ function App() {
                   )}
                   <button
                     onClick={handleCorrect}
-                    disabled={isCorrecting || (!hasText && !docxFile)}
+                    disabled={isCorrecting || (!hasText && docxFiles.length === 0)}
                     className="btn-primary !py-2 !text-base"
                   >
                     {isCorrecting ? (
@@ -938,10 +929,10 @@ function App() {
           )}
 
           {/* --- DOCX Result Banner --- */}
-          {docxResult && (
-            <div className={`px-5 py-3 border-b flex items-center justify-between animate-slide-up ${
-              isDarkMode 
-                ? 'bg-emerald-900/20 border-emerald-800/40' 
+          {docxResults.map((result, index) => (
+            <div key={`${result.outputPath}-${index}`} className={`px-5 py-3 border-b flex items-center justify-between animate-slide-up ${
+              isDarkMode
+                ? 'bg-emerald-900/20 border-emerald-800/40'
                 : 'bg-emerald-50/80 border-emerald-100'
             }`}>
               <div className="flex items-center gap-3 min-w-0">
@@ -955,28 +946,31 @@ function App() {
                     <span className={`text-sm font-medium ${isDarkMode ? 'text-emerald-300' : 'text-emerald-800'}`}>
                       {t('docx.complete', lang)}
                     </span>
-                    {docxResult.trackChanges && (
+                    {result.trackChanges && (
                       <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
-                        isDarkMode 
-                          ? 'bg-emerald-900/40 text-emerald-300' 
+                        isDarkMode
+                          ? 'bg-emerald-900/40 text-emerald-300'
                           : 'bg-emerald-200/60 text-emerald-700'
                       }`}>
                         {t('docx.trackChanges.created', lang)}
                       </span>
                     )}
                   </div>
+                  <p className={`text-sm truncate mt-0.5 ${isDarkMode ? 'text-emerald-300/90' : 'text-emerald-700/90'}`} title={result.inputName}>
+                    {result.inputName}
+                  </p>
                   <p className={`text-base truncate mt-0.5 ${
                     isDarkMode ? 'text-emerald-400/80' : 'text-emerald-600/80'
-                  }`} title={docxResult.outputPath}>
-                    {docxResult.outputPath}
+                  }`} title={result.outputPath}>
+                    {result.outputPath}
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => invoke('open_folder', { path: docxResult.outputPath })}
+                onClick={() => invoke('open_folder', { path: result.outputPath })}
                 className={`btn-ghost !py-2 !px-3 !text-base flex-shrink-0 ${
-                  isDarkMode 
-                    ? '!text-emerald-300 hover:!bg-emerald-900/30' 
+                  isDarkMode
+                    ? '!text-emerald-300 hover:!bg-emerald-900/30'
                     : '!text-emerald-700 hover:!bg-emerald-100'
                 }`}
               >
@@ -984,7 +978,7 @@ function App() {
                 {t('docx.openFolder', lang)}
               </button>
             </div>
-          )}
+          ))}
 
           {docxWarning && (
             <div className={`px-5 py-3 border-b flex items-start gap-3 animate-slide-up ${
@@ -1083,12 +1077,12 @@ function App() {
               onSubmitShortcut={handleCorrect}
               correctedText={correctedText}
               showDiff={showDiff}
-              readOnly={showDiff || !!docxResult}
+              readOnly={showDiff || docxResults.length > 0}
               isStreaming={isStreaming}
               lang={lang}
               isDarkMode={isDarkMode}
-              docxFile={docxFile}
-              onDocxFile={handleDocxFile}
+              docxFiles={docxFiles}
+              onDocxFiles={handleDocxFiles}
               isCorrecting={isCorrecting}
             />
           </div>
