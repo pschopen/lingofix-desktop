@@ -264,6 +264,7 @@ public sealed class LlmClient
         var allowResponseFormatRetry = allowResponseFormatFallback && request.ResponseFormat is not null;
         for (int attempt = 1; attempt <= 3; attempt++)
         {
+            LogRequestPayload(request, attempt);
             var payload = JsonSerializer.Serialize(request, JsonOptions.Default);
             using var message = new HttpRequestMessage(HttpMethod.Post, _endpoint)
             {
@@ -286,7 +287,15 @@ public sealed class LlmClient
                 }
 
                 var result = ExtractCompletionText(responseBody);
-                return sanitizeOutput ? SanitizeCorrection(result) : result.Trim();
+                LogResponsePayload(result, attempt);
+
+                var finalResult = sanitizeOutput ? SanitizeCorrection(result) : result.Trim();
+                if (!string.Equals(result, finalResult, StringComparison.Ordinal))
+                {
+                    _logger?.Info($"LLM response after post-processing (attempt {attempt}):\n{finalResult}");
+                }
+
+                return finalResult;
             }
 
             var retryAfterSeconds = GetRetryAfterSeconds(response);
@@ -330,6 +339,34 @@ public sealed class LlmClient
         }
 
         throw new InvalidOperationException("LLM request failed after retries.");
+    }
+
+    private void LogRequestPayload(ChatCompletionsRequest request, int attempt)
+    {
+        if (_logger is null || request.Messages.Count == 0)
+        {
+            return;
+        }
+
+        var builder = new StringBuilder();
+        builder.Append($"LLM request payload (attempt {attempt}):");
+        for (var i = 0; i < request.Messages.Count; i++)
+        {
+            var message = request.Messages[i];
+            builder.Append("\n--- message ");
+            builder.Append(i + 1);
+            builder.Append(" (role=");
+            builder.Append(message.Role);
+            builder.Append(") ---\n");
+            builder.Append(message.Content);
+        }
+
+        _logger.Info(builder.ToString());
+    }
+
+    private void LogResponsePayload(string responseText, int attempt)
+    {
+        _logger?.Info($"LLM response payload (attempt {attempt}):\n{responseText}");
     }
 
     private static bool IsResponseFormatUnsupported(string responseBody)
