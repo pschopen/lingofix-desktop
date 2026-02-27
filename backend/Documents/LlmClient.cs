@@ -21,31 +21,6 @@ public sealed class LlmClient
     private readonly IRunLogger? _logger;
     private string _apiKey = string.Empty;
     private int _temperatureSupport = TemperatureSupportUnknown;
-    private static readonly object BatchResponseJsonSchema = new
-    {
-        type = "object",
-        additionalProperties = false,
-        properties = new
-        {
-            items = new
-            {
-                type = "array",
-                items = new
-                {
-                    type = "object",
-                    additionalProperties = false,
-                    properties = new
-                    {
-                        id = new { type = "integer" },
-                        text = new { type = "string" }
-                    },
-                    required = new[] { "id", "text" }
-                }
-            }
-        },
-        required = new[] { "items" }
-    };
-
     public LlmClient(string apiBase, string model, string prompt, string systemPromptOverride, double temperature, IRunLogger? logger = null)
     {
         _endpoint = ApiEndpointBuilder.Build(apiBase);
@@ -82,7 +57,7 @@ public sealed class LlmClient
             cancellationToken: cancellationToken);
     }
 
-    public async Task<string> CorrectStructuredAsync(string input, CancellationToken cancellationToken = default)
+    public async Task<string> CorrectBatchAsync(string input, CancellationToken cancellationToken = default)
     {
         var baseRequest = new ChatCompletionsRequest
         {
@@ -91,24 +66,15 @@ public sealed class LlmClient
             [
                 new ChatMessage("user", BuildUserPrompt(_prompt, _systemPromptOverride, input))
             ],
-            Temperature = _temperature,
-            ResponseFormat = new ChatResponseFormat
-            {
-                Type = "json_schema",
-                JsonSchema = new ChatResponseFormatJsonSchema
-                {
-                    Name = "lingofix_batch_items",
-                    Schema = BatchResponseJsonSchema,
-                    Strict = true
-                }
-            }
+            Temperature = _temperature
         };
 
         return await SendWithTemperatureFallbackAsync(
             baseRequest,
             sanitizeOutput: false,
-            allowResponseFormatFallback: false,
-            cancellationToken);
+            cancellationToken: cancellationToken,
+            maxAttempts: 1,
+            allowTemperatureFallback: false);
     }
 
     public void ApplyAuth(string apiKey)
@@ -147,6 +113,7 @@ public sealed class LlmClient
         }
 
         text = StripLeadingNote(text);
+        text = XmlTextSanitizer.StripInvalidXmlChars(text, out _);
         return text.Trim();
     }
 
@@ -251,18 +218,19 @@ public sealed class LlmClient
     private async Task<string> SendWithTemperatureFallbackAsync(
         ChatCompletionsRequest request,
         bool sanitizeOutput,
-        bool allowResponseFormatFallback = true,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int maxAttempts = 3,
+        bool allowTemperatureFallback = true)
     {
+        maxAttempts = Math.Max(1, maxAttempts);
         var includeTemperature = request.Temperature.HasValue && Volatile.Read(ref _temperatureSupport) != TemperatureSupportUnsupported;
         if (!includeTemperature)
         {
             request.Temperature = null;
         }
 
-        var allowTemperatureFallback = includeTemperature;
-        var allowResponseFormatRetry = allowResponseFormatFallback && request.ResponseFormat is not null;
-        for (int attempt = 1; attempt <= 3; attempt++)
+        var allowTemperatureFallbackRetry = allowTemperatureFallback && includeTemperature;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
             LogRequestPayload(request, attempt);
             var payload = JsonSerializer.Serialize(request, JsonOptions.Default);
@@ -301,7 +269,7 @@ public sealed class LlmClient
             var retryAfterSeconds = GetRetryAfterSeconds(response);
             if (response.StatusCode == (HttpStatusCode)429)
             {
-                if (attempt == 3)
+                if (attempt == maxAttempts)
                 {
                     throw new LlmRateLimitException(retryAfterSeconds, responseBody);
                 }
@@ -310,27 +278,18 @@ public sealed class LlmClient
                 continue;
             }
 
-            if (allowTemperatureFallback && IsTemperatureUnsupported(responseBody))
+            if (allowTemperatureFallbackRetry && IsTemperatureUnsupported(responseBody))
             {
                 _logger?.Info("Note: temperature not accepted by the model. Retrying without temperature.");
                 request.Temperature = null;
                 includeTemperature = false;
-                allowTemperatureFallback = false;
+                allowTemperatureFallbackRetry = false;
                 Volatile.Write(ref _temperatureSupport, TemperatureSupportUnsupported);
                 attempt = 0;
                 continue;
             }
 
-            if (allowResponseFormatRetry && IsResponseFormatUnsupported(responseBody))
-            {
-                _logger?.Info("Note: response_format not accepted by the model. Retrying without response_format.");
-                request.ResponseFormat = null;
-                allowResponseFormatRetry = false;
-                attempt = 0;
-                continue;
-            }
-
-            if (attempt == 3)
+            if (attempt == maxAttempts)
             {
                 throw new InvalidOperationException($"LLM error: {response.StatusCode} - {responseBody}");
             }
@@ -367,32 +326,6 @@ public sealed class LlmClient
     private void LogResponsePayload(string responseText, int attempt)
     {
         _logger?.Info($"LLM response payload (attempt {attempt}):\n{responseText}");
-    }
-
-    private static bool IsResponseFormatUnsupported(string responseBody)
-    {
-        if (string.IsNullOrWhiteSpace(responseBody))
-        {
-            return false;
-        }
-
-        var text = responseBody.ToLowerInvariant();
-        if (text.Contains("unsupported_parameter") || text.Contains("param\":\"response_format"))
-        {
-            return true;
-        }
-
-        if (TryGetErrorText(responseBody, out var errorText))
-        {
-            text = errorText.ToLowerInvariant();
-        }
-
-        return text.Contains("response_format") &&
-               (text.Contains("unsupported") ||
-                text.Contains("not supported") ||
-                text.Contains("does not support") ||
-                text.Contains("not allowed") ||
-                text.Contains("invalid"));
     }
 
     private static bool IsTemperatureUnsupported(string responseBody)

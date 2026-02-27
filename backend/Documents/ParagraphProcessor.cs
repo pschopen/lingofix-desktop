@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using DocumentFormat.OpenXml.Wordprocessing;
 
@@ -8,8 +7,7 @@ namespace Lingofix.Backend.Documents;
 
 public static class ParagraphProcessor
 {
-    private const string BatchProtocolInstruction =
-        "Correct each item's text and return valid JSON only.";
+    private const string BatchItemSeparator = "---";
 
     public static async Task ProcessAsync(
         IEnumerable<Paragraph> paragraphs,
@@ -122,8 +120,8 @@ public static class ParagraphProcessor
             foreach (var batch in work)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, chunkSize, null, cancellationToken);
-                ApplyBatchResult(result, cache);
+                var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, null, cancellationToken);
+                ApplyBatchResult(result, cache, logger);
                 completedBatches++;
                 processedParagraphs += batch.Items.Count;
                 completedChars += batch.Items.Sum(item => item.Original.Length);
@@ -149,10 +147,10 @@ public static class ParagraphProcessor
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
+                    var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, concurrency, cancellationToken);
                     lock (progressLock)
                     {
-                        ApplyBatchResult(result, cache);
+                        ApplyBatchResult(result, cache, logger);
                         completedBatches++;
                         processedParagraphs += batch.Items.Count;
                         completedChars += batch.Items.Sum(item => item.Original.Length);
@@ -218,6 +216,7 @@ public static class ParagraphProcessor
     private static async Task<BatchResult> ExecuteWorkBatchAsync(
         WorkBatch batch,
         LlmClient llmClient,
+        Settings settings,
         IRunLogger? logger,
         ConcurrentDictionary<string, string>? cache,
         int chunkSize,
@@ -248,11 +247,11 @@ public static class ParagraphProcessor
             return new BatchResult(batch, results);
         }
 
-        var request = BuildBatchRequest(batch.Items);
+        var request = BuildBatchRequest(batch.Items, settings.BatchPrompt);
         string response;
         try
         {
-            response = await llmClient.CorrectStructuredAsync(request, cancellationToken);
+            response = await llmClient.CorrectBatchAsync(request, cancellationToken);
         }
         catch (LlmRateLimitException ex)
         {
@@ -278,16 +277,7 @@ public static class ParagraphProcessor
 
         if (!TryParseBatchResponse(response, batch.Items, out var parsed, out var parseFailure))
         {
-            logger?.Info($"Batching: invalid response ({parseFailure}), attempting repair (paragraphs: {batch.Items.Count}).");
-            var repaired = await TryRepairBatchResponseAsync(batch.Items, response, llmClient, logger, cancellationToken);
-            if (repaired is not null)
-            {
-                concurrency?.Success();
-                logger?.Info($"Batching: repair successful (paragraphs: {batch.Items.Count}).");
-                return new BatchResult(batch, repaired);
-            }
-
-            logger?.Info($"Batching: repair failed, falling back to single requests (paragraphs: {batch.Items.Count}).");
+            logger?.Info($"Batching: invalid response ({parseFailure}), falling back to single requests (paragraphs: {batch.Items.Count}).");
             return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
         }
 
@@ -352,13 +342,19 @@ public static class ParagraphProcessor
         return corrected;
     }
 
-    private static void ApplyBatchResult(BatchResult result, ConcurrentDictionary<string, string>? cache)
+    private static void ApplyBatchResult(BatchResult result, ConcurrentDictionary<string, string>? cache, IRunLogger? logger)
     {
         foreach (var item in result.Batch.Items)
         {
             if (!result.Corrections.TryGetValue(item.Id, out var corrected))
             {
                 continue;
+            }
+
+            corrected = XmlTextSanitizer.StripInvalidXmlChars(corrected, out var removedChars);
+            if (removedChars > 0)
+            {
+                logger?.Warning($"Batching: removed {removedChars} invalid XML character(s) from item {item.Id}.");
             }
 
             if (string.IsNullOrWhiteSpace(corrected))
@@ -375,75 +371,31 @@ public static class ParagraphProcessor
         }
     }
 
-    private static async Task<Dictionary<int, string>?> TryRepairBatchResponseAsync(
-        List<ParagraphItem> items,
-        string invalidResponse,
-        LlmClient llmClient,
-        IRunLogger? logger,
-        CancellationToken cancellationToken)
+    private static string BuildBatchRequest(List<ParagraphItem> items, string batchPrompt)
     {
-        var repairRequest = BuildBatchRepairRequest(items, invalidResponse);
-        string repairedResponse;
-        try
-        {
-            repairedResponse = await llmClient.CorrectStructuredAsync(repairRequest, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            logger?.Info($"Batching: repair request failed ({ex.GetType().Name}).");
-            return null;
-        }
-
-        if (!TryParseBatchResponse(repairedResponse, items, out var repaired, out var repairFailure))
-        {
-            logger?.Info($"Batching: repair response invalid ({repairFailure}).");
-            return null;
-        }
-
-        return repaired;
-    }
-
-    private static string BuildBatchRequest(List<ParagraphItem> items)
-    {
-        var payload = new BatchInputPayload
-        {
-            Items = items.Select(item => new BatchInputItem
-            {
-                Id = item.Id,
-                Text = item.Original
-            }).ToList()
-        };
-
-        var inputJson = JsonSerializer.Serialize(payload, JsonOptions.Default);
         var builder = new StringBuilder();
-        builder.AppendLine(BatchProtocolInstruction);
-        builder.AppendLine("Input JSON:");
-        builder.Append(inputJson);
+        builder.AppendLine(batchPrompt.Trim());
+        builder.AppendLine();
+        AppendBatchItems(builder, items);
         return builder.ToString();
     }
 
-    private static string BuildBatchRepairRequest(List<ParagraphItem> items, string invalidResponse)
+    private static void AppendBatchItems(StringBuilder builder, List<ParagraphItem> items)
     {
-        var payload = new BatchInputPayload
+        for (var i = 0; i < items.Count; i++)
         {
-            Items = items.Select(item => new BatchInputItem
-            {
-                Id = item.Id,
-                Text = item.Original
-            }).ToList()
-        };
+            var item = items[i];
+            builder.Append("ITEM ");
+            builder.AppendLine(item.Id.ToString());
+            builder.AppendLine(item.Original);
 
-        var inputJson = JsonSerializer.Serialize(payload, JsonOptions.Default);
-        var builder = new StringBuilder();
-        builder.AppendLine("Your last answer was not valid for automatic parsing.");
-        builder.AppendLine(BatchProtocolInstruction);
-        builder.AppendLine("Return only valid JSON with this exact shape: {\"items\":[{\"id\":123,\"text\":\"...\"}]}.");
-        builder.AppendLine("Rules: include every input id exactly once, no additional keys, no markdown.");
-        builder.AppendLine("Input JSON:");
-        builder.AppendLine(inputJson);
-        builder.AppendLine("Invalid previous response:");
-        builder.Append(invalidResponse);
-        return builder.ToString();
+            if (i < items.Count - 1)
+            {
+                builder.AppendLine();
+                builder.AppendLine(BatchItemSeparator);
+                builder.AppendLine();
+            }
+        }
     }
 
     private static bool TryParseBatchResponse(
@@ -459,38 +411,21 @@ public static class ParagraphProcessor
             failureCode = "empty_response";
             return false;
         }
-
-        if (!TryExtractJson(response, out var jsonText))
+        var expectedIds = expectedItems.Select(item => item.Id).ToHashSet();
+        var parsedItems = ParseItemBlocks(response);
+        if (parsedItems is null)
         {
-            failureCode = "json_not_found";
+            failureCode = "invalid_item_format";
             return false;
         }
 
-        BatchOutputPayload? payload;
-        try
-        {
-            payload = JsonSerializer.Deserialize<BatchOutputPayload>(jsonText, JsonOptions.Default);
-        }
-        catch (JsonException)
-        {
-            failureCode = "invalid_json";
-            return false;
-        }
-
-        if (payload?.Items is null)
-        {
-            failureCode = "missing_items";
-            return false;
-        }
-
-        if (payload.Items.Count != expectedItems.Count)
+        if (parsedItems.Count != expectedItems.Count)
         {
             failureCode = "count_mismatch";
             return false;
         }
 
-        var expectedIds = expectedItems.Select(item => item.Id).ToHashSet();
-        foreach (var item in payload.Items)
+        foreach (var item in parsedItems)
         {
             if (!expectedIds.Contains(item.Id))
             {
@@ -523,57 +458,96 @@ public static class ParagraphProcessor
         return true;
     }
 
-    private static bool TryExtractJson(string response, out string json)
+    private static List<BatchOutputItem>? ParseItemBlocks(string response)
     {
-        json = string.Empty;
-        var trimmed = response.Trim();
-        if (trimmed.Length == 0)
+        var normalized = RemoveCodeFence(response)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Trim();
+        if (normalized.Length == 0)
         {
-            return false;
+            return null;
         }
 
-        if (trimmed.StartsWith("```", StringComparison.Ordinal))
+        var lines = normalized.Split('\n');
+        var items = new List<BatchOutputItem>();
+        var index = 0;
+
+        while (index < lines.Length)
         {
-            var lines = trimmed.Split('\n').ToList();
-            if (lines.Count >= 2)
+            while (index < lines.Length && string.IsNullOrWhiteSpace(lines[index]))
             {
-                if (lines[0].StartsWith("```", StringComparison.Ordinal))
-                {
-                    lines.RemoveAt(0);
-                }
-
-                if (lines.Count > 0 && lines[^1].Trim().Equals("```", StringComparison.Ordinal))
-                {
-                    lines.RemoveAt(lines.Count - 1);
-                }
-
-                trimmed = string.Join("\n", lines).Trim();
+                index++;
             }
+
+            if (index >= lines.Length)
+            {
+                break;
+            }
+
+            var header = lines[index].Trim();
+            if (!header.StartsWith("ITEM ", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var idText = header.Substring(5).Trim();
+            if (!int.TryParse(idText, out var id))
+            {
+                return null;
+            }
+
+            index++;
+            var textLines = new List<string>();
+            while (index < lines.Length)
+            {
+                var current = lines[index];
+                if (current.Trim().Equals(BatchItemSeparator, StringComparison.Ordinal))
+                {
+                    index++;
+                    break;
+                }
+
+                textLines.Add(current);
+                index++;
+            }
+
+            var text = string.Join("\n", textLines);
+            items.Add(new BatchOutputItem
+            {
+                Id = id,
+                Text = text
+            });
         }
 
-        if (trimmed.StartsWith("{", StringComparison.Ordinal) && trimmed.EndsWith("}", StringComparison.Ordinal))
+        return items;
+    }
+
+    private static string RemoveCodeFence(string text)
+    {
+        var trimmed = text.Trim();
+        if (!trimmed.StartsWith("```", StringComparison.Ordinal))
         {
-            json = trimmed;
-            return true;
+            return text;
         }
 
-        var start = trimmed.IndexOf('{');
-        var end = trimmed.LastIndexOf('}');
-        if (start < 0 || end <= start)
+        var lines = trimmed.Split('\n').ToList();
+        if (lines.Count < 2)
         {
-            return false;
+            return text;
         }
 
-        var candidate = trimmed.Substring(start, end - start + 1).Trim();
-        var prefix = trimmed.Substring(0, start).Trim();
-        var suffix = trimmed.Substring(end + 1).Trim();
-        if (prefix.Length > 0 || suffix.Length > 0)
+        if (lines[0].StartsWith("```", StringComparison.Ordinal))
         {
-            return false;
+            lines.RemoveAt(0);
         }
 
-        json = candidate;
-        return true;
+        if (lines.Count > 0 && lines[^1].Trim().Equals("```", StringComparison.Ordinal))
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
+        return string.Join("\n", lines).Trim();
     }
 
     private static int EstimateBatchLength(int currentLength, int nextParagraphLength)
@@ -642,22 +616,6 @@ public static class ParagraphProcessor
     private sealed record WorkBatch(List<ParagraphItem> Items, bool UseBatch);
 
     private sealed record BatchResult(WorkBatch Batch, Dictionary<int, string> Corrections);
-
-    private sealed class BatchInputPayload
-    {
-        public List<BatchInputItem> Items { get; set; } = [];
-    }
-
-    private sealed class BatchInputItem
-    {
-        public int Id { get; set; }
-        public string Text { get; set; } = string.Empty;
-    }
-
-    private sealed class BatchOutputPayload
-    {
-        public List<BatchOutputItem>? Items { get; set; }
-    }
 
     private sealed class BatchOutputItem
     {

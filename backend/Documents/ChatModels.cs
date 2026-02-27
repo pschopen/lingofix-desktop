@@ -13,32 +13,6 @@ public sealed class ChatCompletionsRequest
     [JsonPropertyName("temperature")]
     public double? Temperature { get; set; }
 
-    [JsonPropertyName("response_format")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public ChatResponseFormat? ResponseFormat { get; set; }
-}
-
-public sealed class ChatResponseFormat
-{
-    [JsonPropertyName("type")]
-    public string Type { get; set; } = "text";
-
-    [JsonPropertyName("json_schema")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public ChatResponseFormatJsonSchema? JsonSchema { get; set; }
-}
-
-public sealed class ChatResponseFormatJsonSchema
-{
-    [JsonPropertyName("name")]
-    public string Name { get; set; } = string.Empty;
-
-    [JsonPropertyName("schema")]
-    public object Schema { get; set; } = new();
-
-    [JsonPropertyName("strict")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public bool? Strict { get; set; }
 }
 
 public sealed class ChatMessage

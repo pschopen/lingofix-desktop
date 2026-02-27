@@ -30,11 +30,6 @@ type CachedRelease = {
   html_url: string;
 };
 
-type BatchJsonSupportStatus = {
-  supported: boolean;
-  details?: string | null;
-};
-
 function parseVersionParts(raw: string): number[] {
   const normalized = raw.trim().replace(/^v/i, '').split('-')[0];
   return normalized
@@ -91,8 +86,6 @@ function App() {
   const [lang] = useState(detectLanguage());
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [showOpenXmlConsent, setShowOpenXmlConsent] = useState(false);
-  const [showBatchingJsonConsent, setShowBatchingJsonConsent] = useState(false);
-  const [batchingJsonDetails, setBatchingJsonDetails] = useState<string | null>(null);
   const [pendingDocxRunSettings, setPendingDocxRunSettings] = useState<Settings | null>(null);
   const {
     text,
@@ -445,29 +438,11 @@ function App() {
   const handleDocxFiles = useCallback((files: { name: string; path: string; size: number; originalPath?: string }[] | null) => {
     setDocxSelection(files);
     setShowOpenXmlConsent(false);
-    setShowBatchingJsonConsent(false);
-    setBatchingJsonDetails(null);
     setPendingDocxRunSettings(null);
   }, [setDocxSelection]);
 
   const runSingleDocxWithPrechecks = useCallback(async (file: DocxFile, settingsForRun: Settings) => {
-    let effectiveSettings = settingsForRun;
-
-    if (effectiveSettings.docx.enable_batching) {
-      const batchSupport = await invoke<BatchJsonSupportStatus>('check_batch_json_support', {
-        settings: effectiveSettings,
-      });
-
-      if (!batchSupport.supported) {
-        effectiveSettings = {
-          ...effectiveSettings,
-          docx: {
-            ...effectiveSettings.docx,
-            enable_batching: false,
-          },
-        };
-      }
-    }
+    const effectiveSettings = settingsForRun;
 
     if (effectiveSettings.docx.compare_mode === 'openxml') {
       const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
@@ -587,29 +562,10 @@ function App() {
     setInfoMessage(t('docx.openxml.accept_existing.cancelled', lang));
   }, [lang]);
 
-  const handleBatchingJsonConsentContinue = useCallback(async () => {
-    const fallbackSettings = pendingDocxRunSettings;
-    setShowBatchingJsonConsent(false);
-    setBatchingJsonDetails(null);
-    if (!fallbackSettings || !docxFile) {
-      return;
-    }
-    await runSingleDocxWithPrechecks(docxFile, fallbackSettings);
-  }, [docxFile, pendingDocxRunSettings, runSingleDocxWithPrechecks]);
-
-  const handleBatchingJsonConsentCancel = useCallback(() => {
-    setShowBatchingJsonConsent(false);
-    setBatchingJsonDetails(null);
-    setPendingDocxRunSettings(null);
-    setInfoMessage(t('docx.batching.json_check.cancelled', lang));
-  }, [lang]);
-
   const handleNew = () => {
     clearAll();
     setDocxSelection(null);
     setShowOpenXmlConsent(false);
-    setShowBatchingJsonConsent(false);
-    setBatchingJsonDetails(null);
     setPendingDocxRunSettings(null);
   };
 
@@ -1150,58 +1106,6 @@ function App() {
                 className="btn-primary !text-base"
               >
                 {t('docx.openxml.accept_existing.continue', lang)}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* === Batching JSON Support Modal === */}
-      {showBatchingJsonConsent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
-          <div className={`card w-full max-w-xl mx-4 animate-scale-in ${
-            isDarkMode ? '!bg-surface-800 !border-surface-700' : ''
-          }`}>
-            <div className="flex items-start gap-4 p-6">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                isDarkMode ? 'bg-amber-900/30' : 'bg-amber-50'
-              }`}>
-                <AlertTriangle className={`w-5 h-5 ${isDarkMode ? 'text-amber-300' : 'text-amber-600'}`} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
-                  {t('docx.batching.json_check.title', lang)}
-                </h3>
-                <p className={`mt-2 text-sm whitespace-pre-wrap leading-relaxed ${
-                  isDarkMode ? 'text-surface-300' : 'text-surface-600'
-                }`}>
-                  {t('docx.batching.json_check.message', lang)}
-                </p>
-                {batchingJsonDetails && (
-                  <p className={`mt-3 text-xs whitespace-pre-wrap leading-relaxed ${
-                    isDarkMode ? 'text-surface-400' : 'text-surface-500'
-                  }`}>
-                    {batchingJsonDetails}
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className={`px-6 py-4 border-t rounded-b-2xl flex justify-end gap-2 ${
-              isDarkMode
-                ? 'bg-surface-900/50 border-surface-700'
-                : 'bg-surface-50 border-surface-100'
-            }`}>
-              <button
-                onClick={handleBatchingJsonConsentCancel}
-                className="btn-secondary !text-base"
-              >
-                {t('docx.batching.json_check.cancel', lang)}
-              </button>
-              <button
-                onClick={handleBatchingJsonConsentContinue}
-                className="btn-primary !text-base"
-              >
-                {t('docx.batching.json_check.continue_without_batching', lang)}
               </button>
             </div>
           </div>

@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::OnceLock;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use anyhow::{anyhow, Context};
 use base64::{engine::general_purpose, Engine as _};
@@ -34,12 +34,17 @@ const DEBUG_LOG_ROTATIONS: usize = 3;
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
 
-const DEFAULT_CUSTOM_PROMPT_EN: &str = "Correct the following text while maintaining the style and tone.";
+const DEFAULT_CUSTOM_PROMPT_EN: &str =
+    "Correct the following text while maintaining the style and tone.";
 const DEFAULT_CUSTOM_PROMPT_DE: &str = "Korrigiere den folgenden Text nach den Duden-Regeln. Korrigiere nur Fehler, alles andere lässt Du unverändert!";
 const DEFAULT_SYSTEM_PROMPT_EN: &str =
     "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
 const DEFAULT_SYSTEM_PROMPT_DE: &str =
     "Wichtig: Antworte nur mit dem korrigierten Text. Keine Erklärungen, keine Notizen, keine zusätzlichen Sätze.";
+const DEFAULT_BATCH_PROMPT_EN: &str =
+    "Batch input uses ITEM blocks. Format per entry: ITEM <id> followed by the text. Entries are separated by a line containing --- . Do not change ITEM ids. Return only ITEM blocks in the same format, with corrected text.";
+const DEFAULT_BATCH_PROMPT_DE: &str =
+    "Die Batch-Eingabe nutzt ITEM-Blöcke. Format pro Eintrag: ITEM <id> gefolgt vom Text. Einträge sind durch eine Zeile mit --- getrennt. ITEM-IDs dürfen nicht geändert werden. Gib nur ITEM-Blöcke im gleichen Format mit korrigiertem Text zurück.";
 const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_EN: &str = "Default";
 const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_DE: &str = "Standard";
 
@@ -64,6 +69,14 @@ fn default_system_prompt(locale: &str) -> String {
         DEFAULT_SYSTEM_PROMPT_DE.to_string()
     } else {
         DEFAULT_SYSTEM_PROMPT_EN.to_string()
+    }
+}
+
+fn default_batch_prompt(locale: &str) -> String {
+    if normalize_locale(locale) == "de" {
+        DEFAULT_BATCH_PROMPT_DE.to_string()
+    } else {
+        DEFAULT_BATCH_PROMPT_EN.to_string()
     }
 }
 
@@ -156,13 +169,6 @@ struct CancellationState {
 struct ModelCapabilityState {
     temperature_support: Mutex<HashMap<String, bool>>,
     reasoning_effort_support: Mutex<HashMap<String, bool>>,
-    structured_json_support: Mutex<HashMap<String, bool>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct BatchJsonSupportStatus {
-    supported: bool,
-    details: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,6 +217,7 @@ struct FrontendSettings {
     custom_prompt_presets: Vec<CustomPromptPreset>,
     active_custom_prompt_preset_id: String,
     system_prompt: String,
+    batch_prompt: String,
     auto_check_updates: bool,
     temperature: f64,
     provider_keys: HashMap<String, Option<String>>,
@@ -250,6 +257,7 @@ impl FrontendSettings {
             custom_prompt_presets: vec![default_preset.clone()],
             active_custom_prompt_preset_id: default_preset.id,
             system_prompt: default_system_prompt(normalized_locale),
+            batch_prompt: default_batch_prompt(normalized_locale),
             auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
             provider_keys: empty_provider_keys(),
@@ -403,7 +411,11 @@ fn encrypt_secret(raw: &str) -> String {
     let mut payload = Vec::with_capacity(nonce.len() + cipher.len());
     payload.extend_from_slice(&nonce);
     payload.extend_from_slice(&cipher);
-    format!("{}{}", ENCRYPTION_PREFIX, general_purpose::STANDARD.encode(payload))
+    format!(
+        "{}{}",
+        ENCRYPTION_PREFIX,
+        general_purpose::STANDARD.encode(payload)
+    )
 }
 
 fn decrypt_secret(raw: &str) -> Option<String> {
@@ -516,8 +528,8 @@ fn normalize_office_input_path(path: &str) -> anyhow::Result<(PathBuf, OfficeInp
         return Err(anyhow!("path is empty"));
     }
 
-    let canonical = std::fs::canonicalize(trimmed)
-        .with_context(|| format!("invalid path: {trimmed}"))?;
+    let canonical =
+        std::fs::canonicalize(trimmed).with_context(|| format!("invalid path: {trimmed}"))?;
     if !canonical.exists() {
         return Err(anyhow!("path does not exist"));
     }
@@ -537,8 +549,8 @@ fn normalize_existing_path(path: &str) -> anyhow::Result<PathBuf> {
         return Err(anyhow!("path is empty"));
     }
 
-    let canonical = std::fs::canonicalize(trimmed)
-        .with_context(|| format!("invalid path: {trimmed}"))?;
+    let canonical =
+        std::fs::canonicalize(trimmed).with_context(|| format!("invalid path: {trimmed}"))?;
     if !canonical.exists() {
         return Err(anyhow!("path does not exist"));
     }
@@ -584,9 +596,7 @@ async fn load_settings(app: AppHandle, locale: Option<String>) -> Result<Fronten
         .await
         .map_err(|e| e.to_string())?;
     let raw_settings: FrontendSettings = serde_json::from_str(&content).map_err(|e| {
-        format!(
-            "Could not parse settings.json: {e}. Open Settings > Advanced and use 'Reset app'."
-        )
+        format!("Could not parse settings.json: {e}. Open Settings > Advanced and use 'Reset app'.")
     })?;
     let has_plain_secrets = raw_settings
         .api_key
@@ -605,7 +615,12 @@ async fn load_settings(app: AppHandle, locale: Option<String>) -> Result<Fronten
     sync_custom_prompt_with_active_preset(&mut settings)?;
     validate_settings(&settings)?;
 
-    if settings.api_key.as_ref().map(|v| v.trim().is_empty()).unwrap_or(true) {
+    if settings
+        .api_key
+        .as_ref()
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
         settings.api_key = settings
             .provider_keys
             .get(&settings.provider)
@@ -626,7 +641,9 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
     canonical_provider(&settings.provider)?;
 
     if settings.api_url.trim().is_empty() {
-        return Err(format!("Invalid settings: api_url is missing. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: api_url is missing. {reset_hint}"
+        ));
     }
 
     if settings.model.trim().is_empty() {
@@ -634,72 +651,109 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
     }
 
     if settings.custom_prompt.trim().is_empty() {
-        return Err(format!("Invalid settings: custom_prompt is missing. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: custom_prompt is missing. {reset_hint}"
+        ));
     }
 
     if settings.system_prompt.trim().is_empty() {
-        return Err(format!("Invalid settings: system_prompt is missing. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: system_prompt is missing. {reset_hint}"
+        ));
+    }
+
+    if settings.batch_prompt.trim().is_empty() {
+        return Err(format!(
+            "Invalid settings: batch_prompt is missing. {reset_hint}"
+        ));
     }
 
     if settings.custom_prompt_presets.is_empty() {
-        return Err(format!("Invalid settings: custom_prompt_presets is empty. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: custom_prompt_presets is empty. {reset_hint}"
+        ));
     }
 
     if settings.active_custom_prompt_preset_id.trim().is_empty() {
-        return Err(format!("Invalid settings: active_custom_prompt_preset_id is missing. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: active_custom_prompt_preset_id is missing. {reset_hint}"
+        ));
     }
 
     let mut seen_ids = HashSet::new();
     let mut active_found = false;
     for preset in &settings.custom_prompt_presets {
         if preset.id.trim().is_empty() {
-            return Err(format!("Invalid settings: custom prompt preset id is missing. {reset_hint}"));
+            return Err(format!(
+                "Invalid settings: custom prompt preset id is missing. {reset_hint}"
+            ));
         }
         if !seen_ids.insert(preset.id.to_ascii_lowercase()) {
-            return Err(format!("Invalid settings: duplicate custom prompt preset ids. {reset_hint}"));
+            return Err(format!(
+                "Invalid settings: duplicate custom prompt preset ids. {reset_hint}"
+            ));
         }
         if preset.name.trim().is_empty() {
-            return Err(format!("Invalid settings: custom prompt preset name is missing. {reset_hint}"));
+            return Err(format!(
+                "Invalid settings: custom prompt preset name is missing. {reset_hint}"
+            ));
         }
         if preset.value.trim().is_empty() {
-            return Err(format!("Invalid settings: custom prompt preset value is missing. {reset_hint}"));
+            return Err(format!(
+                "Invalid settings: custom prompt preset value is missing. {reset_hint}"
+            ));
         }
         if normalize_locale(&preset.locale) != preset.locale.trim().to_ascii_lowercase() {
-            return Err(format!("Invalid settings: custom prompt preset locale is invalid. {reset_hint}"));
+            return Err(format!(
+                "Invalid settings: custom prompt preset locale is invalid. {reset_hint}"
+            ));
         }
-        if preset.id.eq_ignore_ascii_case(&settings.active_custom_prompt_preset_id) {
+        if preset
+            .id
+            .eq_ignore_ascii_case(&settings.active_custom_prompt_preset_id)
+        {
             active_found = true;
         }
     }
 
     if !active_found {
-        return Err(format!("Invalid settings: active custom prompt preset does not exist. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: active custom prompt preset does not exist. {reset_hint}"
+        ));
     }
 
-    if !settings
-        .provider_keys
-        .keys()
-        .all(|key| KNOWN_PROVIDERS.iter().any(|provider| provider == &key.as_str()))
-    {
-        return Err(format!("Invalid settings: provider_keys contains unknown providers. {reset_hint}"));
+    if !settings.provider_keys.keys().all(|key| {
+        KNOWN_PROVIDERS
+            .iter()
+            .any(|provider| provider == &key.as_str())
+    }) {
+        return Err(format!(
+            "Invalid settings: provider_keys contains unknown providers. {reset_hint}"
+        ));
     }
 
     if settings.provider_keys.len() != KNOWN_PROVIDERS.len() {
-        return Err(format!("Invalid settings: provider_keys is incomplete. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: provider_keys is incomplete. {reset_hint}"
+        ));
     }
 
     if !KNOWN_COMPARE_MODES
         .iter()
         .any(|mode| mode.eq_ignore_ascii_case(settings.docx.compare_mode.trim()))
     {
-        return Err(format!("Invalid settings: docx.compare_mode is invalid. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: docx.compare_mode is invalid. {reset_hint}"
+        ));
     }
 
     if !KNOWN_FONT_SIZES
         .iter()
         .any(|size| size.eq_ignore_ascii_case(settings.font_size.trim()))
     {
-        return Err(format!("Invalid settings: font_size is invalid. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: font_size is invalid. {reset_hint}"
+        ));
     }
 
     if settings.temperature.is_nan()
@@ -707,31 +761,41 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         || settings.temperature < MIN_TEMPERATURE
         || settings.temperature > MAX_TEMPERATURE
     {
-        return Err(format!("Invalid settings: temperature is out of range. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: temperature is out of range. {reset_hint}"
+        ));
     }
 
     if settings.docx.batch_max_chars < MIN_BATCH_MAX_CHARS
         || settings.docx.batch_max_chars > MAX_BATCH_MAX_CHARS
     {
-        return Err(format!("Invalid settings: docx.batch_max_chars is out of range. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: docx.batch_max_chars is out of range. {reset_hint}"
+        ));
     }
 
     if settings.docx.chunk_size < MIN_DOCX_CHUNK_SIZE
         || settings.docx.chunk_size > MAX_DOCX_CHUNK_SIZE
     {
-        return Err(format!("Invalid settings: docx.chunk_size is out of range. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: docx.chunk_size is out of range. {reset_hint}"
+        ));
     }
 
     if settings.docx.batch_max_paragraphs < MIN_BATCH_MAX_PARAGRAPHS
         || settings.docx.batch_max_paragraphs > MAX_BATCH_MAX_PARAGRAPHS
     {
-        return Err(format!("Invalid settings: docx.batch_max_paragraphs is out of range. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: docx.batch_max_paragraphs is out of range. {reset_hint}"
+        ));
     }
 
     if settings.docx.max_parallel_requests < MIN_MAX_PARALLEL_REQUESTS
         || settings.docx.max_parallel_requests > MAX_MAX_PARALLEL_REQUESTS
     {
-        return Err(format!("Invalid settings: docx.max_parallel_requests is out of range. {reset_hint}"));
+        return Err(format!(
+            "Invalid settings: docx.max_parallel_requests is out of range. {reset_hint}"
+        ));
     }
 
     Ok(())
@@ -767,8 +831,7 @@ fn empty_provider_keys() -> HashMap<String, Option<String>> {
 
 async fn write_settings_file(path: &Path, settings: FrontendSettings) -> Result<(), String> {
     let encrypted = encrypt_settings_secrets(sanitize_settings_for_disk(settings));
-    let content = serde_json::to_string_pretty(&encrypted)
-        .map_err(|e| e.to_string())?;
+    let content = serde_json::to_string_pretty(&encrypted).map_err(|e| e.to_string())?;
     tokio::fs::write(path, content)
         .await
         .map_err(|e| e.to_string())
@@ -798,7 +861,10 @@ async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(),
 }
 
 #[tauri::command]
-async fn reset_settings(app: AppHandle, locale: Option<String>) -> Result<FrontendSettings, String> {
+async fn reset_settings(
+    app: AppHandle,
+    locale: Option<String>,
+) -> Result<FrontendSettings, String> {
     let path = settings_path(&app).map_err(|e| e.to_string())?;
     let defaults = FrontendSettings::default_for_locale(locale.as_deref().unwrap_or("en"));
     validate_settings(&defaults)?;
@@ -807,11 +873,15 @@ async fn reset_settings(app: AppHandle, locale: Option<String>) -> Result<Fronte
 }
 
 #[tauri::command]
-async fn fetch_models(app: AppHandle, api_url: String, api_key: Option<String>, provider: String) -> Result<Vec<String>, String> {
+async fn fetch_models(
+    app: AppHandle,
+    api_url: String,
+    api_key: Option<String>,
+    provider: String,
+) -> Result<Vec<String>, String> {
     let client = reqwest::Client::new();
     let started_at = std::time::Instant::now();
-    let effective_key = api_key
-        .filter(|v| !v.trim().is_empty());
+    let effective_key = api_key.filter(|v| !v.trim().is_empty());
 
     write_debug_event(
         &app,
@@ -832,7 +902,11 @@ async fn fetch_models(app: AppHandle, api_url: String, api_key: Option<String>, 
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|m| m.get("model").and_then(|s| s.as_str()).map(|s| s.to_string()))
+                    .filter_map(|m| {
+                        m.get("model")
+                            .and_then(|s| s.as_str())
+                            .map(|s| s.to_string())
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -1113,7 +1187,10 @@ async fn stream_openai_like(
     capability_state: &ModelCapabilityState,
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
-    let url = format!("{}/chat/completions", settings.api_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/chat/completions",
+        settings.api_url.trim_end_matches('/')
+    );
     let request_started_at = std::time::Instant::now();
     let mut first_token_ms: Option<u128> = None;
     let prompt = format!(
@@ -1359,136 +1436,6 @@ fn is_temperature_unsupported_error(message: &str) -> bool {
             || m.contains("invalid"))
 }
 
-fn is_response_format_unsupported_error(message: &str) -> bool {
-    let m = message.to_lowercase();
-    if m.contains("unsupported_parameter") || m.contains("param\":\"response_format") {
-        return true;
-    }
-
-    m.contains("response_format")
-        && (m.contains("not support")
-            || m.contains("does not support")
-            || m.contains("unsupported")
-            || m.contains("not allowed")
-            || m.contains("invalid"))
-}
-
-fn build_backend_chat_completions_url(api_base: &str) -> anyhow::Result<String> {
-    let trimmed = api_base.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        return Err(anyhow!("api_url is missing"));
-    }
-
-    if trimmed.ends_with("/chat/completions") {
-        return Ok(trimmed.to_string());
-    }
-
-    if trimmed.ends_with("/v1") {
-        return Ok(format!("{trimmed}/chat/completions"));
-    }
-
-    Ok(format!("{trimmed}/v1/chat/completions"))
-}
-
-#[tauri::command]
-async fn check_batch_json_support(
-    settings: FrontendSettings,
-    capability_state: State<'_, ModelCapabilityState>,
-) -> Result<BatchJsonSupportStatus, String> {
-    if !settings.docx.enable_batching {
-        return Ok(BatchJsonSupportStatus {
-            supported: true,
-            details: None,
-        });
-    }
-
-    let mut effective_settings = settings;
-    effective_settings.api_key = resolve_provider_key(&effective_settings);
-
-    if !effective_settings.provider.eq_ignore_ascii_case("ollama")
-        && effective_settings
-            .api_key
-            .as_ref()
-            .map(|v| v.trim().is_empty())
-            .unwrap_or(true)
-    {
-        return Err("API key missing. Please open settings and provide an API key.".to_string());
-    }
-
-    let cache_key = temperature_capability_key(&effective_settings);
-    {
-        let cache = capability_state.structured_json_support.lock().await;
-        if let Some(supported) = cache.get(&cache_key) {
-            return Ok(BatchJsonSupportStatus {
-                supported: *supported,
-                details: if *supported {
-                    None
-                } else {
-                    Some("response_format json_schema is not supported by this model.".to_string())
-                },
-            });
-        }
-    }
-
-    let url = build_backend_chat_completions_url(&effective_settings.api_url).map_err(|e| e.to_string())?;
-    let client = reqwest::Client::new();
-    let body = json!({
-        "model": effective_settings.model,
-        "messages": [{"role": "user", "content": "Return exactly this JSON object: {\"ok\":true}"}],
-        "stream": false,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "lingofix_batch_probe",
-                "strict": true,
-                "schema": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "ok": { "type": "boolean" }
-                    },
-                    "required": ["ok"]
-                }
-            }
-        }
-    });
-
-    let mut request = client.post(url).json(&body);
-    if let Some(api_key) = effective_settings.api_key.as_ref() {
-        if !api_key.trim().is_empty() {
-            request = request.bearer_auth(api_key);
-        }
-    }
-
-    let response = request.send().await.map_err(|e| e.to_string())?;
-    if response.status().is_success() {
-        let mut cache = capability_state.structured_json_support.lock().await;
-        cache.insert(cache_key, true);
-        return Ok(BatchJsonSupportStatus {
-            supported: true,
-            details: None,
-        });
-    }
-
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    let detail = extract_api_error_message(&body);
-    if status.as_u16() == 400 && is_response_format_unsupported_error(&detail) {
-        let mut cache = capability_state.structured_json_support.lock().await;
-        cache.insert(cache_key, false);
-        return Ok(BatchJsonSupportStatus {
-            supported: false,
-            details: Some(detail),
-        });
-    }
-
-    Err(format!(
-        "JSON support check failed ({}): {}",
-        status,
-        detail
-    ))
-}
-
 fn extract_openai_like_stream_content(value: &Value) -> Option<String> {
     if let Some(event_type) = value.get("type").and_then(Value::as_str) {
         if event_type.contains("output_text") {
@@ -1673,18 +1620,17 @@ async fn correct_docx(
     accept_existing_track_changes: Option<bool>,
     settings: FrontendSettings,
 ) -> Result<(), String> {
-    let (input_path, input_kind) = normalize_office_input_path(&file_path).map_err(|e| e.to_string())?;
+    let (input_path, input_kind) =
+        normalize_office_input_path(&file_path).map_err(|e| e.to_string())?;
     let input_path_str = input_path.to_string_lossy().to_string();
     let original_normalized = match original_path.as_deref() {
-        Some(value) if !value.trim().is_empty() => {
-            Some(
-                normalize_office_input_path(value)
-                    .map_err(|e| e.to_string())?
-                    .0
-                    .to_string_lossy()
-                    .to_string(),
-            )
-        }
+        Some(value) if !value.trim().is_empty() => Some(
+            normalize_office_input_path(value)
+                .map_err(|e| e.to_string())?
+                .0
+                .to_string_lossy()
+                .to_string(),
+        ),
         _ => None,
     };
 
@@ -1791,9 +1737,14 @@ async fn run_docx_processor(
     }
 
     let settings_json = serde_json::to_string(&backend_settings)?;
-    let settings_temp = std::env::temp_dir().join(format!("lingofix-settings-{}.json", uuid_like()));
+    let settings_temp =
+        std::env::temp_dir().join(format!("lingofix-settings-{}.json", uuid_like()));
     tokio::fs::write(&settings_temp, settings_json).await?;
-    let source_kind_arg = if source_kind == OfficeInputKind::Odt { "odt" } else { "docx" };
+    let source_kind_arg = if source_kind == OfficeInputKind::Odt {
+        "odt"
+    } else {
+        "docx"
+    };
     let source_original_path_arg = if source_kind == OfficeInputKind::Odt {
         original_path
             .filter(|value| !value.trim().is_empty())
@@ -2119,8 +2070,12 @@ async fn run_docx_processor(
 }
 
 #[tauri::command]
-async fn inspect_docx_track_changes(app: AppHandle, file_path: String) -> Result<DocxTrackChangesInspection, String> {
-    let (input_path, input_kind) = normalize_office_input_path(&file_path).map_err(|e| e.to_string())?;
+async fn inspect_docx_track_changes(
+    app: AppHandle,
+    file_path: String,
+) -> Result<DocxTrackChangesInspection, String> {
+    let (input_path, input_kind) =
+        normalize_office_input_path(&file_path).map_err(|e| e.to_string())?;
     let mut converted_docx_temp_path: Option<PathBuf> = None;
     let backend_input_path = if input_kind == OfficeInputKind::Odt {
         let converted = convert_office_file_to(
@@ -2152,10 +2107,14 @@ async fn inspect_docx_track_changes(app: AppHandle, file_path: String) -> Result
     Ok(DocxTrackChangesInspection { has_track_changes })
 }
 
-async fn inspect_docx_track_changes_via_backend(app: &AppHandle, file_path: &str) -> anyhow::Result<bool> {
+async fn inspect_docx_track_changes_via_backend(
+    app: &AppHandle,
+    file_path: &str,
+) -> anyhow::Result<bool> {
     const INSPECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
-    let (mut cmd, launch_mode) = if let Some(backend_bin) = resolve_bundled_backend_executable(app) {
+    let (mut cmd, launch_mode) = if let Some(backend_bin) = resolve_bundled_backend_executable(app)
+    {
         let mut command = Command::new(&backend_bin);
         command
             .arg("--input")
@@ -2169,11 +2128,11 @@ async fn inspect_docx_track_changes_via_backend(app: &AppHandle, file_path: &str
             format!("bundled backend executable ({})", backend_bin.display()),
         )
     } else {
-        let project = workspace_root()?.join("backend").join("Lingofix.Backend.csproj");
+        let project = workspace_root()?
+            .join("backend")
+            .join("Lingofix.Backend.csproj");
         let dotnet = resolve_dotnet_path();
-        let dotnet_cmd = dotnet
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("dotnet"));
+        let dotnet_cmd = dotnet.clone().unwrap_or_else(|| PathBuf::from("dotnet"));
         let launch = if let Some(path) = dotnet {
             format!("dotnet run via {}", path.display())
         } else {
@@ -2192,8 +2151,7 @@ async fn inspect_docx_track_changes_via_backend(app: &AppHandle, file_path: &str
         (command, launch)
     };
 
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     #[cfg(target_os = "windows")]
     {
@@ -2354,8 +2312,8 @@ async fn convert_office_file_to(
 ) -> anyhow::Result<PathBuf> {
     const SOFFICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
-    let input_kind = office_input_kind(input_path)
-        .ok_or_else(|| anyhow!("unsupported input file extension"))?;
+    let input_kind =
+        office_input_kind(input_path).ok_or_else(|| anyhow!("unsupported input file extension"))?;
     if input_kind == target_kind {
         return Ok(input_path.to_path_buf());
     }
@@ -2416,7 +2374,8 @@ async fn convert_office_file_to(
         let converted_staged = conversion_dir.join(format!("source.{}", target_kind.extension()));
 
         if output.status.success() && converted_staged.exists() {
-            let converted_output = conversion_dir.join(format!("{stem}.{}", target_kind.extension()));
+            let converted_output =
+                conversion_dir.join(format!("{stem}.{}", target_kind.extension()));
             tokio::fs::copy(&converted_staged, &converted_output).await?;
             let _ = tokio::fs::remove_file(&converted_staged).await;
             return Ok(converted_output);
@@ -2445,7 +2404,12 @@ async fn convert_office_file_to(
 }
 
 async fn convert_docx_to_odt(input_docx: &Path, output_odt: &Path) -> anyhow::Result<()> {
-    let converted = convert_office_file_to(input_docx, OfficeInputKind::Odt, "ODT output conversion failed").await?;
+    let converted = convert_office_file_to(
+        input_docx,
+        OfficeInputKind::Odt,
+        "ODT output conversion failed",
+    )
+    .await?;
     if let Some(parent) = output_odt.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -2515,7 +2479,11 @@ fn check_word_compare_access() -> Result<WordCompareAccessStatus, String> {
         let script = "$ErrorActionPreference='Stop'; $word=$null; try { $word = New-Object -ComObject Word.Application; $word.Visible = $false; $name = $word.Name; if ([string]::IsNullOrWhiteSpace($name)) { Write-Output 'Microsoft Word'; } else { Write-Output $name; } } finally { if ($null -ne $word) { try { $word.Quit() } catch { } [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) } }";
 
         let mut command = std::process::Command::new("powershell.exe");
-        command.arg("-NoProfile").arg("-Sta").arg("-Command").arg(script);
+        command
+            .arg("-NoProfile")
+            .arg("-Sta")
+            .arg("-Command")
+            .arg(script);
 
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -2581,11 +2549,13 @@ fn check_word_compare_access() -> Result<WordCompareAccessStatus, String> {
     #[cfg(target_os = "macos")]
     {
         let workspace = mac_word_compare_workspace_dir().map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(&workspace).map_err(|e| format!("failed to create workspace: {e}"))?;
+        std::fs::create_dir_all(&workspace)
+            .map_err(|e| format!("failed to create workspace: {e}"))?;
 
         let probe = workspace.join("access-probe.txt");
         std::fs::write(&probe, b"ok").map_err(|e| format!("failed to write probe file: {e}"))?;
-        let read_back = std::fs::read_to_string(&probe).map_err(|e| format!("failed to read probe file: {e}"))?;
+        let read_back = std::fs::read_to_string(&probe)
+            .map_err(|e| format!("failed to read probe file: {e}"))?;
         let _ = std::fs::remove_file(&probe);
 
         if read_back.trim() != "ok" {
@@ -2617,17 +2587,18 @@ fn check_word_compare_access() -> Result<WordCompareAccessStatus, String> {
             details = format!("osascript exited with status {}", output.status);
         }
 
-        let permission_hint = if details.contains("-1743") || details.to_lowercase().contains("not authorized") {
-            format!(
-                "Allow Lingofix to control Microsoft Word in {}.",
-                AUTOMATION_SETTINGS_PATH
-            )
-        } else {
-            format!(
-                "Check Microsoft Word installation and grant access in {}.",
-                AUTOMATION_SETTINGS_PATH
-            )
-        };
+        let permission_hint =
+            if details.contains("-1743") || details.to_lowercase().contains("not authorized") {
+                format!(
+                    "Allow Lingofix to control Microsoft Word in {}.",
+                    AUTOMATION_SETTINGS_PATH
+                )
+            } else {
+                format!(
+                    "Check Microsoft Word installation and grant access in {}.",
+                    AUTOMATION_SETTINGS_PATH
+                )
+            };
 
         Ok(WordCompareAccessStatus {
             ok: false,
@@ -2764,7 +2735,8 @@ fn open_temp_lingofix_folder() -> Result<(), String> {
 fn open_settings_json(app: AppHandle) -> Result<(), String> {
     let settings = settings_path(&app).map_err(|e| e.to_string())?;
     if !settings.exists() {
-        let defaults = encrypt_settings_secrets(sanitize_settings_for_disk(FrontendSettings::default()));
+        let defaults =
+            encrypt_settings_secrets(sanitize_settings_for_disk(FrontendSettings::default()));
         let content = serde_json::to_string_pretty(&defaults).map_err(|e| e.to_string())?;
         std::fs::write(&settings, content).map_err(|e| e.to_string())?;
     }
@@ -2858,7 +2830,9 @@ async fn save_temp_docx(name: String, base64: String) -> Result<String, String> 
 }
 
 fn decode_base64(value: &str) -> anyhow::Result<Vec<u8>> {
-    general_purpose::STANDARD.decode(value).context("invalid base64")
+    general_purpose::STANDARD
+        .decode(value)
+        .context("invalid base64")
 }
 
 fn remove_markdown(text: &str) -> String {
@@ -2873,26 +2847,63 @@ fn remove_markdown(text: &str) -> String {
     static RE_MULTI_NL: OnceLock<Regex> = OnceLock::new();
 
     let mut result = text.to_string();
-    result = RE_BOLD.get_or_init(|| Regex::new(r"\*\*(.+?)\*\*").expect("regex")).replace_all(&result, "$1").to_string();
-    result = RE_UBOLD.get_or_init(|| Regex::new(r"__(.+?)__").expect("regex")).replace_all(&result, "$1").to_string();
-    result = RE_ISTAR.get_or_init(|| Regex::new(r"\*(.+?)\*").expect("regex")).replace_all(&result, "$1").to_string();
-    result = RE_IUNDER.get_or_init(|| Regex::new(r"_(.+?)_").expect("regex")).replace_all(&result, "$1").to_string();
+    result = RE_BOLD
+        .get_or_init(|| Regex::new(r"\*\*(.+?)\*\*").expect("regex"))
+        .replace_all(&result, "$1")
+        .to_string();
+    result = RE_UBOLD
+        .get_or_init(|| Regex::new(r"__(.+?)__").expect("regex"))
+        .replace_all(&result, "$1")
+        .to_string();
+    result = RE_ISTAR
+        .get_or_init(|| Regex::new(r"\*(.+?)\*").expect("regex"))
+        .replace_all(&result, "$1")
+        .to_string();
+    result = RE_IUNDER
+        .get_or_init(|| Regex::new(r"_(.+?)_").expect("regex"))
+        .replace_all(&result, "$1")
+        .to_string();
     result = result.replace("```", "").replace('`', "");
-    result = RE_HEADERS.get_or_init(|| Regex::new(r"(?m)^#{1,3} ").expect("regex")).replace_all(&result, "").to_string();
-    result = RE_BULLETS.get_or_init(|| Regex::new(r"(?m)^[-*] ").expect("regex")).replace_all(&result, "").to_string();
-    result = RE_LINKS.get_or_init(|| Regex::new(r"\[([^\]]+)\]\([^)]+\)").expect("regex")).replace_all(&result, "$1").to_string();
-    result = RE_IMAGES.get_or_init(|| Regex::new(r"!\[([^\]]*)\]\([^)]+\)").expect("regex")).replace_all(&result, "").to_string();
-    result = result.lines().map(|s| s.trim()).collect::<Vec<_>>().join("\n");
-    result = RE_MULTI_NL.get_or_init(|| Regex::new(r"\n{3,}").expect("regex")).replace_all(&result, "\n\n").to_string();
+    result = RE_HEADERS
+        .get_or_init(|| Regex::new(r"(?m)^#{1,3} ").expect("regex"))
+        .replace_all(&result, "")
+        .to_string();
+    result = RE_BULLETS
+        .get_or_init(|| Regex::new(r"(?m)^[-*] ").expect("regex"))
+        .replace_all(&result, "")
+        .to_string();
+    result = RE_LINKS
+        .get_or_init(|| Regex::new(r"\[([^\]]+)\]\([^)]+\)").expect("regex"))
+        .replace_all(&result, "$1")
+        .to_string();
+    result = RE_IMAGES
+        .get_or_init(|| Regex::new(r"!\[([^\]]*)\]\([^)]+\)").expect("regex"))
+        .replace_all(&result, "")
+        .to_string();
+    result = result
+        .lines()
+        .map(|s| s.trim())
+        .collect::<Vec<_>>()
+        .join("\n");
+    result = RE_MULTI_NL
+        .get_or_init(|| Regex::new(r"\n{3,}").expect("regex"))
+        .replace_all(&result, "\n\n")
+        .to_string();
     result.trim().to_string()
 }
 
-fn build_output_path(input: &Path, suffix: &str, extension: OfficeInputKind) -> anyhow::Result<PathBuf> {
+fn build_output_path(
+    input: &Path,
+    suffix: &str,
+    extension: OfficeInputKind,
+) -> anyhow::Result<PathBuf> {
     let stem = input
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| anyhow!("invalid input filename"))?;
-    let parent = input.parent().ok_or_else(|| anyhow!("invalid input parent"))?;
+    let parent = input
+        .parent()
+        .ok_or_else(|| anyhow!("invalid input parent"))?;
     Ok(parent.join(format!("{stem}{suffix}.{}", extension.extension())))
 }
 
@@ -2965,7 +2976,6 @@ fn main() {
             cancel_docx,
             check_word_compare_access,
             check_libreoffice_compare_access,
-            check_batch_json_support,
             inspect_docx_track_changes,
             open_folder,
             open_temp_lingofix_folder,

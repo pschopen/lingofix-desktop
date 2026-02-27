@@ -23,6 +23,7 @@ public sealed class Settings
     public string ApiKey { get; set; } = string.Empty;
     public string Prompt { get; set; } = string.Empty;
     public string SystemPrompt { get; set; } = string.Empty;
+    public string BatchPrompt { get; set; } = string.Empty;
     public string CompareMode { get; set; } = string.Empty;
     public double Temperature { get; set; }
     public int ChunkSize { get; set; }
@@ -87,6 +88,7 @@ public sealed class Settings
             Model = RequireString(payload.Model, "model"),
             Prompt = RequireString(payload.CustomPrompt, "custom_prompt"),
             SystemPrompt = RequireString(payload.SystemPrompt, "system_prompt"),
+            BatchPrompt = RequireString(payload.BatchPrompt, "batch_prompt"),
             Temperature = payload.Temperature,
             CompareMode = RequireString(docx.CompareMode, "docx.compare_mode"),
             ChunkSize = docx.ChunkSize ?? DefaultChunkSize,
@@ -147,6 +149,9 @@ internal sealed class FrontendSettingsPayload
 
     [JsonPropertyName("system_prompt")]
     public string? SystemPrompt { get; set; }
+
+    [JsonPropertyName("batch_prompt")]
+    public string? BatchPrompt { get; set; }
 
     [JsonPropertyName("temperature")]
     public double Temperature { get; set; }
