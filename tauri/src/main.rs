@@ -2904,7 +2904,21 @@ fn build_output_path(
     let parent = input
         .parent()
         .ok_or_else(|| anyhow!("invalid input parent"))?;
-    Ok(parent.join(format!("{stem}{suffix}.{}", extension.extension())))
+    let extension_text = extension.extension();
+    let base_name = format!("{stem}{suffix}");
+    let candidate = parent.join(format!("{base_name}.{extension_text}"));
+    if !candidate.exists() {
+        return Ok(candidate);
+    }
+
+    let mut index: u32 = 2;
+    loop {
+        let numbered = parent.join(format!("{base_name}-{index}.{extension_text}"));
+        if !numbered.exists() {
+            return Ok(numbered);
+        }
+        index += 1;
+    }
 }
 
 fn workspace_root() -> anyhow::Result<PathBuf> {
