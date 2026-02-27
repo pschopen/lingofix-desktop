@@ -192,7 +192,32 @@ public static class LingofixRunner
                     var partProgressStart = currentProgress;
                     var partWeight = item.Weight;
                     var resumeBatches = completedBatchesByLabel.GetValueOrDefault(item.Label, 0);
-                    await ParagraphProcessor.ProcessAsync(item.Paragraphs, llmClient, settings, logger, (completedWork, totalWork, batchMsg) =>
+                    var partSettings = settings;
+                    if (settings.EnableBatching)
+                    {
+                        partSettings = new Settings
+                        {
+                            Provider = settings.Provider,
+                            ApiBase = settings.ApiBase,
+                            Model = settings.Model,
+                            ApiKey = settings.ApiKey,
+                            Prompt = settings.Prompt,
+                            SystemPrompt = settings.SystemPrompt,
+                            BatchPrompt = settings.BatchPrompt,
+                            CompareMode = settings.CompareMode,
+                            Temperature = settings.Temperature,
+                            ChunkSize = settings.ChunkSize,
+                            EnableBatching = settings.BatchingParts.Contains(item.Kind),
+                            BatchingParts = settings.BatchingParts,
+                            BatchMaxChars = settings.BatchMaxChars,
+                            BatchMaxParagraphs = settings.BatchMaxParagraphs,
+                            EnableCache = settings.EnableCache,
+                            EnableParallelization = settings.EnableParallelization,
+                            MaxParallelRequests = settings.MaxParallelRequests
+                        };
+                    }
+
+                    await ParagraphProcessor.ProcessAsync(item.Paragraphs, llmClient, partSettings, logger, (completedWork, totalWork, batchMsg) =>
                     {
                         if (totalWork <= 0)
                         {

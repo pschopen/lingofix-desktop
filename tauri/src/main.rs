@@ -121,9 +121,24 @@ const MIN_BATCH_MAX_PARAGRAPHS: i32 = 1;
 const MAX_BATCH_MAX_PARAGRAPHS: i32 = 100;
 const MIN_MAX_PARALLEL_REQUESTS: i32 = 1;
 const MAX_MAX_PARALLEL_REQUESTS: i32 = 16;
+const KNOWN_BATCHING_PARTS: [&str; 6] = [
+    "main",
+    "footnotes",
+    "endnotes",
+    "headers",
+    "footers",
+    "glossary",
+];
 
 fn default_docx_chunk_size() -> i32 {
     3_000
+}
+
+fn default_batching_parts() -> Vec<String> {
+    KNOWN_BATCHING_PARTS
+        .iter()
+        .map(|part| (*part).to_string())
+        .collect()
 }
 
 fn is_known_provider(provider: &str) -> bool {
@@ -177,6 +192,8 @@ struct DocxSettings {
     #[serde(default = "default_docx_chunk_size")]
     chunk_size: i32,
     enable_batching: bool,
+    #[serde(default = "default_batching_parts")]
+    batching_parts: Vec<String>,
     batch_max_chars: i32,
     batch_max_paragraphs: i32,
     enable_cache: bool,
@@ -190,6 +207,7 @@ impl Default for DocxSettings {
             compare_mode: "openxml".into(),
             chunk_size: default_docx_chunk_size(),
             enable_batching: false,
+            batching_parts: default_batching_parts(),
             batch_max_chars: 3_000,
             batch_max_paragraphs: 15,
             enable_cache: true,
@@ -787,6 +805,23 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
     {
         return Err(format!(
             "Invalid settings: docx.batch_max_paragraphs is out of range. {reset_hint}"
+        ));
+    }
+
+    if settings.docx.batching_parts.is_empty() {
+        return Err(format!(
+            "Invalid settings: docx.batching_parts is empty. {reset_hint}"
+        ));
+    }
+
+    if !settings
+        .docx
+        .batching_parts
+        .iter()
+        .all(|part| KNOWN_BATCHING_PARTS.iter().any(|known| known.eq_ignore_ascii_case(part.trim())))
+    {
+        return Err(format!(
+            "Invalid settings: docx.batching_parts contains unknown values. {reset_hint}"
         ));
     }
 

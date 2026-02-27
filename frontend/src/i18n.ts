@@ -471,6 +471,34 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Max. Absätze pro Batch',
     en: 'Max paragraphs per batch',
   },
+  'settings.docx.batching_parts': {
+    de: 'Batching anwenden auf',
+    en: 'Apply batching to',
+  },
+  'settings.docx.batching_parts.main': {
+    de: 'Haupttext',
+    en: 'Main text',
+  },
+  'settings.docx.batching_parts.footnotes': {
+    de: 'Fußnoten',
+    en: 'Footnotes',
+  },
+  'settings.docx.batching_parts.endnotes': {
+    de: 'Endnoten',
+    en: 'Endnotes',
+  },
+  'settings.docx.batching_parts.headers': {
+    de: 'Kopfzeilen',
+    en: 'Headers',
+  },
+  'settings.docx.batching_parts.footers': {
+    de: 'Fußzeilen',
+    en: 'Footers',
+  },
+  'settings.docx.batching_parts.glossary': {
+    de: 'Glossar',
+    en: 'Glossary',
+  },
   'settings.docx.cache': {
     de: 'Cache',
     en: 'Cache',

@@ -28,6 +28,15 @@ public sealed class Settings
     public double Temperature { get; set; }
     public int ChunkSize { get; set; }
     public bool EnableBatching { get; set; }
+    internal HashSet<ProcessorWorkItemKind> BatchingParts { get; set; } =
+    [
+        ProcessorWorkItemKind.Main,
+        ProcessorWorkItemKind.Footnotes,
+        ProcessorWorkItemKind.Endnotes,
+        ProcessorWorkItemKind.Headers,
+        ProcessorWorkItemKind.Footers,
+        ProcessorWorkItemKind.Glossary
+    ];
     public int BatchMaxChars { get; set; }
     public int BatchMaxParagraphs { get; set; }
     public bool EnableCache { get; set; }
@@ -79,6 +88,7 @@ public sealed class Settings
         }) ?? throw InvalidSettings("settings payload could not be parsed");
 
         var docx = payload.Docx ?? throw InvalidSettings("docx settings are missing");
+        var batchingParts = ParseBatchingParts(docx.BatchingParts);
 
         var normalized = new Settings
         {
@@ -93,6 +103,7 @@ public sealed class Settings
             CompareMode = RequireString(docx.CompareMode, "docx.compare_mode"),
             ChunkSize = docx.ChunkSize ?? DefaultChunkSize,
             EnableBatching = docx.EnableBatching,
+            BatchingParts = batchingParts,
             BatchMaxChars = docx.BatchMaxChars,
             BatchMaxParagraphs = docx.BatchMaxParagraphs,
             EnableCache = docx.EnableCache,
@@ -127,6 +138,49 @@ public sealed class Settings
     {
         return new InvalidOperationException(
             $"Invalid settings: {reason}. Open Settings > Advanced and use 'Reset app'.");
+    }
+
+    private static HashSet<ProcessorWorkItemKind> ParseBatchingParts(List<string>? rawParts)
+    {
+        if (rawParts is null || rawParts.Count == 0)
+        {
+            throw InvalidSettings("missing or empty field 'docx.batching_parts'");
+        }
+
+        var result = new HashSet<ProcessorWorkItemKind>();
+        foreach (var raw in rawParts)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                throw InvalidSettings("docx.batching_parts contains empty values");
+            }
+
+            switch (raw.Trim().ToLowerInvariant())
+            {
+                case "main":
+                    result.Add(ProcessorWorkItemKind.Main);
+                    break;
+                case "footnotes":
+                    result.Add(ProcessorWorkItemKind.Footnotes);
+                    break;
+                case "endnotes":
+                    result.Add(ProcessorWorkItemKind.Endnotes);
+                    break;
+                case "headers":
+                    result.Add(ProcessorWorkItemKind.Headers);
+                    break;
+                case "footers":
+                    result.Add(ProcessorWorkItemKind.Footers);
+                    break;
+                case "glossary":
+                    result.Add(ProcessorWorkItemKind.Glossary);
+                    break;
+                default:
+                    throw InvalidSettings($"docx.batching_parts contains unknown value '{raw}'");
+            }
+        }
+
+        return result;
     }
 }
 
@@ -176,6 +230,9 @@ internal sealed class FrontendDocxSettingsPayload
 
     [JsonPropertyName("batch_max_paragraphs")]
     public int BatchMaxParagraphs { get; set; }
+
+    [JsonPropertyName("batching_parts")]
+    public List<string>? BatchingParts { get; set; }
 
     [JsonPropertyName("enable_cache")]
     public bool EnableCache { get; set; }
