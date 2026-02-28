@@ -247,11 +247,11 @@ public static class ParagraphProcessor
             return new BatchResult(batch, results);
         }
 
-        var request = BuildBatchRequest(batch.Items, settings.BatchPrompt);
+        var request = BuildBatchRequest(batch.Items);
         string response;
         try
         {
-            response = await llmClient.CorrectBatchAsync(request, cancellationToken);
+            response = await llmClient.CorrectBatchAsync(request, settings.BatchPrompt, cancellationToken);
         }
         catch (LlmRateLimitException ex)
         {
@@ -371,11 +371,9 @@ public static class ParagraphProcessor
         }
     }
 
-    private static string BuildBatchRequest(List<ParagraphItem> items, string batchPrompt)
+    private static string BuildBatchRequest(List<ParagraphItem> items)
     {
         var builder = new StringBuilder();
-        builder.AppendLine(batchPrompt.Trim());
-        builder.AppendLine();
         AppendBatchItems(builder, items);
         return builder.ToString();
     }

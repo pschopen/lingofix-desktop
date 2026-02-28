@@ -41,12 +41,13 @@ public sealed class LlmClient
 
     public async Task<string> CorrectAsync(string input, CancellationToken cancellationToken = default)
     {
+        var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, input);
         var baseRequest = new ChatCompletionsRequest
         {
             Model = _model,
             Messages =
             [
-                new ChatMessage("user", BuildUserPrompt(_prompt, _systemPromptOverride, input))
+                new ChatMessage("user", prompt)
             ],
             Temperature = _temperature
         };
@@ -57,14 +58,15 @@ public sealed class LlmClient
             cancellationToken: cancellationToken);
     }
 
-    public async Task<string> CorrectBatchAsync(string input, CancellationToken cancellationToken = default)
+    public async Task<string> CorrectBatchAsync(string input, string batchPrompt, CancellationToken cancellationToken = default)
     {
+        var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, input, batchPrompt);
         var baseRequest = new ChatCompletionsRequest
         {
             Model = _model,
             Messages =
             [
-                new ChatMessage("user", BuildUserPrompt(_prompt, _systemPromptOverride, input))
+                new ChatMessage("user", prompt)
             ],
             Temperature = _temperature
         };
@@ -77,12 +79,32 @@ public sealed class LlmClient
             allowTemperatureFallback: false);
     }
 
+    public async Task<string> CorrectMarkdownAsync(string markdown, CancellationToken cancellationToken = default)
+    {
+        var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, markdown);
+        var baseRequest = new ChatCompletionsRequest
+        {
+            Model = _model,
+            Messages =
+            [
+                new ChatMessage("user", prompt)
+            ],
+            Temperature = _temperature
+        };
+
+        return await SendWithTemperatureFallbackAsync(
+            baseRequest,
+            sanitizeOutput: false,
+            cancellationToken: cancellationToken,
+            trimOutputWhenNotSanitized: false);
+    }
+
     public void ApplyAuth(string apiKey)
     {
         _apiKey = apiKey?.Trim() ?? string.Empty;
     }
 
-    private static string BuildUserPrompt(string customPrompt, string systemPrompt, string input)
+    private static string BuildSimplePrompt(string customPrompt, string systemPrompt, string text, string? extraPrompt = null)
     {
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(customPrompt))
@@ -93,7 +115,13 @@ public sealed class LlmClient
         {
             parts.Add(systemPrompt.Trim());
         }
-        parts.Add(input);
+
+        if (!string.IsNullOrWhiteSpace(extraPrompt))
+        {
+            parts.Add(extraPrompt.Trim());
+        }
+
+        parts.Add($"Text:\n{text}");
         return string.Join("\n\n", parts);
     }
 
@@ -220,7 +248,8 @@ public sealed class LlmClient
         bool sanitizeOutput,
         CancellationToken cancellationToken = default,
         int maxAttempts = 3,
-        bool allowTemperatureFallback = true)
+        bool allowTemperatureFallback = true,
+        bool trimOutputWhenNotSanitized = true)
     {
         maxAttempts = Math.Max(1, maxAttempts);
         var includeTemperature = request.Temperature.HasValue && Volatile.Read(ref _temperatureSupport) != TemperatureSupportUnsupported;
@@ -257,7 +286,9 @@ public sealed class LlmClient
                 var result = ExtractCompletionText(responseBody);
                 LogResponsePayload(result, attempt);
 
-                var finalResult = sanitizeOutput ? SanitizeCorrection(result) : result.Trim();
+                var finalResult = sanitizeOutput
+                    ? SanitizeCorrection(result)
+                    : (trimOutputWhenNotSanitized ? result.Trim() : result);
                 if (!string.Equals(result, finalResult, StringComparison.Ordinal))
                 {
                     _logger?.Info($"LLM response after post-processing (attempt {attempt}):\n{finalResult}");
@@ -308,16 +339,15 @@ public sealed class LlmClient
         }
 
         var builder = new StringBuilder();
-        builder.Append($"LLM request payload (attempt {attempt}):");
+        builder.Append($"LLM request payload (attempt {attempt}):\n");
         for (var i = 0; i < request.Messages.Count; i++)
         {
             var message = request.Messages[i];
-            builder.Append("\n--- message ");
-            builder.Append(i + 1);
-            builder.Append(" (role=");
-            builder.Append(message.Role);
-            builder.Append(") ---\n");
             builder.Append(message.Content);
+            if (i < request.Messages.Count - 1)
+            {
+                builder.Append("\n\n");
+            }
         }
 
         _logger.Info(builder.ToString());

@@ -23,11 +23,14 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
 
 export const DOCX_COMPARE_MODES = ['openxml', 'word-native', 'libreoffice-uno'] as const;
 export type DocxCompareMode = (typeof DOCX_COMPARE_MODES)[number];
+export const DOCX_PROCESSING_MODES = ['openxml', 'markdown'] as const;
+export type DocxProcessingMode = (typeof DOCX_PROCESSING_MODES)[number];
 export const DOCX_BATCHING_PARTS = ['main', 'footnotes', 'endnotes', 'headers', 'footers', 'glossary'] as const;
 export type DocxBatchingPart = (typeof DOCX_BATCHING_PARTS)[number];
 
 export interface DocxSettings {
   compare_mode: DocxCompareMode;
+  processing_mode: DocxProcessingMode;
   chunk_size: number;
   enable_batching: boolean;
   batching_parts: DocxBatchingPart[];

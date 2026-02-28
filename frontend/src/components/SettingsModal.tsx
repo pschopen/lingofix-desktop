@@ -14,6 +14,7 @@ import {
   PROVIDER_LABELS,
   SETTINGS_LIMITS,
   DOCX_COMPARE_MODES,
+  DOCX_PROCESSING_MODES,
   DOCX_BATCHING_PARTS,
   DocxBatchingPart,
 } from '../types';
@@ -805,6 +806,23 @@ export function SettingsModal({
               </>
             ) : activeTab === 'docx' ? (
               <>
+                <FieldGroup label={t('settings.docx.processing_mode', lang)} isDarkMode={isDarkMode}>
+                  <SelectField
+                    value={formData.docx.processing_mode}
+                    onChange={(nextValue) => handleDocxSettingChange('processing_mode', nextValue as DocxSettings['processing_mode'])}
+                    menuBoundaryRef={modalPanelRef}
+                    isDarkMode={isDarkMode}
+                  >
+                    {DOCX_PROCESSING_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {mode === 'openxml'
+                          ? t('settings.docx.processing_mode.openxml', lang)
+                          : t('settings.docx.processing_mode.markdown', lang)}
+                      </option>
+                    ))}
+                  </SelectField>
+                </FieldGroup>
+
                 {/* Compare Mode */}
                 <FieldGroup label={t('settings.docx.compare_mode', lang)} isDarkMode={isDarkMode}>
                   <SelectField
@@ -825,10 +843,18 @@ export function SettingsModal({
                   </SelectField>
                 </FieldGroup>
 
-                {formData.docx.compare_mode === 'openxml' && (
+                {formData.docx.compare_mode === 'openxml' && formData.docx.processing_mode === 'openxml' && (
                   <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-amber-800/60 bg-amber-950/30' : 'border-amber-200 bg-amber-50'}`}>
                     <p className={`text-sm ${isDarkMode ? 'text-amber-200' : 'text-amber-800'}`}>
                       {t('settings.docx.openxml.warning', lang)}
+                    </p>
+                  </div>
+                )}
+
+                {formData.docx.processing_mode === 'markdown' && formData.docx.compare_mode === 'openxml' && (
+                  <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-amber-800/60 bg-amber-950/30' : 'border-amber-200 bg-amber-50'}`}>
+                    <p className={`text-sm ${isDarkMode ? 'text-amber-200' : 'text-amber-800'}`}>
+                      {t('settings.docx.markdown_compare_mode.warning', lang)}
                     </p>
                   </div>
                 )}

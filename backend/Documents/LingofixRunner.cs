@@ -41,8 +41,10 @@ public static class LingofixRunner
 
         var settings = options.Settings ?? throw new ArgumentNullException(nameof(options.Settings));
         var compareMode = options.CompareModeOverride ?? Settings.NormalizeCompareMode(settings.CompareMode);
+        var processingMode = Settings.NormalizeProcessingMode(settings.ProcessingMode);
         var isWordCompare = compareMode == CompareModeKind.Word;
         var isLibreOfficeCompare = compareMode == CompareModeKind.LibreOffice;
+        var useMarkdownProcessing = processingMode == DocxProcessingModeKind.Markdown;
         var isSourceOdt = options.SourceKind == SourceInputKind.Odt;
         var useNativeOdtLibreOfficeCompare = isSourceOdt && isLibreOfficeCompare;
         var isExternalCompare = isWordCompare || isLibreOfficeCompare;
@@ -52,6 +54,11 @@ public static class LingofixRunner
         if (string.IsNullOrWhiteSpace(apiKey) && !isOllama)
         {
             throw new InvalidOperationException("API key missing. Please update settings.json or set the ENV variable.");
+        }
+
+        if (useMarkdownProcessing && !isExternalCompare)
+        {
+            throw new InvalidOperationException("Markdown processing mode requires compare mode 'word-native' or 'libreoffice-uno'.");
         }
 
         var trackOutputPath = PathUtils.BuildOutputPath(normalizedInputPath, "_lingofix");
@@ -96,29 +103,37 @@ public static class LingofixRunner
         var keepTempArtifacts = ShouldKeepTempArtifacts();
         try
         {
-            if (compareMode == CompareModeKind.OpenXml)
+            if (useMarkdownProcessing)
             {
-                var hasTrackedChanges = TrackChangesGenerator.ContainsTrackedChanges(tempOriginalPath);
-                if (hasTrackedChanges)
-                {
-                    if (!canAcceptExistingTrackChanges)
-                    {
-                        throw new InvalidOperationException(
-                            "OpenXML requires accepting all existing track changes first. Start again and confirm that Lingofix may automatically accept existing changes before correction.");
-                    }
-
-                    logger.Warning("OpenXML detected existing track changes. Lingofix is accepting all existing changes before correction.");
-                    TrackChangesGenerator.AcceptAllTrackedChanges(tempOriginalPath);
-                    TrackChangesGenerator.AcceptAllTrackedChanges(correctedPath);
-                    logger.Info("Existing track changes were accepted automatically before correction.");
-                }
+                logger.Progress(5, "Converting DOCX to Markdown...");
+                await ProcessMarkdownPipelineAsync(tempOriginalPath, correctedPath, llmClient, settings, logger, cancellationToken);
+                logger.Progress(80, "Markdown pipeline completed.");
             }
-
-            DocxCoverageReport coverage;
-
-            using (var doc = WordprocessingDocument.Open(correctedPath, true))
+            else
             {
-                coverage = DocxPartScanner.Scan(doc);
+                if (compareMode == CompareModeKind.OpenXml)
+                {
+                    var hasTrackedChanges = TrackChangesGenerator.ContainsTrackedChanges(tempOriginalPath);
+                    if (hasTrackedChanges)
+                    {
+                        if (!canAcceptExistingTrackChanges)
+                        {
+                            throw new InvalidOperationException(
+                                "OpenXML requires accepting all existing track changes first. Start again and confirm that Lingofix may automatically accept existing changes before correction.");
+                        }
+
+                        logger.Warning("OpenXML detected existing track changes. Lingofix is accepting all existing changes before correction.");
+                        TrackChangesGenerator.AcceptAllTrackedChanges(tempOriginalPath);
+                        TrackChangesGenerator.AcceptAllTrackedChanges(correctedPath);
+                        logger.Info("Existing track changes were accepted automatically before correction.");
+                    }
+                }
+
+                DocxCoverageReport coverage;
+
+                using (var doc = WordprocessingDocument.Open(correctedPath, true))
+                {
+                    coverage = DocxPartScanner.Scan(doc);
 
                 foreach (var item in coverage.WorkItems)
                 {
@@ -244,10 +259,11 @@ public static class LingofixRunner
                     logger.Info($"[{partNumber}/{coverage.WorkItems.Count}] {item.Label} completed");
                 }
 
-                logger.Progress(80, "Processing embedded chart/smartart text...");
-                await EmbeddedTextProcessor.ProcessAsync(doc, llmClient, logger, cancellationToken);
+                    logger.Progress(80, "Processing embedded chart/smartart text...");
+                    await EmbeddedTextProcessor.ProcessAsync(doc, llmClient, logger, cancellationToken);
 
-                doc.Save();
+                    doc.Save();
+                }
             }
 
             logger.Progress(85, "Generating comparison...");
@@ -255,7 +271,7 @@ public static class LingofixRunner
             {
                 if (compareMode == CompareModeKind.Word)
                 {
-                    TrackChangesGenerator.GenerateWithWord(tempOriginalPath, correctedPath, tempOutputPath, "Lingofix");
+                    TrackChangesGenerator.GenerateWithWord(tempOriginalPath, correctedPath, tempOutputPath, "Lingofix", strictTextChangesOnly: useMarkdownProcessing);
                     trackCreated = true;
                     logger.Info("Track changes generated with Word");
                 }
@@ -276,12 +292,12 @@ public static class LingofixRunner
 
                         var correctedOdtPath = PathUtils.BuildWordCompareFilePath(normalizedInputPath, "corrected.odt");
                         TrackChangesGenerator.ConvertWithLibreOffice(correctedPath, correctedOdtPath, ".odt");
-                        TrackChangesGenerator.GenerateWithLibreOffice(sourceOriginalPath, correctedOdtPath, tempOutputPath, "Lingofix");
+                        TrackChangesGenerator.GenerateWithLibreOffice(sourceOriginalPath, correctedOdtPath, tempOutputPath, "Lingofix", strictTextChangesOnly: useMarkdownProcessing);
                         logger.Info("Track changes generated with LibreOffice (native ODT compare)");
                     }
                     else
                     {
-                        TrackChangesGenerator.GenerateWithLibreOffice(tempOriginalPath, correctedPath, tempOutputPath, "Lingofix");
+                        TrackChangesGenerator.GenerateWithLibreOffice(tempOriginalPath, correctedPath, tempOutputPath, "Lingofix", strictTextChangesOnly: useMarkdownProcessing);
                         logger.Info("Track changes generated with LibreOffice");
                     }
                     trackCreated = true;
@@ -435,6 +451,61 @@ public static class LingofixRunner
         }
 
         throw new IOException($"Could not create readable snapshot of input file: {sourcePath}", lastError);
+    }
+
+    private static async Task ProcessMarkdownPipelineAsync(
+        string inputDocxPath,
+        string correctedDocxPath,
+        LlmClient llmClient,
+        Settings settings,
+        IRunLogger logger,
+        CancellationToken cancellationToken)
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "Lingofix", "markdown-pipeline", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workDir);
+        var sourceMarkdownPath = Path.Combine(workDir, "source.md");
+        var correctedMarkdownPath = Path.Combine(workDir, "corrected.md");
+        try
+        {
+            PandocMarkdownConverter.ConvertDocxToMarkdown(inputDocxPath, sourceMarkdownPath);
+            var markdown = await File.ReadAllTextAsync(sourceMarkdownPath, cancellationToken);
+            logger.Info($"Markdown mode: source size {markdown.Length} chars.");
+
+            var correctedMarkdown = await MarkdownProcessor.CorrectAsync(
+                markdown,
+                settings.ChunkSize,
+                llmClient,
+                logger,
+                cancellationToken);
+
+            await File.WriteAllTextAsync(correctedMarkdownPath, correctedMarkdown, cancellationToken);
+            PandocMarkdownConverter.ConvertMarkdownToDocx(correctedMarkdownPath, correctedDocxPath, inputDocxPath);
+        }
+        finally
+        {
+            if (!ShouldKeepTempArtifacts())
+            {
+                TryDeleteDirectory(workDir);
+            }
+            else
+            {
+                logger.Info($"Markdown pipeline temp artifacts kept at: {workDir}");
+            }
+        }
+    }
+
+    private static void TryDeleteDirectory(string directoryPath)
+    {
+        try
+        {
+            if (Directory.Exists(directoryPath))
+            {
+                Directory.Delete(directoryPath, recursive: true);
+            }
+        }
+        catch
+        {
+        }
     }
 
     private static bool ShouldKeepTempArtifacts()

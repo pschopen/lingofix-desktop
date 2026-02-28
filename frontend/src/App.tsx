@@ -444,7 +444,7 @@ function App() {
   const runSingleDocxWithPrechecks = useCallback(async (file: DocxFile, settingsForRun: Settings) => {
     const effectiveSettings = settingsForRun;
 
-    if (effectiveSettings.docx.compare_mode === 'openxml') {
+    if (effectiveSettings.docx.compare_mode === 'openxml' && effectiveSettings.docx.processing_mode === 'openxml') {
       const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
         filePath: file.path,
       });
