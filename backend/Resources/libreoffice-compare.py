@@ -258,7 +258,7 @@ def run_compare(
         wait_seconds = min(20.0, max(8.0, (total_bytes / (1024.0 * 1024.0)) * 1.5 + 6.0))
         time.sleep(wait_seconds)
 
-        if change_filter_mode.strip().lower() == "text-only":
+        if output_format.strip().lower() == "odt" and change_filter_mode.strip().lower() == "text-only":
             _filter_to_text_only_redlines(document, frame, dispatcher)
 
         filter_name = "writer8" if output_format.strip().lower() == "odt" else "MS Word 2007 XML"

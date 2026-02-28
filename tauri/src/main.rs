@@ -24,10 +24,8 @@ const MAX_OFFICE_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
 const BACKEND_API_KEY_ENV: &str = "LINGOFIX_RUNTIME_API_KEY";
 const BACKEND_KEEP_TEMP_ENV: &str = "LINGOFIX_KEEP_TEMP_ARTIFACTS";
 const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
-const BACKEND_PANDOC_PATH_ENV: &str = "LINGOFIX_PANDOC_PATH";
 const SOFFICE_PATH_ENV: &str = "LINGOFIX_SOFFICE_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
-const PANDOC_EXECUTABLE_BASE: &str = "pandoc";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
 const DEBUG_LOG_FILE_NAME: &str = "debug.log";
 const DEBUG_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
@@ -112,7 +110,6 @@ const KNOWN_PROVIDERS: [&str; 7] = [
     "mistral",
 ];
 const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
-const KNOWN_PROCESSING_MODES: [&str; 2] = ["openxml", "markdown"];
 const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
 const MIN_TEMPERATURE: f64 = 0.0;
 const MAX_TEMPERATURE: f64 = 2.0;
@@ -135,10 +132,6 @@ const KNOWN_BATCHING_PARTS: [&str; 6] = [
 
 fn default_docx_chunk_size() -> i32 {
     3_000
-}
-
-fn default_docx_processing_mode() -> String {
-    "openxml".to_string()
 }
 
 fn default_batching_parts() -> Vec<String> {
@@ -196,8 +189,6 @@ struct ModelCapabilityState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DocxSettings {
     compare_mode: String,
-    #[serde(default = "default_docx_processing_mode")]
-    processing_mode: String,
     #[serde(default = "default_docx_chunk_size")]
     chunk_size: i32,
     enable_batching: bool,
@@ -214,7 +205,6 @@ impl Default for DocxSettings {
     fn default() -> Self {
         Self {
             compare_mode: "openxml".into(),
-            processing_mode: default_docx_processing_mode(),
             chunk_size: default_docx_chunk_size(),
             enable_batching: false,
             batching_parts: default_batching_parts(),
@@ -772,15 +762,6 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
     {
         return Err(format!(
             "Invalid settings: docx.compare_mode is invalid. {reset_hint}"
-        ));
-    }
-
-    if !KNOWN_PROCESSING_MODES
-        .iter()
-        .any(|mode| mode.eq_ignore_ascii_case(settings.docx.processing_mode.trim()))
-    {
-        return Err(format!(
-            "Invalid settings: docx.processing_mode is invalid. {reset_hint}"
         ));
     }
 
@@ -1769,7 +1750,6 @@ async fn run_docx_processor(
             "source_path": source_input_path,
             "source_kind": if source_kind == OfficeInputKind::Odt { "odt" } else { "docx" },
             "compare_mode": settings.docx.compare_mode.as_str(),
-            "processing_mode": settings.docx.processing_mode.as_str(),
             "chunk_size": settings.docx.chunk_size,
             "batching": settings.docx.enable_batching,
             "batch_max_chars": settings.docx.batch_max_chars,
@@ -1863,9 +1843,6 @@ async fn run_docx_processor(
 
         if let Some(api_key) = env_api_key.as_ref() {
             cmd.env(BACKEND_API_KEY_ENV, api_key);
-        }
-        if let Some(pandoc_path) = resolve_bundled_pandoc_executable(app) {
-            cmd.env(BACKEND_PANDOC_PATH_ENV, pandoc_path);
         }
         cmd.env(BACKEND_KEEP_TEMP_ENV, "1");
         cmd.stdout(Stdio::piped())
@@ -2289,52 +2266,6 @@ fn resolve_bundled_backend_executable(app: &AppHandle) -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.is_file())
 }
 
-fn resolve_bundled_pandoc_executable(app: &AppHandle) -> Option<String> {
-    let resource_dir = app.path().resource_dir().ok()?;
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
-    let sidecar_name = format!("{PANDOC_EXECUTABLE_BASE}-{}", current_sidecar_triple());
-    let base_name = pandoc_executable_filename();
-
-    let mut candidates = vec![
-        resource_dir.join("pandoc").join(&sidecar_name),
-        resource_dir.join("pandoc").join(&base_name),
-        resource_dir.join("binaries").join(&sidecar_name),
-        resource_dir.join("binaries").join(&base_name),
-        resource_dir.join(&sidecar_name),
-        resource_dir.join(&base_name),
-        resource_dir
-            .join("Resources")
-            .join("binaries")
-            .join(&sidecar_name),
-        resource_dir
-            .join("Resources")
-            .join("binaries")
-            .join(&base_name),
-        resource_dir
-            .join("Resources")
-            .join("pandoc")
-            .join(&sidecar_name),
-        resource_dir
-            .join("Resources")
-            .join("pandoc")
-            .join(&base_name),
-    ];
-
-    if let Some(exe_dir) = exe_dir {
-        candidates.push(exe_dir.join(&base_name));
-        candidates.push(exe_dir.join(&sidecar_name));
-        candidates.push(exe_dir.join("binaries").join(&base_name));
-        candidates.push(exe_dir.join("binaries").join(&sidecar_name));
-    }
-
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .map(|path| path.to_string_lossy().to_string())
-}
-
 fn resolve_dotnet_path() -> Option<PathBuf> {
     let from_env = std::env::var(BACKEND_DOTNET_PATH_ENV)
         .ok()
@@ -2532,16 +2463,6 @@ fn backend_executable_filename() -> String {
 #[cfg(not(target_os = "windows"))]
 fn backend_executable_filename() -> String {
     BACKEND_EXECUTABLE_BASE.to_string()
-}
-
-#[cfg(target_os = "windows")]
-fn pandoc_executable_filename() -> String {
-    format!("{PANDOC_EXECUTABLE_BASE}.exe")
-}
-
-#[cfg(not(target_os = "windows"))]
-fn pandoc_executable_filename() -> String {
-    PANDOC_EXECUTABLE_BASE.to_string()
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]

@@ -25,7 +25,6 @@ public sealed class Settings
     public string SystemPrompt { get; set; } = string.Empty;
     public string BatchPrompt { get; set; } = string.Empty;
     public string CompareMode { get; set; } = string.Empty;
-    public string ProcessingMode { get; set; } = string.Empty;
     public double Temperature { get; set; }
     public int ChunkSize { get; set; }
     public bool EnableBatching { get; set; }
@@ -76,16 +75,6 @@ public sealed class Settings
         return CompareModeKind.OpenXml;
     }
 
-    public static DocxProcessingModeKind NormalizeProcessingMode(string? raw)
-    {
-        if (string.Equals(raw, "markdown", StringComparison.OrdinalIgnoreCase))
-        {
-            return DocxProcessingModeKind.Markdown;
-        }
-
-        return DocxProcessingModeKind.OpenXml;
-    }
-
     public static Settings FromFrontendJson(string json)
     {
         if (string.IsNullOrWhiteSpace(json))
@@ -112,7 +101,6 @@ public sealed class Settings
             BatchPrompt = RequireString(payload.BatchPrompt, "batch_prompt"),
             Temperature = payload.Temperature,
             CompareMode = RequireString(docx.CompareMode, "docx.compare_mode"),
-            ProcessingMode = NormalizeProcessingMode(docx.ProcessingMode).ToString(),
             ChunkSize = docx.ChunkSize ?? DefaultChunkSize,
             EnableBatching = docx.EnableBatching,
             BatchingParts = batchingParts,
@@ -129,9 +117,6 @@ public sealed class Settings
         }
 
         normalized.Temperature = Math.Clamp(normalized.Temperature, MinTemperature, MaxTemperature);
-        normalized.ProcessingMode = NormalizeProcessingMode(normalized.ProcessingMode) == DocxProcessingModeKind.Markdown
-            ? "markdown"
-            : "openxml";
         normalized.ChunkSize = Math.Clamp(normalized.ChunkSize, MinChunkSize, MaxChunkSize);
         normalized.BatchMaxChars = Math.Clamp(normalized.BatchMaxChars, MinBatchMaxChars, MaxBatchMaxChars);
         normalized.BatchMaxParagraphs = Math.Clamp(normalized.BatchMaxParagraphs, MinBatchMaxParagraphs, MaxBatchMaxParagraphs);
@@ -236,9 +221,6 @@ internal sealed class FrontendDocxSettingsPayload
 
     [JsonPropertyName("chunk_size")]
     public int? ChunkSize { get; set; }
-
-    [JsonPropertyName("processing_mode")]
-    public string? ProcessingMode { get; set; }
 
     [JsonPropertyName("enable_batching")]
     public bool EnableBatching { get; set; }

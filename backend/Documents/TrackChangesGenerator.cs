@@ -884,278 +884,32 @@ public static class TrackChangesGenerator
     private sealed record ReferenceMarker(int Offset, Run Run);
     private sealed record RunStyleSpan(int Start, int End, RunProperties? RunProperties);
 
-    public static void GenerateWithWord(string originalPath, string correctedPath, string outputPath, string author, bool strictTextChangesOnly = false)
+    public static void GenerateWithWord(string originalPath, string correctedPath, string outputPath, string author)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            RunWordCompareMac(originalPath, correctedPath, outputPath, author, strictTextChangesOnly);
-            if (strictTextChangesOnly)
-            {
-                RejectNonInsertionDeletionChanges(outputPath);
-            }
-            else
-            {
-                RejectFormattingChanges(outputPath);
-            }
+            RunWordCompareMac(originalPath, correctedPath, outputPath, author);
+            RejectFormattingChanges(outputPath);
             return;
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            RunWordCompareWindows(originalPath, correctedPath, outputPath, author, strictTextChangesOnly);
-            if (strictTextChangesOnly)
-            {
-                RejectNonInsertionDeletionChanges(outputPath);
-            }
-            else
-            {
-                RejectFormattingChanges(outputPath);
-            }
+            RunWordCompareWindows(originalPath, correctedPath, outputPath, author);
+            RejectFormattingChanges(outputPath);
             return;
         }
 
         throw new PlatformNotSupportedException("Word comparison is not supported on this operating system.");
     }
 
-    public static void GenerateWithLibreOffice(string originalPath, string correctedPath, string outputPath, string author, bool strictTextChangesOnly = false)
+    public static void GenerateWithLibreOffice(string originalPath, string correctedPath, string outputPath, string author)
     {
         var sofficePath = ResolveUsableLibreOfficeExecutable();
-        LibreOfficeUnoCompareRunner.GenerateWithUno(
-            sofficePath,
-            originalPath,
-            correctedPath,
-            outputPath,
-            author,
-            ExternalCompareTimeout,
-            strictTextChangesOnly ? "text-only" : "all");
+        LibreOfficeUnoCompareRunner.GenerateWithUno(sofficePath, originalPath, correctedPath, outputPath, author, ExternalCompareTimeout);
         if (outputPath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
         {
-            if (strictTextChangesOnly)
-            {
-                RejectNonInsertionDeletionChanges(outputPath);
-            }
-            else
-            {
-                RejectFormattingChanges(outputPath);
-            }
-        }
-    }
-
-    private static void RejectNonInsertionDeletionChanges(string documentPath)
-    {
-        using var doc = WordprocessingDocument.Open(documentPath, true);
-        RejectFormattingChanges(doc);
-        RejectMoveTrackedChanges(doc);
-        RejectNonInsDelRevisionElements(doc);
-        NormalizeInsertedRunFormatting(doc);
-        doc.Save();
-    }
-
-    private static void NormalizeInsertedRunFormatting(WordprocessingDocument doc)
-    {
-        foreach (var root in EnumerateRevisionRoots(doc))
-        {
-            foreach (var paragraph in root.Descendants<Paragraph>())
-            {
-                NormalizeInsertedRunFormattingInParagraph(paragraph);
-            }
-        }
-    }
-
-    private static void NormalizeInsertedRunFormattingInParagraph(Paragraph paragraph)
-    {
-        var runs = paragraph.Descendants<Run>().ToList();
-        if (runs.Count == 0)
-        {
-            return;
-        }
-
-        for (var i = 0; i < runs.Count; i++)
-        {
-            var run = runs[i];
-            if (!IsInsertedRun(run))
-            {
-                continue;
-            }
-
-            var sourceProps = ResolveNeighborRunProperties(runs, i);
-            if (sourceProps is null)
-            {
-                run.RunProperties?.Remove();
-            }
-            else
-            {
-                run.RunProperties = (RunProperties)sourceProps.CloneNode(true);
-            }
-        }
-
-        foreach (var ins in paragraph
-                     .Descendants()
-                     .Where(IsWordprocessingElement)
-                     .Where(e => e.LocalName == "ins")
-                     .ToList())
-        {
-            var sourceProps = ResolveNeighborRunPropertiesForInsertedElement(paragraph, ins);
-            foreach (var rPr in ins
-                         .ChildElements
-                         .Where(IsWordprocessingElement)
-                         .Where(e => e.LocalName == "rPr")
-                         .ToList())
-            {
-                rPr.Remove();
-            }
-
-            if (sourceProps is not null)
-            {
-                ins.PrependChild((RunProperties)sourceProps.CloneNode(true));
-            }
-        }
-    }
-
-    private static RunProperties? ResolveNeighborRunProperties(List<Run> runs, int index)
-    {
-        for (var left = index - 1; left >= 0; left--)
-        {
-            var leftRun = runs[left];
-            if (IsInsertedRun(leftRun))
-            {
-                continue;
-            }
-
-            var leftProps = leftRun.RunProperties;
-            return leftProps is null
-                ? null
-                : (RunProperties)leftProps.CloneNode(true);
-        }
-
-        for (var right = index + 1; right < runs.Count; right++)
-        {
-            var rightRun = runs[right];
-            if (IsInsertedRun(rightRun))
-            {
-                continue;
-            }
-
-            var rightProps = rightRun.RunProperties;
-            return rightProps is null
-                ? null
-                : (RunProperties)rightProps.CloneNode(true);
-        }
-
-        return null;
-    }
-
-    private static RunProperties? ResolveNeighborRunPropertiesForInsertedElement(Paragraph paragraph, OpenXmlElement insertedElement)
-    {
-        var runs = paragraph.Descendants<Run>().ToList();
-        var firstInsertedRunIndex = runs.FindIndex(run => run.Ancestors().Contains(insertedElement));
-        if (firstInsertedRunIndex >= 0)
-        {
-            return ResolveNeighborRunProperties(runs, firstInsertedRunIndex);
-        }
-
-        return null;
-    }
-
-    private static bool IsInsertedRun(Run run)
-    {
-        if (run.Ancestors().Any(a => IsWordprocessingElement(a) && a.LocalName == "ins"))
-        {
-            return true;
-        }
-
-        return run
-            .Descendants()
-            .Any(e => IsWordprocessingElement(e) && e.LocalName == "ins");
-    }
-
-    private static void RejectNonInsDelRevisionElements(WordprocessingDocument doc)
-    {
-        foreach (var root in EnumerateRevisionRoots(doc))
-        {
-            foreach (var element in root.Descendants().Where(IsWordprocessingElement).ToList())
-            {
-                var localName = element.LocalName;
-                if (localName == "ins" || localName == "del" || localName == "delText")
-                {
-                    continue;
-                }
-
-                if (!RevisionMarkerElements.Contains(localName) && element is not TrackChangeType)
-                {
-                    continue;
-                }
-
-                if (localName == "moveFrom" || localName == "moveFromRun")
-                {
-                    var children = element.ChildElements.ToList();
-                    foreach (var child in children)
-                    {
-                        child.Remove();
-                        element.InsertBeforeSelf(child);
-                    }
-
-                    element.Remove();
-                    continue;
-                }
-
-                if (localName == "moveTo" || localName == "moveToRun")
-                {
-                    element.Remove();
-                    continue;
-                }
-
-                if (PropertyChangeElements.Contains(localName) ||
-                    localName == "moveFromRangeStart" ||
-                    localName == "moveFromRangeEnd" ||
-                    localName == "moveToRangeStart" ||
-                    localName == "moveToRangeEnd")
-                {
-                    element.Remove();
-                    continue;
-                }
-
-                if (element is TrackChangeType)
-                {
-                    element.Remove();
-                }
-            }
-        }
-    }
-
-    private static void RejectMoveTrackedChanges(WordprocessingDocument doc)
-    {
-        foreach (var root in EnumerateRevisionRoots(doc))
-        {
-            foreach (var marker in root
-                         .Descendants()
-                         .Where(IsWordprocessingElement)
-                         .Where(e =>
-                             e.LocalName == "moveFromRangeStart" ||
-                             e.LocalName == "moveFromRangeEnd" ||
-                             e.LocalName == "moveToRangeStart" ||
-                             e.LocalName == "moveToRangeEnd")
-                         .ToList())
-            {
-                marker.Remove();
-            }
-
-            foreach (var moveFrom in root.Descendants().Where(IsWordprocessingElement).Where(e => e.LocalName == "moveFrom" || e.LocalName == "moveFromRun").ToList())
-            {
-                var children = moveFrom.ChildElements.ToList();
-                foreach (var child in children)
-                {
-                    child.Remove();
-                    moveFrom.InsertBeforeSelf(child);
-                }
-
-                moveFrom.Remove();
-            }
-
-            foreach (var moveTo in root.Descendants().Where(IsWordprocessingElement).Where(e => e.LocalName == "moveTo" || e.LocalName == "moveToRun").ToList())
-            {
-                moveTo.Remove();
-            }
+            RejectFormattingChanges(outputPath);
         }
     }
 
@@ -1433,7 +1187,7 @@ public static class TrackChangesGenerator
         }
     }
 
-    private static void RunWordCompareMac(string originalPath, string correctedPath, string outputPath, string author, bool strictTextChangesOnly)
+    private static void RunWordCompareMac(string originalPath, string correctedPath, string outputPath, string author)
     {
         // Search for word-compare.scpt in multiple locations
         var searchPaths = new[]
@@ -1480,7 +1234,7 @@ public static class TrackChangesGenerator
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "osascript",
-            ArgumentList = { scriptPath, originalPath, correctedPath, outputPath, author, strictTextChangesOnly ? "strict" : "default" },
+            ArgumentList = { scriptPath, originalPath, correctedPath, outputPath, author },
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -1490,22 +1244,19 @@ public static class TrackChangesGenerator
         RunProcess(psi, "osascript failed");
     }
 
-    private static void RunWordCompareWindows(string originalPath, string correctedPath, string outputPath, string author, bool strictTextChangesOnly)
+    private static void RunWordCompareWindows(string originalPath, string correctedPath, string outputPath, string author)
     {
         var psScript = @"
 param(
     [Parameter(Mandatory = $true)][string]$orig,
     [Parameter(Mandatory = $true)][string]$corr,
     [Parameter(Mandatory = $true)][string]$outp,
-    [Parameter(Mandatory = $true)][string]$author,
-    [Parameter(Mandatory = $true)][string]$mode
+    [Parameter(Mandatory = $true)][string]$author
 )
 
 $ErrorActionPreference = 'Stop'
 $maxAttempts = 3
 $lastError = $null
-$strictMode = $mode -eq 'strict'
-$compareFormatting = if ($strictMode) { $false } else { $true }
 
 function Release-ComObjectSafe {
     param([object]$obj)
@@ -1550,7 +1301,7 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             $doc2,
             2,
             1,
-            $compareFormatting,
+            $true,
             $true,
             $true,
             $true,
@@ -1638,8 +1389,7 @@ if ($null -ne $lastError) {
                     originalPath,
                     correctedPath,
                     outputPath,
-                    author,
-                    strictTextChangesOnly ? "strict" : "default"
+                    author
                 },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
