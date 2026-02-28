@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Linq;
 using System.Threading;
 
 namespace Lingofix.Backend.Documents;
@@ -11,9 +12,14 @@ public sealed class LlmClient
     private const int TemperatureSupportUnknown = 0;
     private const int TemperatureSupportSupported = 1;
     private const int TemperatureSupportUnsupported = 2;
+    private const int ReasoningSupportUnknown = 0;
+    private const int ReasoningSupportSupported = 1;
+    private const int ReasoningSupportUnsupported = 2;
 
     private static readonly HttpClient SharedHttpClient = CreateHttpClient();
     private readonly string _endpoint;
+    private readonly string _capabilityCacheKey;
+    private readonly bool _isOllama;
     private readonly string _model;
     private readonly string _prompt;
     private readonly string _systemPromptOverride;
@@ -21,13 +27,27 @@ public sealed class LlmClient
     private readonly IRunLogger? _logger;
     private string _apiKey = string.Empty;
     private int _temperatureSupport = TemperatureSupportUnknown;
-    public LlmClient(string apiBase, string model, string prompt, string systemPromptOverride, double temperature, IRunLogger? logger = null)
+    private int _reasoningSupport = ReasoningSupportUnknown;
+    public LlmClient(
+        string provider,
+        string apiBase,
+        string model,
+        string prompt,
+        string systemPromptOverride,
+        double temperature,
+        bool? temperatureSupportedHint,
+        bool? reasoningEffortSupportedHint,
+        IRunLogger? logger = null)
     {
-        _endpoint = ApiEndpointBuilder.Build(apiBase);
+        _isOllama = string.Equals(provider, "ollama", StringComparison.OrdinalIgnoreCase);
+        _endpoint = BuildEditorCompatibleEndpoint(apiBase, _isOllama);
+        _capabilityCacheKey = BuildCapabilityCacheKey(provider, apiBase, model);
         _model = model;
         _prompt = prompt;
         _systemPromptOverride = systemPromptOverride ?? string.Empty;
         _temperature = temperature;
+        _temperatureSupport = ToSupportState(temperatureSupportedHint);
+        _reasoningSupport = ToSupportState(reasoningEffortSupportedHint);
         _logger = logger;
     }
 
@@ -37,6 +57,36 @@ public sealed class LlmClient
         {
             Timeout = TimeSpan.FromMinutes(10)
         };
+    }
+
+    private static string BuildEditorCompatibleEndpoint(string apiBase, bool isOllama)
+    {
+        if (string.IsNullOrWhiteSpace(apiBase))
+        {
+            throw new InvalidOperationException(
+                "Invalid settings: api_url is missing. Open Settings > Advanced and use 'Reset app'.");
+        }
+
+        var trimmed = apiBase.Trim().TrimEnd('/');
+        return isOllama ? $"{trimmed}/api/chat" : $"{trimmed}/chat/completions";
+    }
+
+    private static string BuildCapabilityCacheKey(string provider, string apiBase, string model)
+    {
+        var normalizedProvider = (provider ?? string.Empty).Trim().ToLowerInvariant();
+        var normalizedApiBase = (apiBase ?? string.Empty).Trim().TrimEnd('/').ToLowerInvariant();
+        var normalizedModel = (model ?? string.Empty).Trim().ToLowerInvariant();
+        return $"{normalizedProvider}|{normalizedApiBase}|{normalizedModel}";
+    }
+
+    private static int ToSupportState(bool? supported)
+    {
+        if (!supported.HasValue)
+        {
+            return TemperatureSupportUnknown;
+        }
+
+        return supported.Value ? TemperatureSupportSupported : TemperatureSupportUnsupported;
     }
 
     public async Task<string> CorrectAsync(string input, CancellationToken cancellationToken = default)
@@ -49,7 +99,8 @@ public sealed class LlmClient
             [
                 new ChatMessage("user", prompt)
             ],
-            Temperature = _temperature
+            Temperature = _temperature,
+            Stream = false
         };
 
         return await SendWithTemperatureFallbackAsync(
@@ -58,9 +109,9 @@ public sealed class LlmClient
             cancellationToken: cancellationToken);
     }
 
-    public async Task<string> CorrectBatchAsync(string input, string batchPrompt, CancellationToken cancellationToken = default)
+    public async Task<string> CorrectBatchAsync(string input, string _batchPrompt, CancellationToken cancellationToken = default)
     {
-        var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, input, batchPrompt);
+        var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, input);
         var baseRequest = new ChatCompletionsRequest
         {
             Model = _model,
@@ -68,7 +119,8 @@ public sealed class LlmClient
             [
                 new ChatMessage("user", prompt)
             ],
-            Temperature = _temperature
+            Temperature = _temperature,
+            Stream = false
         };
 
         return await SendWithTemperatureFallbackAsync(
@@ -76,27 +128,8 @@ public sealed class LlmClient
             sanitizeOutput: false,
             cancellationToken: cancellationToken,
             maxAttempts: 1,
-            allowTemperatureFallback: false);
-    }
-
-    public async Task<string> CorrectMarkdownAsync(string markdown, CancellationToken cancellationToken = default)
-    {
-        var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, markdown);
-        var baseRequest = new ChatCompletionsRequest
-        {
-            Model = _model,
-            Messages =
-            [
-                new ChatMessage("user", prompt)
-            ],
-            Temperature = _temperature
-        };
-
-        return await SendWithTemperatureFallbackAsync(
-            baseRequest,
-            sanitizeOutput: false,
-            cancellationToken: cancellationToken,
-            trimOutputWhenNotSanitized: false);
+            allowTemperatureFallback: true,
+            allowReasoningFallback: true);
     }
 
     public void ApplyAuth(string apiKey)
@@ -107,13 +140,19 @@ public sealed class LlmClient
     private static string BuildSimplePrompt(string customPrompt, string systemPrompt, string text, string? extraPrompt = null)
     {
         var parts = new List<string>();
+        var promptLineParts = new List<string>();
         if (!string.IsNullOrWhiteSpace(customPrompt))
         {
-            parts.Add(customPrompt.Trim());
+            promptLineParts.Add(customPrompt.Trim());
         }
         if (!string.IsNullOrWhiteSpace(systemPrompt))
         {
-            parts.Add(systemPrompt.Trim());
+            promptLineParts.Add(systemPrompt.Trim());
+        }
+
+        if (promptLineParts.Count > 0)
+        {
+            parts.Add(string.Join(" ", promptLineParts));
         }
 
         if (!string.IsNullOrWhiteSpace(extraPrompt))
@@ -249,20 +288,28 @@ public sealed class LlmClient
         CancellationToken cancellationToken = default,
         int maxAttempts = 3,
         bool allowTemperatureFallback = true,
+        bool allowReasoningFallback = true,
         bool trimOutputWhenNotSanitized = true)
     {
         maxAttempts = Math.Max(1, maxAttempts);
         var includeTemperature = request.Temperature.HasValue && Volatile.Read(ref _temperatureSupport) != TemperatureSupportUnsupported;
-        if (!includeTemperature)
-        {
-            request.Temperature = null;
-        }
+        var includeReasoningEffort = !_isOllama && Volatile.Read(ref _reasoningSupport) != ReasoningSupportUnsupported;
 
         var allowTemperatureFallbackRetry = allowTemperatureFallback && includeTemperature;
+        var allowReasoningFallbackRetry = allowReasoningFallback && includeReasoningEffort;
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            LogRequestPayload(request, attempt);
-            var payload = JsonSerializer.Serialize(request, JsonOptions.Default);
+            var effectiveRequest = new ChatCompletionsRequest
+            {
+                Model = request.Model,
+                Messages = request.Messages,
+                Stream = request.Stream,
+                Temperature = includeTemperature ? request.Temperature : null,
+                ReasoningEffort = includeReasoningEffort ? "none" : null
+            };
+
+            LogRequestPayload(effectiveRequest, attempt);
+            var payload = JsonSerializer.Serialize(effectiveRequest, JsonOptions.Default);
             using var message = new HttpRequestMessage(HttpMethod.Post, _endpoint)
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
@@ -281,6 +328,13 @@ public sealed class LlmClient
                 if (includeTemperature)
                 {
                     Volatile.Write(ref _temperatureSupport, TemperatureSupportSupported);
+                    EmitCapabilityLog("temperature", true);
+                }
+
+                if (includeReasoningEffort)
+                {
+                    Volatile.Write(ref _reasoningSupport, ReasoningSupportSupported);
+                    EmitCapabilityLog("reasoning_effort", true);
                 }
 
                 var result = ExtractCompletionText(responseBody);
@@ -312,10 +366,21 @@ public sealed class LlmClient
             if (allowTemperatureFallbackRetry && IsTemperatureUnsupported(responseBody))
             {
                 _logger?.Info("Note: temperature not accepted by the model. Retrying without temperature.");
-                request.Temperature = null;
                 includeTemperature = false;
                 allowTemperatureFallbackRetry = false;
                 Volatile.Write(ref _temperatureSupport, TemperatureSupportUnsupported);
+                EmitCapabilityLog("temperature", false);
+                attempt = 0;
+                continue;
+            }
+
+            if (allowReasoningFallbackRetry && IsReasoningOrThinkingError(responseBody))
+            {
+                _logger?.Info("Note: reasoning_effort not accepted by the model. Retrying without reasoning_effort.");
+                includeReasoningEffort = false;
+                allowReasoningFallbackRetry = false;
+                Volatile.Write(ref _reasoningSupport, ReasoningSupportUnsupported);
+                EmitCapabilityLog("reasoning_effort", false);
                 attempt = 0;
                 continue;
             }
@@ -358,6 +423,11 @@ public sealed class LlmClient
         _logger?.Info($"LLM response payload (attempt {attempt}):\n{responseText}");
     }
 
+    private void EmitCapabilityLog(string capability, bool supported)
+    {
+        _logger?.Info($"LLM capability update: key={_capabilityCacheKey}; capability={capability}; supported={supported.ToString().ToLowerInvariant()}");
+    }
+
     private static bool IsTemperatureUnsupported(string responseBody)
     {
         if (string.IsNullOrWhiteSpace(responseBody))
@@ -382,6 +452,22 @@ public sealed class LlmClient
                 text.Contains("does not support") ||
                 text.Contains("not allowed") ||
                 text.Contains("invalid"));
+    }
+
+    private static bool IsReasoningOrThinkingError(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return false;
+        }
+
+        var text = responseBody.ToLowerInvariant();
+        if (TryGetErrorText(responseBody, out var errorText))
+        {
+            text = errorText.ToLowerInvariant();
+        }
+
+        return text.Contains("reasoning") || text.Contains("thinking");
     }
 
     private static bool TryGetErrorText(string responseBody, out string errorText)
@@ -445,6 +531,13 @@ public sealed class LlmClient
             if (TryExtractTextFromChoices(root, out var textFromChoices))
             {
                 return textFromChoices;
+            }
+
+            if (root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object &&
+                message.TryGetProperty("content", out var content) &&
+                TryReadContentElement(content, out var messageText))
+            {
+                return messageText;
             }
 
             if (TryExtractTextFromOutput(root, out var textFromOutput))

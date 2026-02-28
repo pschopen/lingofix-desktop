@@ -24,10 +24,8 @@ const MAX_OFFICE_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
 const BACKEND_API_KEY_ENV: &str = "LINGOFIX_RUNTIME_API_KEY";
 const BACKEND_KEEP_TEMP_ENV: &str = "LINGOFIX_KEEP_TEMP_ARTIFACTS";
 const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
-const BACKEND_PANDOC_PATH_ENV: &str = "LINGOFIX_PANDOC_PATH";
 const SOFFICE_PATH_ENV: &str = "LINGOFIX_SOFFICE_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
-const PANDOC_EXECUTABLE_BASE: &str = "pandoc";
 const ENCRYPTION_PREFIX: &str = "enc_v1:";
 const DEBUG_LOG_FILE_NAME: &str = "debug.log";
 const DEBUG_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
@@ -43,10 +41,6 @@ const DEFAULT_SYSTEM_PROMPT_EN: &str =
     "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
 const DEFAULT_SYSTEM_PROMPT_DE: &str =
     "Wichtig: Antworte nur mit dem korrigierten Text. Keine Erklärungen, keine Notizen, keine zusätzlichen Sätze.";
-const DEFAULT_BATCH_PROMPT_EN: &str =
-    "Batch input uses ITEM blocks. Format per entry: ITEM <id> followed by the text. Entries are separated by a line containing --- . Do not change ITEM ids. Return only ITEM blocks in the same format, with corrected text.";
-const DEFAULT_BATCH_PROMPT_DE: &str =
-    "Die Batch-Eingabe nutzt ITEM-Blöcke. Format pro Eintrag: ITEM <id> gefolgt vom Text. Einträge sind durch eine Zeile mit --- getrennt. ITEM-IDs dürfen nicht geändert werden. Gib nur ITEM-Blöcke im gleichen Format mit korrigiertem Text zurück.";
 const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_EN: &str = "Default";
 const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_DE: &str = "Standard";
 
@@ -75,11 +69,8 @@ fn default_system_prompt(locale: &str) -> String {
 }
 
 fn default_batch_prompt(locale: &str) -> String {
-    if normalize_locale(locale) == "de" {
-        DEFAULT_BATCH_PROMPT_DE.to_string()
-    } else {
-        DEFAULT_BATCH_PROMPT_EN.to_string()
-    }
+    let _ = locale;
+    String::new()
 }
 
 fn default_custom_prompt_preset(locale: &str) -> CustomPromptPreset {
@@ -112,7 +103,6 @@ const KNOWN_PROVIDERS: [&str; 7] = [
     "mistral",
 ];
 const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
-const KNOWN_PROCESSING_MODES: [&str; 2] = ["openxml", "markdown"];
 const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
 const MIN_TEMPERATURE: f64 = 0.0;
 const MAX_TEMPERATURE: f64 = 2.0;
@@ -135,10 +125,6 @@ const KNOWN_BATCHING_PARTS: [&str; 6] = [
 
 fn default_docx_chunk_size() -> i32 {
     3_000
-}
-
-fn default_docx_processing_mode() -> String {
-    "openxml".to_string()
 }
 
 fn default_batching_parts() -> Vec<String> {
@@ -196,8 +182,6 @@ struct ModelCapabilityState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DocxSettings {
     compare_mode: String,
-    #[serde(default = "default_docx_processing_mode")]
-    processing_mode: String,
     #[serde(default = "default_docx_chunk_size")]
     chunk_size: i32,
     enable_batching: bool,
@@ -214,7 +198,6 @@ impl Default for DocxSettings {
     fn default() -> Self {
         Self {
             compare_mode: "openxml".into(),
-            processing_mode: default_docx_processing_mode(),
             chunk_size: default_docx_chunk_size(),
             enable_batching: false,
             batching_parts: default_batching_parts(),
@@ -690,12 +673,6 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         ));
     }
 
-    if settings.batch_prompt.trim().is_empty() {
-        return Err(format!(
-            "Invalid settings: batch_prompt is missing. {reset_hint}"
-        ));
-    }
-
     if settings.custom_prompt_presets.is_empty() {
         return Err(format!(
             "Invalid settings: custom_prompt_presets is empty. {reset_hint}"
@@ -772,15 +749,6 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
     {
         return Err(format!(
             "Invalid settings: docx.compare_mode is invalid. {reset_hint}"
-        ));
-    }
-
-    if !KNOWN_PROCESSING_MODES
-        .iter()
-        .any(|mode| mode.eq_ignore_ascii_case(settings.docx.processing_mode.trim()))
-    {
-        return Err(format!(
-            "Invalid settings: docx.processing_mode is invalid. {reset_hint}"
         ));
     }
 
@@ -1131,8 +1099,10 @@ async fn stream_ollama(
     let request_started_at = std::time::Instant::now();
     let mut first_token_ms: Option<u128> = None;
     let prompt = format!(
-        "{}\n\n{}\n\nText:\n{}",
-        settings.custom_prompt, settings.system_prompt, text
+        "{} {}\n\nText:\n{}",
+        settings.custom_prompt.trim(),
+        settings.system_prompt.trim(),
+        text
     );
     let body = json!({
         "model": settings.model,
@@ -1248,8 +1218,10 @@ async fn stream_openai_like(
     let request_started_at = std::time::Instant::now();
     let mut first_token_ms: Option<u128> = None;
     let prompt = format!(
-        "{}\n\n{}\n\nText:\n{}",
-        settings.custom_prompt, settings.system_prompt, text
+        "{} {}\n\nText:\n{}",
+        settings.custom_prompt.trim(),
+        settings.system_prompt.trim(),
+        text
     );
     let cache_key = temperature_capability_key(settings);
     let mut include_temperature = {
@@ -1628,6 +1600,49 @@ fn temperature_capability_key(settings: &FrontendSettings) -> String {
     format!("{}|{}|{}", provider, api_url, model)
 }
 
+#[derive(Debug)]
+struct LlmCapabilityUpdate {
+    key: String,
+    capability: String,
+    supported: bool,
+}
+
+fn parse_llm_capability_update_log(message: &str) -> Option<LlmCapabilityUpdate> {
+    let prefix = "LLM capability update: ";
+    if !message.starts_with(prefix) {
+        return None;
+    }
+
+    let mut key = String::new();
+    let mut capability = String::new();
+    let mut supported: Option<bool> = None;
+    for part in message[prefix.len()..].split(';') {
+        let part = part.trim();
+        if let Some(value) = part.strip_prefix("key=") {
+            key = value.trim().to_string();
+        } else if let Some(value) = part.strip_prefix("capability=") {
+            capability = value.trim().to_string();
+        } else if let Some(value) = part.strip_prefix("supported=") {
+            let normalized = value.trim().to_ascii_lowercase();
+            if normalized == "true" {
+                supported = Some(true);
+            } else if normalized == "false" {
+                supported = Some(false);
+            }
+        }
+    }
+
+    if key.is_empty() || capability.is_empty() {
+        return None;
+    }
+
+    Some(LlmCapabilityUpdate {
+        key,
+        capability,
+        supported: supported?,
+    })
+}
+
 fn extract_api_error_message(body: &str) -> String {
     if body.trim().is_empty() {
         return "no response body".to_string();
@@ -1669,6 +1684,7 @@ async fn cancel_docx(state: State<'_, CancellationState>) -> Result<(), String> 
 async fn correct_docx(
     app: AppHandle,
     state: State<'_, CancellationState>,
+    capability_state: State<'_, ModelCapabilityState>,
     file_path: String,
     original_path: Option<String>,
     accept_existing_track_changes: Option<bool>,
@@ -1721,6 +1737,7 @@ async fn correct_docx(
     let result = run_docx_processor(
         &app,
         &cancel_flag,
+        capability_state.inner(),
         &backend_input_path_str,
         &input_path_str,
         input_kind,
@@ -1749,6 +1766,7 @@ async fn correct_docx(
 async fn run_docx_processor(
     app: &AppHandle,
     cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
+    capability_state: &ModelCapabilityState,
     backend_input_path: &str,
     source_input_path: &str,
     source_kind: OfficeInputKind,
@@ -1769,7 +1787,6 @@ async fn run_docx_processor(
             "source_path": source_input_path,
             "source_kind": if source_kind == OfficeInputKind::Odt { "odt" } else { "docx" },
             "compare_mode": settings.docx.compare_mode.as_str(),
-            "processing_mode": settings.docx.processing_mode.as_str(),
             "chunk_size": settings.docx.chunk_size,
             "batching": settings.docx.enable_batching,
             "batch_max_chars": settings.docx.batch_max_chars,
@@ -1791,7 +1808,41 @@ async fn run_docx_processor(
         *value = None;
     }
 
-    let settings_json = serde_json::to_string(&backend_settings)?;
+    let capability_key = temperature_capability_key(settings);
+    let temperature_hint = {
+        let cache = capability_state.temperature_support.lock().await;
+        cache.get(&capability_key).copied()
+    };
+    let reasoning_hint = {
+        let cache = capability_state.reasoning_effort_support.lock().await;
+        cache.get(&capability_key).copied()
+    };
+
+    write_debug_event(
+        app,
+        "docx.run.capability_hint",
+        json!({
+            "key": capability_key,
+            "temperature_supported": temperature_hint,
+            "reasoning_effort_supported": reasoning_hint
+        }),
+    );
+
+    let mut settings_value = serde_json::to_value(&backend_settings)?;
+    if let Some(object) = settings_value.as_object_mut() {
+        let mut hint_obj = serde_json::Map::new();
+        if let Some(value) = temperature_hint {
+            hint_obj.insert("temperature_supported".to_string(), json!(value));
+        }
+        if let Some(value) = reasoning_hint {
+            hint_obj.insert("reasoning_effort_supported".to_string(), json!(value));
+        }
+        if !hint_obj.is_empty() {
+            object.insert("llm_capability_hint".to_string(), Value::Object(hint_obj));
+        }
+    }
+
+    let settings_json = serde_json::to_string(&settings_value)?;
     let settings_temp =
         std::env::temp_dir().join(format!("lingofix-settings-{}.json", uuid_like()));
     tokio::fs::write(&settings_temp, settings_json).await?;
@@ -1864,9 +1915,6 @@ async fn run_docx_processor(
         if let Some(api_key) = env_api_key.as_ref() {
             cmd.env(BACKEND_API_KEY_ENV, api_key);
         }
-        if let Some(pandoc_path) = resolve_bundled_pandoc_executable(app) {
-            cmd.env(BACKEND_PANDOC_PATH_ENV, pandoc_path);
-        }
         cmd.env(BACKEND_KEEP_TEMP_ENV, "1");
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -1935,6 +1983,27 @@ async fn run_docx_processor(
                             "log" => {
                                 let level = value.get("level").and_then(|v| v.as_str()).unwrap_or("info");
                                 let message = value.get("message").and_then(|v| v.as_str()).unwrap_or_default();
+                                if let Some(update) = parse_llm_capability_update_log(message) {
+                                    if update.key == capability_key {
+                                        if update.capability == "temperature" {
+                                            let mut cache = capability_state.temperature_support.lock().await;
+                                            cache.insert(capability_key.clone(), update.supported);
+                                        } else if update.capability == "reasoning_effort" {
+                                            let mut cache = capability_state.reasoning_effort_support.lock().await;
+                                            cache.insert(capability_key.clone(), update.supported);
+                                        }
+
+                                        write_debug_event(
+                                            app,
+                                            "docx.run.capability_update",
+                                            json!({
+                                                "key": update.key,
+                                                "capability": update.capability,
+                                                "supported": update.supported
+                                            }),
+                                        );
+                                    }
+                                }
                                 let _ = app.emit("docx_log", json!({ "level": level, "message": message }));
                                 write_debug_event(
                                     app,
@@ -2289,52 +2358,6 @@ fn resolve_bundled_backend_executable(app: &AppHandle) -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.is_file())
 }
 
-fn resolve_bundled_pandoc_executable(app: &AppHandle) -> Option<String> {
-    let resource_dir = app.path().resource_dir().ok()?;
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
-    let sidecar_name = format!("{PANDOC_EXECUTABLE_BASE}-{}", current_sidecar_triple());
-    let base_name = pandoc_executable_filename();
-
-    let mut candidates = vec![
-        resource_dir.join("pandoc").join(&sidecar_name),
-        resource_dir.join("pandoc").join(&base_name),
-        resource_dir.join("binaries").join(&sidecar_name),
-        resource_dir.join("binaries").join(&base_name),
-        resource_dir.join(&sidecar_name),
-        resource_dir.join(&base_name),
-        resource_dir
-            .join("Resources")
-            .join("binaries")
-            .join(&sidecar_name),
-        resource_dir
-            .join("Resources")
-            .join("binaries")
-            .join(&base_name),
-        resource_dir
-            .join("Resources")
-            .join("pandoc")
-            .join(&sidecar_name),
-        resource_dir
-            .join("Resources")
-            .join("pandoc")
-            .join(&base_name),
-    ];
-
-    if let Some(exe_dir) = exe_dir {
-        candidates.push(exe_dir.join(&base_name));
-        candidates.push(exe_dir.join(&sidecar_name));
-        candidates.push(exe_dir.join("binaries").join(&base_name));
-        candidates.push(exe_dir.join("binaries").join(&sidecar_name));
-    }
-
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .map(|path| path.to_string_lossy().to_string())
-}
-
 fn resolve_dotnet_path() -> Option<PathBuf> {
     let from_env = std::env::var(BACKEND_DOTNET_PATH_ENV)
         .ok()
@@ -2532,16 +2555,6 @@ fn backend_executable_filename() -> String {
 #[cfg(not(target_os = "windows"))]
 fn backend_executable_filename() -> String {
     BACKEND_EXECUTABLE_BASE.to_string()
-}
-
-#[cfg(target_os = "windows")]
-fn pandoc_executable_filename() -> String {
-    format!("{PANDOC_EXECUTABLE_BASE}.exe")
-}
-
-#[cfg(not(target_os = "windows"))]
-fn pandoc_executable_filename() -> String {
-    PANDOC_EXECUTABLE_BASE.to_string()
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]

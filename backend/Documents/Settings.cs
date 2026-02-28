@@ -25,7 +25,6 @@ public sealed class Settings
     public string SystemPrompt { get; set; } = string.Empty;
     public string BatchPrompt { get; set; } = string.Empty;
     public string CompareMode { get; set; } = string.Empty;
-    public string ProcessingMode { get; set; } = string.Empty;
     public double Temperature { get; set; }
     public int ChunkSize { get; set; }
     public bool EnableBatching { get; set; }
@@ -43,6 +42,8 @@ public sealed class Settings
     public bool EnableCache { get; set; }
     public bool EnableParallelization { get; set; }
     public int MaxParallelRequests { get; set; }
+    public bool? TemperatureSupportedHint { get; set; }
+    public bool? ReasoningEffortSupportedHint { get; set; }
 
     public static string ResolveApiKey(string raw)
     {
@@ -76,16 +77,6 @@ public sealed class Settings
         return CompareModeKind.OpenXml;
     }
 
-    public static DocxProcessingModeKind NormalizeProcessingMode(string? raw)
-    {
-        if (string.Equals(raw, "markdown", StringComparison.OrdinalIgnoreCase))
-        {
-            return DocxProcessingModeKind.Markdown;
-        }
-
-        return DocxProcessingModeKind.OpenXml;
-    }
-
     public static Settings FromFrontendJson(string json)
     {
         if (string.IsNullOrWhiteSpace(json))
@@ -109,10 +100,9 @@ public sealed class Settings
             Model = RequireString(payload.Model, "model"),
             Prompt = RequireString(payload.CustomPrompt, "custom_prompt"),
             SystemPrompt = RequireString(payload.SystemPrompt, "system_prompt"),
-            BatchPrompt = RequireString(payload.BatchPrompt, "batch_prompt"),
+            BatchPrompt = payload.BatchPrompt?.Trim() ?? string.Empty,
             Temperature = payload.Temperature,
             CompareMode = RequireString(docx.CompareMode, "docx.compare_mode"),
-            ProcessingMode = NormalizeProcessingMode(docx.ProcessingMode).ToString(),
             ChunkSize = docx.ChunkSize ?? DefaultChunkSize,
             EnableBatching = docx.EnableBatching,
             BatchingParts = batchingParts,
@@ -120,7 +110,9 @@ public sealed class Settings
             BatchMaxParagraphs = docx.BatchMaxParagraphs,
             EnableCache = docx.EnableCache,
             EnableParallelization = docx.EnableParallelization,
-            MaxParallelRequests = docx.MaxParallelRequests
+            MaxParallelRequests = docx.MaxParallelRequests,
+            TemperatureSupportedHint = payload.LlmCapabilityHint?.TemperatureSupported,
+            ReasoningEffortSupportedHint = payload.LlmCapabilityHint?.ReasoningEffortSupported
         };
 
         if (double.IsNaN(normalized.Temperature) || double.IsInfinity(normalized.Temperature))
@@ -129,9 +121,6 @@ public sealed class Settings
         }
 
         normalized.Temperature = Math.Clamp(normalized.Temperature, MinTemperature, MaxTemperature);
-        normalized.ProcessingMode = NormalizeProcessingMode(normalized.ProcessingMode) == DocxProcessingModeKind.Markdown
-            ? "markdown"
-            : "openxml";
         normalized.ChunkSize = Math.Clamp(normalized.ChunkSize, MinChunkSize, MaxChunkSize);
         normalized.BatchMaxChars = Math.Clamp(normalized.BatchMaxChars, MinBatchMaxChars, MaxBatchMaxChars);
         normalized.BatchMaxParagraphs = Math.Clamp(normalized.BatchMaxParagraphs, MinBatchMaxParagraphs, MaxBatchMaxParagraphs);
@@ -227,6 +216,18 @@ internal sealed class FrontendSettingsPayload
 
     [JsonPropertyName("docx")]
     public FrontendDocxSettingsPayload? Docx { get; set; }
+
+    [JsonPropertyName("llm_capability_hint")]
+    public FrontendLlmCapabilityHintPayload? LlmCapabilityHint { get; set; }
+}
+
+internal sealed class FrontendLlmCapabilityHintPayload
+{
+    [JsonPropertyName("temperature_supported")]
+    public bool? TemperatureSupported { get; set; }
+
+    [JsonPropertyName("reasoning_effort_supported")]
+    public bool? ReasoningEffortSupported { get; set; }
 }
 
 internal sealed class FrontendDocxSettingsPayload
@@ -236,9 +237,6 @@ internal sealed class FrontendDocxSettingsPayload
 
     [JsonPropertyName("chunk_size")]
     public int? ChunkSize { get; set; }
-
-    [JsonPropertyName("processing_mode")]
-    public string? ProcessingMode { get; set; }
 
     [JsonPropertyName("enable_batching")]
     public bool EnableBatching { get; set; }

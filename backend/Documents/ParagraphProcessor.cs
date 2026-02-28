@@ -7,7 +7,7 @@ namespace Lingofix.Backend.Documents;
 
 public static class ParagraphProcessor
 {
-    private const string BatchItemSeparator = "---";
+    private const string BatchParagraphSeparator = "\n\n";
 
     public static async Task ProcessAsync(
         IEnumerable<Paragraph> paragraphs,
@@ -383,15 +383,11 @@ public static class ParagraphProcessor
         for (var i = 0; i < items.Count; i++)
         {
             var item = items[i];
-            builder.Append("ITEM ");
-            builder.AppendLine(item.Id.ToString());
-            builder.AppendLine(item.Original);
+            builder.Append(item.Original);
 
             if (i < items.Count - 1)
             {
-                builder.AppendLine();
-                builder.AppendLine(BatchItemSeparator);
-                builder.AppendLine();
+                builder.Append(BatchParagraphSeparator);
             }
         }
     }
@@ -409,54 +405,29 @@ public static class ParagraphProcessor
             failureCode = "empty_response";
             return false;
         }
-        var expectedIds = expectedItems.Select(item => item.Id).ToHashSet();
-        var parsedItems = ParseItemBlocks(response);
-        if (parsedItems is null)
+        var parsedParagraphs = ParseBatchParagraphs(response);
+        if (parsedParagraphs is null)
         {
             failureCode = "invalid_item_format";
             return false;
         }
 
-        if (parsedItems.Count != expectedItems.Count)
+        if (parsedParagraphs.Count != expectedItems.Count)
         {
             failureCode = "count_mismatch";
             return false;
         }
 
-        foreach (var item in parsedItems)
+        for (var i = 0; i < expectedItems.Count; i++)
         {
-            if (!expectedIds.Contains(item.Id))
-            {
-                failureCode = "unknown_id";
-                return false;
-            }
-
-            if (results.ContainsKey(item.Id))
-            {
-                failureCode = "duplicate_id";
-                return false;
-            }
-
-            if (item.Text is null)
-            {
-                failureCode = "missing_text";
-                return false;
-            }
-
-            results[item.Id] = LlmClient.SanitizeCorrection(item.Text);
-        }
-
-        if (results.Count != expectedItems.Count)
-        {
-            failureCode = "missing_id";
-            return false;
+            results[expectedItems[i].Id] = LlmClient.SanitizeCorrection(parsedParagraphs[i]);
         }
 
         failureCode = "ok";
         return true;
     }
 
-    private static List<BatchOutputItem>? ParseItemBlocks(string response)
+    private static List<string>? ParseBatchParagraphs(string response)
     {
         var normalized = RemoveCodeFence(response)
             .Replace("\r\n", "\n", StringComparison.Ordinal)
@@ -467,58 +438,17 @@ public static class ParagraphProcessor
             return null;
         }
 
-        var lines = normalized.Split('\n');
-        var items = new List<BatchOutputItem>();
-        var index = 0;
-
-        while (index < lines.Length)
+        var parts = normalized
+            .Split([BatchParagraphSeparator], StringSplitOptions.None)
+            .Select(part => part.Trim())
+            .Where(part => part.Length > 0)
+            .ToList();
+        if (parts.Count == 0)
         {
-            while (index < lines.Length && string.IsNullOrWhiteSpace(lines[index]))
-            {
-                index++;
-            }
-
-            if (index >= lines.Length)
-            {
-                break;
-            }
-
-            var header = lines[index].Trim();
-            if (!header.StartsWith("ITEM ", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
-
-            var idText = header.Substring(5).Trim();
-            if (!int.TryParse(idText, out var id))
-            {
-                return null;
-            }
-
-            index++;
-            var textLines = new List<string>();
-            while (index < lines.Length)
-            {
-                var current = lines[index];
-                if (current.Trim().Equals(BatchItemSeparator, StringComparison.Ordinal))
-                {
-                    index++;
-                    break;
-                }
-
-                textLines.Add(current);
-                index++;
-            }
-
-            var text = string.Join("\n", textLines);
-            items.Add(new BatchOutputItem
-            {
-                Id = id,
-                Text = text
-            });
+            return null;
         }
 
-        return items;
+        return parts;
     }
 
     private static string RemoveCodeFence(string text)
@@ -614,12 +544,6 @@ public static class ParagraphProcessor
     private sealed record WorkBatch(List<ParagraphItem> Items, bool UseBatch);
 
     private sealed record BatchResult(WorkBatch Batch, Dictionary<int, string> Corrections);
-
-    private sealed class BatchOutputItem
-    {
-        public int Id { get; set; }
-        public string? Text { get; set; }
-    }
 
     private sealed class AdaptiveConcurrency
     {

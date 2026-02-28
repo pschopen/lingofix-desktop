@@ -444,7 +444,7 @@ function App() {
   const runSingleDocxWithPrechecks = useCallback(async (file: DocxFile, settingsForRun: Settings) => {
     const effectiveSettings = settingsForRun;
 
-    if (effectiveSettings.docx.compare_mode === 'openxml' && effectiveSettings.docx.processing_mode === 'openxml') {
+    if (effectiveSettings.docx.compare_mode === 'openxml') {
       const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
         filePath: file.path,
       });
@@ -885,7 +885,7 @@ function App() {
                       }`}>
                         {isBatchingProfile ? 'batch' : log.level}
                       </span>
-                      <span className="break-all">{localizeDocxLogMessage(log.message)}</span>
+                      <span className="whitespace-pre-wrap break-words">{localizeDocxLogMessage(log.message)}</span>
                     </div>
                   );
                 })}
