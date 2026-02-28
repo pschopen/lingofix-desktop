@@ -199,10 +199,10 @@ impl Default for DocxSettings {
         Self {
             compare_mode: "openxml".into(),
             chunk_size: default_docx_chunk_size(),
-            enable_batching: false,
+            enable_batching: true,
             batching_parts: default_batching_parts(),
-            batch_max_chars: 3_000,
-            batch_max_paragraphs: 15,
+            batch_max_chars: 7_500,
+            batch_max_paragraphs: 10,
             enable_cache: true,
             enable_parallelization: true,
             max_parallel_requests: 4,

@@ -281,14 +281,46 @@ public static class ParagraphProcessor
             return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
         }
 
+        if (parsed.Count < batch.Items.Count)
+        {
+            var missingItems = batch.Items
+                .Where(item => !parsed.ContainsKey(item.Id))
+                .ToList();
+            logger?.Info($"Batching: partial fallback start (missing: {missingItems.Count}/{batch.Items.Count}).");
+            var partialBatch = new WorkBatch(missingItems, UseBatch: false);
+            var partialResult = await ProcessBatchFallbackAsync(
+                partialBatch,
+                llmClient,
+                logger,
+                cache,
+                chunkSize,
+                concurrency,
+                cancellationToken,
+                context: "partial fallback");
+            foreach (var pair in partialResult.Corrections)
+            {
+                parsed[pair.Key] = pair.Value;
+            }
+
+            logger?.Info("Batching: partial fallback done.");
+        }
+
         concurrency?.Success();
         logger?.Info($"Batching: OK (paragraphs: {batch.Items.Count}).");
         return new BatchResult(batch, parsed);
     }
 
-    private static async Task<BatchResult> ProcessBatchFallbackAsync(WorkBatch batch, LlmClient llmClient, IRunLogger? logger, ConcurrentDictionary<string, string>? cache, int chunkSize, AdaptiveConcurrency? concurrency, CancellationToken cancellationToken)
+    private static async Task<BatchResult> ProcessBatchFallbackAsync(
+        WorkBatch batch,
+        LlmClient llmClient,
+        IRunLogger? logger,
+        ConcurrentDictionary<string, string>? cache,
+        int chunkSize,
+        AdaptiveConcurrency? concurrency,
+        CancellationToken cancellationToken,
+        string context = "single fallback")
     {
-        logger?.Info($"Batching: single fallback start (paragraphs: {batch.Items.Count}).");
+        logger?.Info($"Batching: {context} start (paragraphs: {batch.Items.Count}).");
         var results = new Dictionary<int, string>();
         foreach (var item in batch.Items)
         {
@@ -322,7 +354,7 @@ public static class ParagraphProcessor
             results[item.Id] = corrected;
         }
 
-        logger?.Info("Batching: single fallback done.");
+        logger?.Info($"Batching: {context} done.");
         return new BatchResult(batch, results);
     }
 
@@ -414,6 +446,14 @@ public static class ParagraphProcessor
 
         if (parsedParagraphs.Count != expectedItems.Count)
         {
+            if (parsedParagraphs.Count < expectedItems.Count &&
+                TryAlignBatchParagraphs(expectedItems, parsedParagraphs, out var aligned))
+            {
+                results = aligned;
+                failureCode = "partial_count_mismatch";
+                return true;
+            }
+
             failureCode = "count_mismatch";
             return false;
         }
@@ -481,6 +521,137 @@ public static class ParagraphProcessor
     private static int EstimateBatchLength(int currentLength, int nextParagraphLength)
     {
         return currentLength + nextParagraphLength + 16;
+    }
+
+    private static bool TryAlignBatchParagraphs(
+        IReadOnlyList<ParagraphItem> expectedItems,
+        IReadOnlyList<string> parsedParagraphs,
+        out Dictionary<int, string> aligned)
+    {
+        aligned = new Dictionary<int, string>();
+        if (parsedParagraphs.Count == 0 || parsedParagraphs.Count > expectedItems.Count)
+        {
+            return false;
+        }
+
+        var n = parsedParagraphs.Count;
+        var m = expectedItems.Count;
+        var scores = new double[n, m];
+        for (var i = 0; i < n; i++)
+        {
+            for (var j = 0; j < m; j++)
+            {
+                scores[i, j] = ParagraphSimilarity(parsedParagraphs[i], expectedItems[j].Original);
+            }
+        }
+
+        var dp = new double[n + 1, m + 1];
+        var chooseMatch = new bool[n + 1, m + 1];
+        const double negInf = -1_000_000d;
+
+        for (var i = 1; i <= n; i++)
+        {
+            dp[i, 0] = negInf;
+        }
+
+        for (var i = 1; i <= n; i++)
+        {
+            for (var j = 1; j <= m; j++)
+            {
+                var skip = dp[i, j - 1];
+                var match = dp[i - 1, j - 1];
+                if (match > negInf / 2)
+                {
+                    match += scores[i - 1, j - 1];
+                }
+
+                if (match >= skip)
+                {
+                    dp[i, j] = match;
+                    chooseMatch[i, j] = true;
+                }
+                else
+                {
+                    dp[i, j] = skip;
+                }
+            }
+        }
+
+        if (dp[n, m] <= negInf / 2)
+        {
+            return false;
+        }
+
+        var mapping = new int[n];
+        Array.Fill(mapping, -1);
+        var row = n;
+        var col = m;
+        while (row > 0 && col > 0)
+        {
+            if (chooseMatch[row, col])
+            {
+                mapping[row - 1] = col - 1;
+                row--;
+                col--;
+            }
+            else
+            {
+                col--;
+            }
+        }
+
+        if (row > 0 || mapping.Any(index => index < 0))
+        {
+            return false;
+        }
+
+        for (var i = 0; i < n; i++)
+        {
+            var expectedIndex = mapping[i];
+            var score = scores[i, expectedIndex];
+            if (score < 0.34)
+            {
+                return false;
+            }
+
+            var expected = expectedItems[expectedIndex];
+            aligned[expected.Id] = LlmClient.SanitizeCorrection(parsedParagraphs[i]);
+        }
+
+        return true;
+    }
+
+    private static double ParagraphSimilarity(string left, string right)
+    {
+        var leftTokens = Tokenize(left);
+        var rightTokens = Tokenize(right);
+        if (leftTokens.Count == 0 || rightTokens.Count == 0)
+        {
+            return 0;
+        }
+
+        var intersection = leftTokens.Count(token => rightTokens.Contains(token));
+        if (intersection == 0)
+        {
+            return 0;
+        }
+
+        return (2.0 * intersection) / (leftTokens.Count + rightTokens.Count);
+    }
+
+    private static HashSet<string> Tokenize(string input)
+    {
+        var normalized = new StringBuilder(input.Length);
+        foreach (var ch in input)
+        {
+            normalized.Append(char.IsLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : ' ');
+        }
+
+        return normalized
+            .ToString()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(token => token.Length > 1)
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     private static List<string> SplitIntoChunks(string text, int maxChars)

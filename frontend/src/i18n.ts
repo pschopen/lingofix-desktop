@@ -456,8 +456,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Temperature',
   },
   'settings.docx.batching': {
-    de: 'Batching (experimentell)',
-    en: 'Batching (experimental)',
+    de: 'Batching',
+    en: 'Batching',
   },
   'settings.docx.chunk_size': {
     de: 'Chunk-Größe',
