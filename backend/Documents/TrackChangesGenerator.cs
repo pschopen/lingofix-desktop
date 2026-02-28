@@ -1178,18 +1178,13 @@ public static class TrackChangesGenerator
         }
 
         var sofficePath = ResolveUsableLibreOfficeExecutable();
-        var workDir = Path.Combine(Path.GetTempPath(), "Lingofix", "libreoffice-convert", Guid.NewGuid().ToString("N"));
+        var workDir = Path.Combine(PathUtils.GetLingofixTempRoot(), "libreoffice-convert", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workDir);
         try
         {
             var expectedOutput = Path.Combine(
                 workDir,
                 Path.GetFileNameWithoutExtension(inputPath) + normalizedTarget);
-
-            if (File.Exists(expectedOutput))
-            {
-                File.Delete(expectedOutput);
-            }
 
             var psi = new System.Diagnostics.ProcessStartInfo
             {
@@ -1252,7 +1247,6 @@ public static class TrackChangesGenerator
         }
         finally
         {
-            TryDeleteDirectory(workDir);
         }
     }
 
@@ -1619,7 +1613,7 @@ if ($null -ne $lastError) {
 }
 ";
 
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"lingofix-word-compare-{Guid.NewGuid():N}.ps1");
+        var scriptPath = Path.Combine(PathUtils.GetLingofixTempRoot(), $"lingofix-word-compare-{Guid.NewGuid():N}.ps1");
         File.WriteAllText(scriptPath, psScript);
 
         try
@@ -1658,10 +1652,6 @@ if ($null -ne $lastError) {
         }
         finally
         {
-            if (File.Exists(scriptPath))
-            {
-                File.Delete(scriptPath);
-            }
         }
     }
 
@@ -1712,25 +1702,6 @@ if ($null -ne $lastError) {
             }
             
             throw new InvalidOperationException(errorMsg.Trim());
-        }
-    }
-
-    private static void TryDeleteDirectory(string directoryPath)
-    {
-        if (string.IsNullOrWhiteSpace(directoryPath))
-        {
-            return;
-        }
-
-        try
-        {
-            if (Directory.Exists(directoryPath))
-            {
-                Directory.Delete(directoryPath, recursive: true);
-            }
-        }
-        catch
-        {
         }
     }
 

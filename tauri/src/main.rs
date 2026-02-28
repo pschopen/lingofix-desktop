@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 const MAX_OFFICE_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
 const BACKEND_API_KEY_ENV: &str = "LINGOFIX_RUNTIME_API_KEY";
-const BACKEND_KEEP_TEMP_ENV: &str = "LINGOFIX_KEEP_TEMP_ARTIFACTS";
+const BACKEND_TEMP_DIR_ENV: &str = "LINGOFIX_TEMP_DIR";
 const BACKEND_DOTNET_PATH_ENV: &str = "LINGOFIX_DOTNET_PATH";
 const SOFFICE_PATH_ENV: &str = "LINGOFIX_SOFFICE_PATH";
 const BACKEND_EXECUTABLE_BASE: &str = "lingofix-backend";
@@ -71,6 +71,10 @@ fn default_system_prompt(locale: &str) -> String {
 fn default_batch_prompt(locale: &str) -> String {
     let _ = locale;
     String::new()
+}
+
+fn lingofix_temp_root() -> PathBuf {
+    std::env::temp_dir().join("Lingofix")
 }
 
 fn default_custom_prompt_preset(locale: &str) -> CustomPromptPreset {
@@ -581,8 +585,18 @@ fn frontend_path(path: &str) -> String {
     path.to_string()
 }
 
+fn resolve_temp_root_from_settings(app: &AppHandle) -> PathBuf {
+    let _ = app;
+    lingofix_temp_root()
+}
+
+fn temp_root_from_settings(settings: &FrontendSettings) -> PathBuf {
+    let _ = settings;
+    lingofix_temp_root()
+}
+
 fn clear_temp_lingofix_dir() {
-    let temp_root = std::env::temp_dir().join("Lingofix");
+    let temp_root = lingofix_temp_root();
     if !temp_root.exists() {
         return;
     }
@@ -1704,16 +1718,16 @@ async fn correct_docx(
         _ => None,
     };
 
-    let mut converted_docx_temp_path: Option<PathBuf> = None;
     let backend_input_path = if input_kind == OfficeInputKind::Odt {
+        let temp_root = temp_root_from_settings(&settings);
         let converted = convert_office_file_to(
             &input_path,
             OfficeInputKind::Docx,
             "ODT input conversion failed",
+            &temp_root,
         )
         .await
         .map_err(|e| e.to_string())?;
-        converted_docx_temp_path = Some(converted.clone());
         converted
     } else {
         input_path.clone()
@@ -1747,14 +1761,6 @@ async fn correct_docx(
     )
     .await;
 
-    if let Some(path) = converted_docx_temp_path {
-        if let Some(parent) = path.parent() {
-            let _ = tokio::fs::remove_dir_all(parent).await;
-        } else {
-            let _ = tokio::fs::remove_file(path).await;
-        }
-    }
-
     {
         let mut guard = state.docx.lock().await;
         *guard = None;
@@ -1775,6 +1781,8 @@ async fn run_docx_processor(
     settings: &FrontendSettings,
 ) -> anyhow::Result<()> {
     const DOCX_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3 * 60 * 60);
+    let temp_root = temp_root_from_settings(settings);
+    tokio::fs::create_dir_all(&temp_root).await?;
 
     write_debug_event(
         app,
@@ -1843,8 +1851,7 @@ async fn run_docx_processor(
     }
 
     let settings_json = serde_json::to_string(&settings_value)?;
-    let settings_temp =
-        std::env::temp_dir().join(format!("lingofix-settings-{}.json", uuid_like()));
+    let settings_temp = temp_root.join(format!("lingofix-settings-{}.json", uuid_like()));
     tokio::fs::write(&settings_temp, settings_json).await?;
     let source_kind_arg = if source_kind == OfficeInputKind::Odt {
         "odt"
@@ -1915,7 +1922,10 @@ async fn run_docx_processor(
         if let Some(api_key) = env_api_key.as_ref() {
             cmd.env(BACKEND_API_KEY_ENV, api_key);
         }
-        cmd.env(BACKEND_KEEP_TEMP_ENV, "1");
+        cmd.env(
+            BACKEND_TEMP_DIR_ENV,
+            temp_root.to_string_lossy().to_string(),
+        );
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -2127,7 +2137,7 @@ async fn run_docx_processor(
                     tokio::fs::copy(&final_output, &target).await?;
                     final_output = target.to_string_lossy().to_string();
                 } else {
-                    match convert_docx_to_odt(Path::new(&final_output), &target).await {
+                    match convert_docx_to_odt(Path::new(&final_output), &target, &temp_root).await {
                         Ok(()) => {
                             final_output = target.to_string_lossy().to_string();
                         }
@@ -2155,7 +2165,7 @@ async fn run_docx_processor(
             }
         } else if let Some(original) = original_path {
             let input = PathBuf::from(source_input_path);
-            let temp_base = std::env::temp_dir().join("Lingofix").join("uploads");
+            let temp_base = temp_root.join("uploads");
             if input.starts_with(temp_base) && Path::new(original).exists() {
                 let output_suffix = Path::new(&final_output)
                     .file_stem()
@@ -2164,8 +2174,6 @@ async fn run_docx_processor(
                     .unwrap_or("_lingofix");
                 let target = build_output_path(Path::new(original), output_suffix, OfficeInputKind::Docx)?;
                 tokio::fs::copy(&final_output, &target).await?;
-                let _ = tokio::fs::remove_file(&final_output).await;
-                let _ = tokio::fs::remove_file(backend_input_path).await;
                 final_output = target.to_string_lossy().to_string();
             }
         }
@@ -2192,7 +2200,6 @@ async fn run_docx_processor(
     }
     .await;
 
-    let _ = tokio::fs::remove_file(&settings_temp).await;
     run_result
 }
 
@@ -2203,16 +2210,16 @@ async fn inspect_docx_track_changes(
 ) -> Result<DocxTrackChangesInspection, String> {
     let (input_path, input_kind) =
         normalize_office_input_path(&file_path).map_err(|e| e.to_string())?;
-    let mut converted_docx_temp_path: Option<PathBuf> = None;
+    let temp_root = resolve_temp_root_from_settings(&app);
     let backend_input_path = if input_kind == OfficeInputKind::Odt {
         let converted = convert_office_file_to(
             &input_path,
             OfficeInputKind::Docx,
             "ODT input conversion for track-changes inspection failed",
+            &temp_root,
         )
         .await
         .map_err(|e| e.to_string())?;
-        converted_docx_temp_path = Some(converted.clone());
         converted
     } else {
         input_path
@@ -2222,14 +2229,6 @@ async fn inspect_docx_track_changes(
     let has_track_changes = inspect_docx_track_changes_via_backend(&app, &input_path_str)
         .await
         .map_err(|e| e.to_string())?;
-
-    if let Some(path) = converted_docx_temp_path {
-        if let Some(parent) = path.parent() {
-            let _ = tokio::fs::remove_dir_all(parent).await;
-        } else {
-            let _ = tokio::fs::remove_file(path).await;
-        }
-    }
 
     Ok(DocxTrackChangesInspection { has_track_changes })
 }
@@ -2278,6 +2277,8 @@ async fn inspect_docx_track_changes_via_backend(
         (command, launch)
     };
 
+    let temp_root = resolve_temp_root_from_settings(app);
+    cmd.env(BACKEND_TEMP_DIR_ENV, temp_root.to_string_lossy().to_string());
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     #[cfg(target_os = "windows")]
@@ -2436,6 +2437,7 @@ async fn convert_office_file_to(
     input_path: &Path,
     target_kind: OfficeInputKind,
     error_prefix: &str,
+    temp_root: &Path,
 ) -> anyhow::Result<PathBuf> {
     const SOFFICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
@@ -2450,8 +2452,7 @@ async fn convert_office_file_to(
         .and_then(|s| s.to_str())
         .ok_or_else(|| anyhow!("invalid input filename"))?;
 
-    let conversion_dir = std::env::temp_dir()
-        .join("Lingofix")
+    let conversion_dir = temp_root
         .join("conversions")
         .join(uuid_like());
     tokio::fs::create_dir_all(&conversion_dir).await?;
@@ -2504,7 +2505,6 @@ async fn convert_office_file_to(
             let converted_output =
                 conversion_dir.join(format!("{stem}.{}", target_kind.extension()));
             tokio::fs::copy(&converted_staged, &converted_output).await?;
-            let _ = tokio::fs::remove_file(&converted_staged).await;
             return Ok(converted_output);
         }
 
@@ -2530,20 +2530,19 @@ async fn convert_office_file_to(
     ))
 }
 
-async fn convert_docx_to_odt(input_docx: &Path, output_odt: &Path) -> anyhow::Result<()> {
+async fn convert_docx_to_odt(input_docx: &Path, output_odt: &Path, temp_root: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(temp_root)?;
     let converted = convert_office_file_to(
         input_docx,
         OfficeInputKind::Odt,
         "ODT output conversion failed",
+        temp_root,
     )
     .await?;
     if let Some(parent) = output_odt.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
     tokio::fs::copy(&converted, output_odt).await?;
-    if let Some(parent) = converted.parent() {
-        let _ = tokio::fs::remove_dir_all(parent).await;
-    }
     Ok(())
 }
 
@@ -2675,7 +2674,7 @@ fn check_word_compare_access() -> Result<WordCompareAccessStatus, String> {
 
     #[cfg(target_os = "macos")]
     {
-        let workspace = mac_word_compare_workspace_dir().map_err(|e| e.to_string())?;
+        let workspace = lingofix_temp_root().join("word-compare-probe");
         std::fs::create_dir_all(&workspace)
             .map_err(|e| format!("failed to create workspace: {e}"))?;
 
@@ -2684,6 +2683,7 @@ fn check_word_compare_access() -> Result<WordCompareAccessStatus, String> {
         let read_back = std::fs::read_to_string(&probe)
             .map_err(|e| format!("failed to read probe file: {e}"))?;
         let _ = std::fs::remove_file(&probe);
+        let _ = std::fs::remove_dir(&workspace);
 
         if read_back.trim() != "ok" {
             return Ok(WordCompareAccessStatus {
@@ -2801,16 +2801,6 @@ fn check_libreoffice_compare_access() -> Result<WordCompareAccessStatus, String>
     })
 }
 
-#[cfg(target_os = "macos")]
-fn mac_word_compare_workspace_dir() -> anyhow::Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home)
-        .join("Library")
-        .join("Application Support")
-        .join("Lingofix")
-        .join("compare"))
-}
-
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
     let canonical = normalize_existing_path(&path).map_err(|e| e.to_string())?;
@@ -2853,7 +2843,7 @@ fn open_path_in_system_explorer(path: &Path, reveal_file: bool) -> Result<(), St
 
 #[tauri::command]
 fn open_temp_lingofix_folder() -> Result<(), String> {
-    let temp_dir = std::env::temp_dir().join("Lingofix");
+    let temp_dir = lingofix_temp_root();
     std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
     open_path_in_system_explorer(&temp_dir, false)
 }
@@ -2945,7 +2935,7 @@ async fn save_temp_docx(name: String, base64: String) -> Result<String, String> 
         return Err("only .docx and .odt uploads are allowed".to_string());
     }
 
-    let dir = std::env::temp_dir().join("Lingofix").join("uploads");
+    let dir = lingofix_temp_root().join("uploads");
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| e.to_string())?;
@@ -3097,13 +3087,16 @@ fn uuid_like() -> String {
 }
 
 fn main() {
-    clear_temp_lingofix_dir();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            let _ = app;
+            clear_temp_lingofix_dir();
+            Ok(())
+        })
         .manage(CancellationState::default())
         .manage(ModelCapabilityState::default())
         .invoke_handler(tauri::generate_handler![

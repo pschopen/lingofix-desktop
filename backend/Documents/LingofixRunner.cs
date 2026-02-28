@@ -4,8 +4,6 @@ namespace Lingofix.Backend.Documents;
 
 public static class LingofixRunner
 {
-    private const string KeepTempArtifactsEnv = "LINGOFIX_KEEP_TEMP_ARTIFACTS";
-
     public static async Task<RunResult> RunAsync(RunOptions options, IRunLogger? logger = null, CancellationToken cancellationToken = default)
     {
         logger ??= NullRunLogger.Instance;
@@ -64,7 +62,7 @@ public static class LingofixRunner
             : PathUtils.BuildTempOutputPath(trackOutputPath);
         var tempOriginalPath = isExternalCompare
             ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "original.docx")
-            : Path.Combine(Path.GetTempPath(), "Lingofix", $"orig_{Guid.NewGuid():N}{Path.GetExtension(normalizedInputPath)}");
+            : Path.Combine(PathUtils.GetLingofixTempRoot(), $"orig_{Guid.NewGuid():N}{Path.GetExtension(normalizedInputPath)}");
         CopyReadableSnapshot(normalizedInputPath, tempOriginalPath);
         var checkpoint = ProcessingCheckpointStore.Load(normalizedInputPath, logger);
         var correctedPath = checkpoint?.CorrectedPath
@@ -102,7 +100,6 @@ public static class LingofixRunner
 
         var trackCreated = false;
         var completedSuccessfully = false;
-        var keepTempArtifacts = ShouldKeepTempArtifacts();
         try
         {
             if (compareMode == CompareModeKind.OpenXml)
@@ -366,42 +363,9 @@ public static class LingofixRunner
         {
             try
             {
-                if (!keepTempArtifacts && completedSuccessfully && File.Exists(correctedPath))
-                {
-                    File.Delete(correctedPath);
-                }
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                if (!keepTempArtifacts && File.Exists(tempOutputPath))
-                {
-                    File.Delete(tempOutputPath);
-                }
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                if (!keepTempArtifacts && File.Exists(tempOriginalPath))
-                {
-                    File.Delete(tempOriginalPath);
-                }
-            }
-            catch
-            {
-            }
-
-            try
-            {
                 if (completedSuccessfully)
                 {
-                    ProcessingCheckpointStore.Delete(normalizedInputPath);
+                    ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, completedBatchesByLabel, isActive: false);
                 }
                 else
                 {
@@ -446,10 +410,4 @@ public static class LingofixRunner
         throw new IOException($"Could not create readable snapshot of input file: {sourcePath}", lastError);
     }
 
-    private static bool ShouldKeepTempArtifacts()
-    {
-        var value = Environment.GetEnvironmentVariable(KeepTempArtifactsEnv);
-        return string.Equals(value, "1", StringComparison.Ordinal) ||
-               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
-    }
 }
