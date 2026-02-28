@@ -15,7 +15,8 @@ internal static class LibreOfficeUnoCompareRunner
         string correctedPath,
         string outputPath,
         string author,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        string changeFilterMode = "all")
     {
         if (string.IsNullOrWhiteSpace(sofficePath))
         {
@@ -35,7 +36,9 @@ internal static class LibreOfficeUnoCompareRunner
         var outputFormat = string.Equals(Path.GetExtension(outputPath), ".odt", StringComparison.OrdinalIgnoreCase)
             ? "odt"
             : "docx";
-        var changeFilterMode = outputFormat == "odt" ? "text-only" : "all";
+        var effectiveChangeFilterMode = string.Equals(changeFilterMode, "text-only", StringComparison.OrdinalIgnoreCase)
+            ? "text-only"
+            : "all";
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
             string.Equals(Path.GetExtension(originalPath), ".docx", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(Path.GetExtension(correctedPath), ".docx", StringComparison.OrdinalIgnoreCase))
@@ -85,7 +88,7 @@ internal static class LibreOfficeUnoCompareRunner
                 pythonPath,
                 scriptPath,
                 timeout,
-                ["compare", "127.0.0.1", port.ToString(), compareOriginalPath, compareCorrectedPath, outputPath, author, outputFormat, changeFilterMode]);
+                ["compare", "127.0.0.1", port.ToString(), compareOriginalPath, compareCorrectedPath, outputPath, author, outputFormat, effectiveChangeFilterMode]);
 
             if (compareExitCode != 0)
             {

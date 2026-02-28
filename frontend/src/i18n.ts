@@ -407,6 +407,18 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Vergleichsmodus',
     en: 'Compare mode',
   },
+  'settings.docx.processing_mode': {
+    de: 'Verarbeitungsmodus',
+    en: 'Processing mode',
+  },
+  'settings.docx.processing_mode.openxml': {
+    de: 'OpenXML (Absatzweise)',
+    en: 'OpenXML (paragraph-based)',
+  },
+  'settings.docx.processing_mode.markdown': {
+    de: 'Markdown (Pandoc-Roundtrip)',
+    en: 'Markdown (Pandoc roundtrip)',
+  },
   'settings.docx.compare_mode.openxml': {
     de: 'OpenXML (integriert)',
     en: 'OpenXML (built-in)',
@@ -422,6 +434,10 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.docx.openxml.warning': {
     de: 'OpenXML bietet keine ODT-Kompatibilität. Auch bei DOCX-Dateien kann es zu Veränderungen im Layout kommen. Word wird für DOCX-Dateien, LibreOffice für ODT-Dateien empfohlen.',
     en: 'OpenXML does not offer odt compatibility. Even with docx files, there may be changes in layout. Word is recommended for docx files, LibreOffice for odt files.',
+  },
+  'settings.docx.markdown_compare_mode.warning': {
+    de: 'Markdown-Modus benoetigt Word oder LibreOffice UNO als Vergleichsmodus.',
+    en: 'Markdown mode requires Word or LibreOffice UNO as compare mode.',
   },
   'settings.docx.word_check.hint': {
     de: 'Prüfen Sie den Word-Zugriff einmalig, damit macOS die Berechtigungen für diesen Modus setzen kann.',
