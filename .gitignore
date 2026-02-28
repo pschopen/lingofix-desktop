@@ -48,9 +48,4 @@ tauri/resources/binaries/libreoffice-compare.py
 out/
 
 # Pandoc build artifacts
-*.pdf
-*.epub
-*.docx
-*.odt
-*.html
-*.tex
+tauri/resources/pandoc/*
