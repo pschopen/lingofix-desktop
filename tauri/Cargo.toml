@@ -1,5 +1,5 @@
 [package]
-name = "lingofix-tauri"
+name = "lingofix-desktop"
 version = "0.1.0"
 description = "Lingofix desktop host"
 authors = ["Lingofix"]

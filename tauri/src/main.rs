@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::{HashMap, HashSet};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -2356,7 +2358,37 @@ fn resolve_bundled_backend_executable(app: &AppHandle) -> Option<PathBuf> {
         candidates.push(exe_dir.join("binaries").join(&sidecar_name));
     }
 
-    candidates.into_iter().find(|path| path.is_file())
+    let resolved = candidates.into_iter().find(|path| path.is_file());
+
+    if let Some(path) = resolved.as_ref() {
+        ensure_executable_permissions(path);
+    }
+
+    resolved
+}
+
+fn ensure_executable_permissions(path: &Path) {
+    #[cfg(unix)]
+    {
+        let Ok(metadata) = std::fs::metadata(path) else {
+            return;
+        };
+
+        let mut permissions = metadata.permissions();
+        let mode = permissions.mode();
+        let desired_mode = mode | 0o111;
+        if desired_mode == mode {
+            return;
+        }
+
+        permissions.set_mode(desired_mode);
+        let _ = std::fs::set_permissions(path, permissions);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
 }
 
 fn resolve_dotnet_path() -> Option<PathBuf> {
