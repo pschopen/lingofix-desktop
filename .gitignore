@@ -46,6 +46,9 @@ tauri/resources/binaries/libreoffice-compare.py
 
 # Bundle / publish artifacts
 out/
+artifacts/
+flatpak-build/
+flatpak-repo/
 
 # Pandoc build artifacts
 tauri/resources/pandoc/*

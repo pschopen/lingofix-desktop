@@ -1,0 +1,53 @@
+{
+  "app-id": "com.lingofix.desktop",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "24.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "lingofix-desktop",
+  "finish-args": [
+    "--share=network",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--socket=pulseaudio",
+    "--device=dri",
+    "--filesystem=host",
+    "--talk-name=org.freedesktop.FileManager1"
+  ],
+  "modules": [
+    {
+      "name": "lingofix-desktop",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm755 lingofix-desktop /app/bin/lingofix-desktop",
+        "install -Dm755 lingofix-backend /app/bin/binaries/lingofix-backend",
+        "install -Dm644 com.lingofix.desktop.desktop /app/share/applications/com.lingofix.desktop.desktop",
+        "install -Dm644 com.lingofix.desktop.metainfo.xml /app/share/metainfo/com.lingofix.desktop.metainfo.xml",
+        "install -Dm644 icon.png /app/share/icons/hicolor/128x128/apps/com.lingofix.desktop.png"
+      ],
+      "sources": [
+        {
+          "type": "file",
+          "path": "tauri/target/x86_64-unknown-linux-gnu/release/lingofix-desktop"
+        },
+        {
+          "type": "file",
+          "path": "tauri/binaries/lingofix-backend-x86_64-unknown-linux-gnu",
+          "dest-filename": "lingofix-backend"
+        },
+        {
+          "type": "file",
+          "path": "flatpak/com.lingofix.desktop.desktop"
+        },
+        {
+          "type": "file",
+          "path": "flatpak/com.lingofix.desktop.metainfo.xml"
+        },
+        {
+          "type": "file",
+          "path": "tauri/icons/128x128.png",
+          "dest-filename": "icon.png"
+        }
+      ]
+    }
+  ]
+}

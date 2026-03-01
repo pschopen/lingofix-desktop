@@ -54,7 +54,10 @@ These commands publish the .NET backend as self-contained binaries and bundle th
 - macOS ARM64 app bundle target: `npm run build:app:mac:arm64`
 - macOS x64 app bundle target: `npm run build:app:mac:x64`
 - Windows installer build (includes win-x64 backend binary): `npm run build:app:win`
-- Linux AppImage build (includes linux-x64 backend binary): `npm run build:app:linux`
+- Linux Flatpak prep build (includes linux-x64 backend binary): `npm run build:app:linux:flatpak:prep`
+- Linux Flatpak bundle build: `npm run build:app:linux:flatpak`
+
+For local Flatpak bundle builds, install `flatpak` and `flatpak-builder` first and add Flathub as a remote.
 
 ### Linux Graphics Compatibility
 
@@ -79,7 +82,7 @@ GitHub Actions workflow `Desktop Bundles` builds distributable artifacts for:
 - macOS ARM64 (`.app` zipped)
 - macOS x64 (`.app` zipped)
 - Windows x64 (NSIS `.exe` installer)
-- Linux x64 (AppImage)
+- Linux x64 (Flatpak bundle)
 
 You can run it manually from the Actions tab via `workflow_dispatch`.
 
@@ -103,7 +106,16 @@ This creates a GitHub Release with:
 - `Lingofix-Desktop-v0.2.0-macos-arm64.zip`
 - `Lingofix-Desktop-v0.2.0-macos-x64.zip`
 - `Lingofix-Desktop-v0.2.0-windows-x64.exe`
-- `Lingofix-Desktop-v0.2.0-linux-x64.AppImage`
+- `Lingofix-Desktop-v0.2.0-linux-x64.flatpak`
+
+### Linux Installation (Flatpak)
+
+Install from a downloaded release asset:
+
+```bash
+flatpak install --user ./Lingofix-Desktop-v0.2.0-linux-x64.flatpak
+flatpak run com.lingofix.desktop
+```
 
 Release notes are generated automatically from GitHub.
 

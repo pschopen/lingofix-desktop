@@ -2457,6 +2457,10 @@ fn resolve_soffice_candidates() -> Vec<PathBuf> {
         );
         add_soffice_candidate(&mut candidates, PathBuf::from("soffice.exe"));
     } else {
+        if std::env::var_os("FLATPAK_ID").is_some() {
+            add_soffice_candidate(&mut candidates, PathBuf::from("/run/host/usr/bin/soffice"));
+            add_soffice_candidate(&mut candidates, PathBuf::from("/run/host/usr/local/bin/soffice"));
+        }
         add_soffice_candidate(&mut candidates, PathBuf::from("/usr/bin/soffice"));
         add_soffice_candidate(&mut candidates, PathBuf::from("/usr/local/bin/soffice"));
         add_soffice_candidate(&mut candidates, PathBuf::from("soffice"));
