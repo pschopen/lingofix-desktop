@@ -15,7 +15,8 @@ internal static class LibreOfficeUnoCompareRunner
         string correctedPath,
         string outputPath,
         string author,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        string changeFilterMode = "all")
     {
         if (string.IsNullOrWhiteSpace(sofficePath))
         {
@@ -26,12 +27,18 @@ internal static class LibreOfficeUnoCompareRunner
         var pythonPath = ResolveLibreOfficePythonExecutable(effectiveSofficePath);
         var scriptPath = ResolveCompareScriptPath();
 
-        var workspace = Path.Combine(Path.GetTempPath(), "Lingofix", "libreoffice-uno", Guid.NewGuid().ToString("N"));
+        var workspace = Path.Combine(PathUtils.GetLingofixTempRoot(), "libreoffice-uno", Guid.NewGuid().ToString("N"));
         var userProfilePath = Path.Combine(workspace, "profile");
         Directory.CreateDirectory(userProfilePath);
 
         var compareOriginalPath = originalPath;
         var compareCorrectedPath = correctedPath;
+        var outputFormat = string.Equals(Path.GetExtension(outputPath), ".odt", StringComparison.OrdinalIgnoreCase)
+            ? "odt"
+            : "docx";
+        var effectiveChangeFilterMode = string.Equals(changeFilterMode, "text-only", StringComparison.OrdinalIgnoreCase)
+            ? "text-only"
+            : "all";
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
             string.Equals(Path.GetExtension(originalPath), ".docx", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(Path.GetExtension(correctedPath), ".docx", StringComparison.OrdinalIgnoreCase))
@@ -81,7 +88,7 @@ internal static class LibreOfficeUnoCompareRunner
                 pythonPath,
                 scriptPath,
                 timeout,
-                ["compare", "127.0.0.1", port.ToString(), compareOriginalPath, compareCorrectedPath, outputPath, author]);
+                ["compare", "127.0.0.1", port.ToString(), compareOriginalPath, compareCorrectedPath, outputPath, author, outputFormat, effectiveChangeFilterMode]);
 
             if (compareExitCode != 0)
             {
@@ -99,7 +106,6 @@ internal static class LibreOfficeUnoCompareRunner
         finally
         {
             TryStopProcess(sofficeProcess);
-            TryDeleteDirectory(workspace);
         }
     }
 
@@ -110,17 +116,6 @@ internal static class LibreOfficeUnoCompareRunner
         var expectedOutput = Path.Combine(
             outputDir,
             Path.GetFileNameWithoutExtension(inputPath) + ".docx");
-
-        try
-        {
-            if (File.Exists(expectedOutput))
-            {
-                File.Delete(expectedOutput);
-            }
-        }
-        catch
-        {
-        }
 
         var psi = new ProcessStartInfo
         {
@@ -491,17 +486,4 @@ internal static class LibreOfficeUnoCompareRunner
         }
     }
 
-    private static void TryDeleteDirectory(string directory)
-    {
-        try
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
-        catch
-        {
-        }
-    }
 }

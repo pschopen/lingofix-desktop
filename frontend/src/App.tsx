@@ -3,27 +3,15 @@ import { invoke, listen } from './lib/bridge';
 import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal, ExternalLink } from 'lucide-react';
 import { TextEditor } from './components/TextEditor';
 import { SettingsModal } from './components/SettingsModal';
-import { Settings, FontSize } from './types';
+import { Settings, FontSize, FONT_SIZE_PX, DocxFile } from './types';
 import { t, detectLanguage } from './i18n';
 import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
 
-const DEFAULT_DOCX_SETTINGS = {
-  compare_mode: 'openxml' as const,
-  enable_batching: true,
-  batch_max_chars: 50000,
-  batch_max_paragraphs: 100,
-  enable_cache: true,
-  enable_parallelization: true,
-  max_parallel_requests: 2,
-};
-
-const DEFAULT_PROMPT_EN = 'Correct the following text while maintaining the style and tone.';
-const DEFAULT_SYSTEM_PROMPT_EN = 'Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.';
-const DEFAULT_BATCH_PROMPT_EN = 'Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.';
-const DOCX_COMPARE_FALLBACK_MANUAL_HINT = 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.';
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_STORAGE_KEY = 'lingofix.last_update_check_at';
+const UPDATE_CHECK_ETAG_STORAGE_KEY = 'lingofix.update_check_etag';
+const UPDATE_CHECK_RELEASE_STORAGE_KEY = 'lingofix.update_check_release';
 const GITHUB_LATEST_RELEASE_API = 'https://api.github.com/repos/pschopen/Lingofix/releases/latest';
 const GITHUB_RELEASES_PAGE = 'https://github.com/pschopen/Lingofix/releases';
 
@@ -35,6 +23,11 @@ type UpdateNotice = {
 type UpdateCheckResult = {
   status: 'update-available' | 'up-to-date' | 'error';
   message: string;
+};
+
+type CachedRelease = {
+  tag_name: string;
+  html_url: string;
 };
 
 function parseVersionParts(raw: string): number[] {
@@ -58,10 +51,42 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+function loadCachedRelease(): CachedRelease | null {
+  try {
+    const raw = window.localStorage.getItem(UPDATE_CHECK_RELEASE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<CachedRelease>;
+    const tagName = (parsed.tag_name ?? '').toString().trim();
+    const htmlUrl = (parsed.html_url ?? '').toString().trim();
+    if (!tagName) {
+      return null;
+    }
+
+    return {
+      tag_name: tagName,
+      html_url: htmlUrl || GITHUB_RELEASES_PAGE,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedRelease(release: CachedRelease): void {
+  try {
+    window.localStorage.setItem(UPDATE_CHECK_RELEASE_STORAGE_KEY, JSON.stringify(release));
+  } catch {
+    // ignore localStorage write errors
+  }
+}
+
 function App() {
   const [lang] = useState(detectLanguage());
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
-  const [showDiffModeConsent, setShowDiffModeConsent] = useState(false);
+  const [showOpenXmlConsent, setShowOpenXmlConsent] = useState(false);
+  const [pendingDocxRunSettings, setPendingDocxRunSettings] = useState<Settings | null>(null);
   const {
     text,
     setText,
@@ -80,64 +105,39 @@ function App() {
     clearAll,
   } = useCorrectionState();
   const {
+    docxFiles,
+    activeDocxFileIndex,
+    setActiveDocxFileIndex,
     docxFile,
     docxProgress,
-    docxResult,
+    docxResults,
     docxWarning,
     docxLogs,
     showLogs,
     setShowLogs,
     setDocxSelection,
     setDocxProgress,
-    setDocxResult,
+    setDocxResults,
     setDocxWarning,
     setDocxLogs,
     appendDocxLog,
-    resetDocxRunState,
   } = useDocxState();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [settings, setSettings] = useState<Settings>({
-    provider: 'openai',
-    api_url: 'https://api.openai.com/v1',
-    api_key: null,
-    model: 'gpt-4',
-    custom_prompt: t('settings.prompt.default', lang),
-    system_prompt: t('settings.system_prompt.value', lang),
-    batch_prompt: t('settings.docx.batch_prompt', lang),
-    auto_check_updates: true,
-    temperature: 0.0,
-    provider_keys: {
-      openai: null,
-      ollama: null,
-      openrouter: null,
-      huggingface: null,
-      google: null,
-      mistral: null,
-      custom: null,
-    },
-    docx: DEFAULT_DOCX_SETTINGS,
-    font_size: 'default' as FontSize,
-  });
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
   const shownUpdateVersionRef = useRef<string | null>(null);
+  const cancelPendingDocxStartRef = useRef(false);
+  const currentProcessingDocxRef = useRef<DocxFile | null>(null);
 
   // Apply font-size CSS custom property to document root
   useEffect(() => {
-    const FONT_SIZE_MAP: Record<FontSize, number> = {
-      small: 14,
-      default: 16,
-      large: 18,
-      xl: 20,
-      xxl: 22,
-    };
-    
-    const fontSize = settings.font_size as FontSize || 'default';
-    const px = FONT_SIZE_MAP[fontSize] || 16;
+    const fontSize: FontSize = settings ? settings.font_size : 'default';
+    const px = FONT_SIZE_PX[fontSize];
     document.documentElement.style.setProperty('--fs-base', `${px}px`);
     // Set font-size on html element so Tailwind's rem-based classes respond correctly
     document.documentElement.style.fontSize = `${px}px`;
-  }, [settings.font_size]);
+  }, [settings?.font_size]);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const textRef = useRef(text);
 
@@ -147,50 +147,20 @@ function App() {
 
   const loadSettings = useCallback(async () => {
     try {
-      const loaded = await invoke<Settings>('load_settings');
-      if (!loaded.docx) {
-        loaded.docx = DEFAULT_DOCX_SETTINGS;
-      }
-      let updated = loaded;
-      let changed = false;
-
-      if (lang === 'de') {
-        if (!loaded.custom_prompt || loaded.custom_prompt === DEFAULT_PROMPT_EN) {
-          updated = { ...updated, custom_prompt: t('settings.prompt.default', lang) };
-          changed = true;
-        }
-        if (!loaded.system_prompt || loaded.system_prompt === DEFAULT_SYSTEM_PROMPT_EN) {
-          updated = { ...updated, system_prompt: t('settings.system_prompt.value', lang) };
-          changed = true;
-        }
-        if (!loaded.batch_prompt || loaded.batch_prompt === DEFAULT_BATCH_PROMPT_EN) {
-          updated = { ...updated, batch_prompt: t('settings.docx.batch_prompt', lang) };
-          changed = true;
-        }
-      }
-
-      if (!updated.batch_prompt) {
-        updated = { ...updated, batch_prompt: t('settings.docx.batch_prompt', lang) };
-        changed = true;
-      }
-
-      if (typeof updated.auto_check_updates !== 'boolean') {
-        updated = { ...updated, auto_check_updates: true };
-        changed = true;
-      }
-
-      if (changed) {
-        await invoke('save_settings', { settings: updated });
-      }
-
-      setSettings(updated);
+      const loaded = await invoke<Settings>('load_settings', { locale: lang });
+      setSettings(loaded);
     } catch (error) {
       console.error('Failed to load settings:', error);
-      setError(t('error.load_settings', lang));
+      setSettings(null);
+      setError(t('error.load_settings_reset', lang));
     }
   }, [lang, setError]);
 
   const runUpdateCheck = useCallback(async ({ manual = false, force = false }: { manual?: boolean; force?: boolean } = {}): Promise<UpdateCheckResult> => {
+    if (!settings) {
+      return { status: 'error', message: t('error.load_settings_reset', lang) };
+    }
+
     if (!manual && !settings.auto_check_updates) {
       return { status: 'up-to-date', message: t('update.none', lang) };
     }
@@ -215,13 +185,63 @@ function App() {
 
     try {
       const currentVersion = await invoke<string>('get_app_version');
-      const response = await fetch(GITHUB_LATEST_RELEASE_API, {
-        headers: { Accept: 'application/vnd.github+json' },
+      const cachedEtag = (() => {
+        try {
+          return window.localStorage.getItem(UPDATE_CHECK_ETAG_STORAGE_KEY)?.trim() || '';
+        } catch {
+          return '';
+        }
+      })();
+      const headers: HeadersInit = { Accept: 'application/vnd.github+json' };
+      if (cachedEtag) {
+        headers['If-None-Match'] = cachedEtag;
+      }
+      let response = await fetch(GITHUB_LATEST_RELEASE_API, {
+        headers,
         cache: 'no-store',
       });
 
+      if (response.status === 304) {
+        const cachedRelease = loadCachedRelease();
+        if (!cachedRelease) {
+          response = await fetch(GITHUB_LATEST_RELEASE_API, {
+            headers: { Accept: 'application/vnd.github+json' },
+            cache: 'no-store',
+          });
+        } else {
+          const remoteVersion = cachedRelease.tag_name;
+          const releaseUrl = cachedRelease.html_url || GITHUB_RELEASES_PAGE;
+          const hasUpdate = compareVersions(remoteVersion, currentVersion) > 0;
+          if (hasUpdate) {
+            if (shownUpdateVersionRef.current !== remoteVersion || manual) {
+              shownUpdateVersionRef.current = remoteVersion;
+              setUpdateNotice({ version: remoteVersion, url: releaseUrl });
+            }
+
+            return {
+              status: 'update-available',
+              message: t('update.available.message', lang).replace('{version}', remoteVersion),
+            };
+          }
+
+          return {
+            status: 'up-to-date',
+            message: t('update.none', lang),
+          };
+        }
+      }
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
+      }
+
+      const responseEtag = response.headers.get('etag')?.trim() || '';
+      if (responseEtag) {
+        try {
+          window.localStorage.setItem(UPDATE_CHECK_ETAG_STORAGE_KEY, responseEtag);
+        } catch {
+          // ignore localStorage write errors
+        }
       }
 
       const release = await response.json() as { tag_name?: string; html_url?: string };
@@ -231,6 +251,11 @@ function App() {
       if (!remoteVersion) {
         throw new Error('Missing release version');
       }
+
+      saveCachedRelease({
+        tag_name: remoteVersion,
+        html_url: releaseUrl,
+      });
 
       const hasUpdate = compareVersions(remoteVersion, currentVersion) > 0;
       if (hasUpdate) {
@@ -256,7 +281,7 @@ function App() {
         message: t('update.check_failed', lang),
       };
     }
-  }, [lang, settings.auto_check_updates]);
+  }, [lang, settings]);
 
   const handleManualUpdateCheck = useCallback(async (): Promise<UpdateCheckResult> => {
     const result = await runUpdateCheck({ manual: true, force: true });
@@ -330,16 +355,20 @@ function App() {
     });
 
     const unlistenDocxComplete = listen<{ outputPath: string; trackChanges: boolean }>('docx_complete', (event) => {
-      setDocxResult(event.payload);
-      setIsCorrecting(false);
-      setDocxProgress(null);
+      const inputName = currentProcessingDocxRef.current?.name ?? event.payload.outputPath;
+      setDocxResults((prev) => [
+        ...prev,
+        {
+          inputName,
+          outputPath: event.payload.outputPath,
+          trackChanges: event.payload.trackChanges,
+        },
+      ]);
     });
 
     const unlistenDocxError = listen<string>('docx_error', (event) => {
       setInfoMessage(null);
       setError(event.payload);
-      setIsCorrecting(false);
-      setDocxProgress(null);
     });
 
     const unlistenDocxLog = listen<{ level: string; message: string }>('docx_log', (event) => {
@@ -365,7 +394,7 @@ function App() {
     loadSettings,
     setCorrectedText,
     setDocxProgress,
-    setDocxResult,
+    setDocxResults,
     setDocxWarning,
     setError,
     setInfoMessage,
@@ -375,7 +404,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!settings.auto_check_updates) {
+    if (!settings || !settings.auto_check_updates) {
       return;
     }
 
@@ -387,7 +416,7 @@ function App() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [runUpdateCheck, settings.auto_check_updates]);
+  }, [runUpdateCheck, settings]);
 
   // Auto-scroll to bottom of logs
   useEffect(() => {
@@ -401,63 +430,89 @@ function App() {
     if (infoMessage) {
       setInfoMessage(null);
     }
-    if (newText.trim() && docxFile) {
+    if (newText.trim() && docxFiles.length > 0) {
       setDocxSelection(null);
     }
   };
 
-  const handleDocxFile = useCallback((file: { name: string; path: string; size: number; originalPath?: string } | null) => {
-    setDocxSelection(file);
-    setShowDiffModeConsent(false);
+  const handleDocxFiles = useCallback((files: { name: string; path: string; size: number; originalPath?: string }[] | null) => {
+    setDocxSelection(files);
+    setShowOpenXmlConsent(false);
+    setPendingDocxRunSettings(null);
   }, [setDocxSelection]);
 
-  const startDocxCorrection = useCallback(async (acceptExistingTrackChanges: boolean) => {
-    if (!docxFile?.path) {
+  const runSingleDocxWithPrechecks = useCallback(async (file: DocxFile, settingsForRun: Settings) => {
+    const effectiveSettings = settingsForRun;
+
+    if (effectiveSettings.docx.compare_mode === 'openxml') {
+      const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
+        filePath: file.path,
+      });
+
+      if (inspection.hasTrackChanges) {
+        throw new Error(`${file.name}: ${t('docx.openxml.accept_existing.cancelled', lang)}`);
+      }
+    }
+
+    currentProcessingDocxRef.current = file;
+    await invoke('correct_docx', {
+      filePath: file.path,
+      originalPath: file.originalPath,
+      acceptExistingTrackChanges: false,
+      settings: effectiveSettings,
+    });
+  }, [lang]);
+
+  const runDocxQueue = useCallback(async (files: DocxFile[], settingsForRun: Settings) => {
+    if (files.length === 0) {
       return;
     }
 
+    setPendingDocxRunSettings(null);
+    cancelPendingDocxStartRef.current = false;
     setIsCorrecting(true);
-    setDocxProgress({ percent: 0, message: t('docx.processing', lang) });
-    resetDocxRunState();
     setError(null);
     setInfoMessage(null);
+    setDocxResults([]);
+    setDocxWarning(null);
+    setDocxLogs([]);
 
-    try {
-      await invoke('correct_docx', {
-        filePath: docxFile.path,
-        originalPath: docxFile.originalPath,
-        acceptExistingTrackChanges,
-        settings,
-      });
-    } catch (error) {
-      console.error('DOCX correction failed:', error);
-      setError(String(error));
-      setIsCorrecting(false);
-      setDocxProgress(null);
-    }
-  }, [docxFile, lang, resetDocxRunState, setDocxProgress, setError, setInfoMessage, setIsCorrecting, settings]);
+    for (let index = 0; index < files.length; index += 1) {
+      if (cancelPendingDocxStartRef.current) {
+        break;
+      }
 
-  const handleCorrect = useCallback(async () => {
-    if (docxFile) {
-      if (!docxFile.path) return;
+      const file = files[index];
+      setActiveDocxFileIndex(index);
+      setDocxProgress({ percent: 0, message: `${t('docx.processing', lang)} (${index + 1}/${files.length})` });
 
       try {
-        if (settings.docx.compare_mode === 'openxml') {
-          const inspection = await invoke<{ hasTrackChanges: boolean }>('inspect_docx_track_changes', {
-            filePath: docxFile.path,
-          });
-
-          if (inspection.hasTrackChanges) {
-            setShowDiffModeConsent(true);
-            return;
-          }
-        }
-
-        await startDocxCorrection(false);
+        await runSingleDocxWithPrechecks(file, settingsForRun);
       } catch (error) {
-        console.error('DOCX pre-check failed:', error);
-        setError(String(error));
+        if (cancelPendingDocxStartRef.current) {
+          break;
+        }
+        console.error('DOCX correction failed:', error);
+        const message = String(error);
+        setError(message);
+        appendDocxLog('error', message);
       }
+    }
+
+    currentProcessingDocxRef.current = null;
+    setIsCorrecting(false);
+    setDocxProgress(null);
+    setActiveDocxFileIndex(0);
+  }, [appendDocxLog, lang, runSingleDocxWithPrechecks, setActiveDocxFileIndex, setDocxProgress, setDocxResults, setDocxWarning, setError, setInfoMessage, setIsCorrecting, setDocxLogs]);
+
+  const handleCorrect = useCallback(async () => {
+    if (!settings) {
+      setError(t('error.load_settings_reset', lang));
+      return;
+    }
+
+    if (docxFiles.length > 0) {
+      await runDocxQueue(docxFiles, settings);
       return;
     }
     
@@ -482,31 +537,36 @@ function App() {
       setShowDiff(false);
     }
   }, [
-    docxFile,
+    docxFiles,
     lang,
+    runDocxQueue,
     setError,
     setInfoMessage,
     setIsStreaming,
     setShowDiff,
     settings,
-    startDocxCorrection,
     text,
   ]);
 
-  const handleDiffModeConsentContinue = useCallback(async () => {
-    setShowDiffModeConsent(false);
-    await startDocxCorrection(true);
-  }, [startDocxCorrection]);
+  const handleOpenXmlConsentContinue = useCallback(async () => {
+    setShowOpenXmlConsent(false);
+    if (!docxFile || !pendingDocxRunSettings) {
+      return;
+    }
+    await runSingleDocxWithPrechecks(docxFile, pendingDocxRunSettings);
+  }, [docxFile, pendingDocxRunSettings, runSingleDocxWithPrechecks]);
 
-  const handleDiffModeConsentCancel = useCallback(() => {
-    setShowDiffModeConsent(false);
-    setInfoMessage(t('docx.diff_mode.accept_existing.cancelled', lang));
+  const handleOpenXmlConsentCancel = useCallback(() => {
+    setShowOpenXmlConsent(false);
+    setPendingDocxRunSettings(null);
+    setInfoMessage(t('docx.openxml.accept_existing.cancelled', lang));
   }, [lang]);
 
   const handleNew = () => {
     clearAll();
     setDocxSelection(null);
-    setShowDiffModeConsent(false);
+    setShowOpenXmlConsent(false);
+    setPendingDocxRunSettings(null);
   };
 
   const handleReject = () => {
@@ -519,7 +579,8 @@ function App() {
 
   const handleStop = async () => {
     try {
-      if (docxFile) {
+      if (docxFiles.length > 0) {
+        cancelPendingDocxStartRef.current = true;
         await invoke('cancel_docx');
         setIsCorrecting(false);
         setDocxProgress(null);
@@ -543,7 +604,15 @@ function App() {
     }
   };
 
-  const isDocxMode = !!docxFile;
+  const handleResetSettings = useCallback(async (): Promise<Settings> => {
+    const reset = await invoke<Settings>('reset_settings', { locale: lang });
+    setSettings(reset);
+    setError(null);
+    setInfoMessage(t('settings.app_reset.success', lang));
+    return reset;
+  }, [lang, setError]);
+
+  const isDocxMode = docxFiles.length > 0;
   const hasText = text.trim().length > 0;
 
   const handleToggleDarkMode = () => {
@@ -557,7 +626,7 @@ function App() {
   };
 
   const localizeDocxLogMessage = useCallback((message: string) => {
-    if (message === DOCX_COMPARE_FALLBACK_MANUAL_HINT) {
+    if (message === t('docx.logs.compare_fallback_manual_hint.backend_source', 'en')) {
       return t('docx.logs.compare_fallback_manual_hint', lang);
     }
     return message;
@@ -601,7 +670,7 @@ function App() {
             {/* Dark mode toggle */}
             <button
               onClick={handleToggleDarkMode}
-              aria-label="Toggle dark mode"
+              aria-label={t('theme.toggle', lang)}
               className={`p-2 rounded-lg transition-all duration-200 ${
                 isDarkMode 
                   ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-700' 
@@ -648,6 +717,11 @@ function App() {
                       </div>
                     </div>
                     <span className={`text-base font-medium tabular-nums ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>{docxProgress.percent}%</span>
+                    {docxFiles.length > 1 && (
+                      <span className={`text-base font-medium tabular-nums ${isDarkMode ? 'text-accent-300' : 'text-accent-700'}`}>
+                        {activeDocxFileIndex + 1}/{docxFiles.length}
+                      </span>
+                    )}
                     <span className={`text-base truncate ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>{docxProgress.message}</span>
                   </div>
                   
@@ -683,10 +757,26 @@ function App() {
                   )}
                 </div>
               ) : isDocxMode ? (
-                <span className={`inline-flex items-center gap-2 text-base font-medium ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
-                  <FileText size={16} />
-                  {docxFile?.name}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className={`inline-flex items-center gap-2 text-base font-medium ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
+                    <FileText size={16} />
+                    {isCorrecting && docxFile
+                      ? `${docxFile.name} (${activeDocxFileIndex + 1}/${docxFiles.length})`
+                      : t('editor.files_selected', lang).replace('{count}', String(docxFiles.length))}
+                  </span>
+                  <button
+                    onClick={() => setShowLogs(!showLogs)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm font-medium transition-colors ${
+                      showLogs
+                        ? (isDarkMode ? 'bg-surface-700 text-accent-400' : 'bg-surface-200 text-accent-600')
+                        : (isDarkMode ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-800' : 'text-surface-500 hover:text-surface-700 hover:bg-surface-100')
+                    }`}
+                  >
+                    <Terminal size={14} />
+                    <span>{docxLogs.length}</span>
+                    {showLogs ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+                </div>
               ) : hasText ? (
                 <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
                   {text.trim().split(/\s+/).filter(w => w.length > 0).length} {t('stats.words', lang)}, {text.length} {t('stats.chars', lang)}
@@ -722,7 +812,7 @@ function App() {
                 </>
               ) : (
                 <>
-                  {(hasText || docxFile) && (
+                  {(hasText || docxFiles.length > 0) && (
                   <button onClick={handleNew} className="btn-secondary !py-2 !text-base">
                       <Trash2 size={16} />
                       {t('button.clear', lang)}
@@ -730,7 +820,7 @@ function App() {
                   )}
                   <button
                     onClick={handleCorrect}
-                    disabled={isCorrecting || (!hasText && !docxFile)}
+                    disabled={isCorrecting || (!hasText && docxFiles.length === 0)}
                     className="btn-primary !py-2 !text-base"
                   >
                     {isCorrecting ? (
@@ -753,64 +843,62 @@ function App() {
           {/* --- Log Window --- */}
           {showLogs && (
             <div className={`border-b max-h-48 overflow-hidden flex flex-col ${isDarkMode ? 'bg-surface-900 border-surface-700' : 'bg-surface-50 border-surface-200'}`}>
-              <div className={`flex items-center justify-between px-4 py-2 border-b ${isDarkMode ? 'border-surface-800 bg-surface-800/50' : 'border-surface-200 bg-surface-100/50'}`}>
+              <div className={`px-4 py-2 border-b ${isDarkMode ? 'border-surface-800 bg-surface-800/50' : 'border-surface-200 bg-surface-100/50'}`}>
                 <span className={`text-sm font-medium ${isDarkMode ? 'text-surface-300' : 'text-surface-600'}`}>
                   {t('docx.logs', lang)}
                 </span>
-                <button 
-                  onClick={() => {
-                    setDocxLogs([]);
-                    setShowLogs(false);
-                  }}
-                  className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'text-surface-400 hover:bg-surface-700' : 'text-surface-500 hover:bg-surface-200'}`}
-                >
-                  {t('docx.clearLogs', lang)}
-                </button>
               </div>
               <div className="flex-1 overflow-y-auto p-3 space-y-1.5 font-mono text-sm">
                 {docxLogs.length === 0 && (
                   <div className={`${isDarkMode ? 'text-surface-500' : 'text-surface-400'} text-sm`}>{t('docx.logs.empty', lang)}</div>
                 )}
-                {docxLogs.map((log, index) => (
-                  <div 
-                    key={index} 
-                    className={`flex items-start gap-2 ${
-                      log.level === 'error' 
-                        ? (isDarkMode ? 'text-red-400' : 'text-red-600')
-                        : log.level === 'warning'
-                        ? (isDarkMode ? 'text-amber-300' : 'text-amber-700')
-                        : log.level === 'info'
-                        ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-600')
-                        : (isDarkMode ? 'text-surface-400' : 'text-surface-600')
-                    }`}
-                  >
-                    <span className={`text-xs opacity-60 flex-shrink-0 mt-0.5`}>
-                      {new Date(log.timestamp).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 uppercase font-bold ${
-                      log.level === 'error'
-                        ? (isDarkMode ? 'bg-red-900/30 text-red-300' : 'bg-red-100 text-red-700')
-                        : log.level === 'warning'
-                        ? (isDarkMode ? 'bg-amber-900/30 text-amber-300' : 'bg-amber-100 text-amber-700')
-                        : log.level === 'info'
-                        ? (isDarkMode ? 'bg-emerald-900/30 text-emerald-300' : 'bg-emerald-100 text-emerald-700')
-                        : (isDarkMode ? 'bg-surface-700 text-surface-300' : 'bg-surface-200 text-surface-600')
-                    }`}>
-                      {log.level}
-                    </span>
-                    <span className="break-all">{localizeDocxLogMessage(log.message)}</span>
-                  </div>
-                ))}
+                {docxLogs.map((log, index) => {
+                  const isBatchingProfile = log.message.startsWith('Batching profile:');
+                  return (
+                    <div 
+                      key={index} 
+                      className={`flex items-start gap-2 ${
+                        isBatchingProfile
+                          ? (isDarkMode ? 'text-cyan-300 bg-cyan-900/20 border border-cyan-800/40 rounded px-2 py-1' : 'text-cyan-800 bg-cyan-50 border border-cyan-200 rounded px-2 py-1')
+                          : log.level === 'error' 
+                          ? (isDarkMode ? 'text-red-400' : 'text-red-600')
+                          : log.level === 'warning'
+                          ? (isDarkMode ? 'text-amber-300' : 'text-amber-700')
+                          : log.level === 'info'
+                          ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-600')
+                          : (isDarkMode ? 'text-surface-400' : 'text-surface-600')
+                      }`}
+                    >
+                      <span className={`text-xs opacity-60 flex-shrink-0 mt-0.5`}>
+                        {new Date(log.timestamp).toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 uppercase font-bold ${
+                        isBatchingProfile
+                          ? (isDarkMode ? 'bg-cyan-900/40 text-cyan-200' : 'bg-cyan-100 text-cyan-700')
+                          : log.level === 'error'
+                          ? (isDarkMode ? 'bg-red-900/30 text-red-300' : 'bg-red-100 text-red-700')
+                          : log.level === 'warning'
+                          ? (isDarkMode ? 'bg-amber-900/30 text-amber-300' : 'bg-amber-100 text-amber-700')
+                          : log.level === 'info'
+                          ? (isDarkMode ? 'bg-emerald-900/30 text-emerald-300' : 'bg-emerald-100 text-emerald-700')
+                          : (isDarkMode ? 'bg-surface-700 text-surface-300' : 'bg-surface-200 text-surface-600')
+                      }`}>
+                        {isBatchingProfile ? 'batch' : log.level}
+                      </span>
+                      <span className="whitespace-pre-wrap break-words">{localizeDocxLogMessage(log.message)}</span>
+                    </div>
+                  );
+                })}
                 <div ref={logsEndRef} />
               </div>
             </div>
           )}
 
           {/* --- DOCX Result Banner --- */}
-          {docxResult && (
-            <div className={`px-5 py-3 border-b flex items-center justify-between animate-slide-up ${
-              isDarkMode 
-                ? 'bg-emerald-900/20 border-emerald-800/40' 
+          {docxResults.map((result, index) => (
+            <div key={`${result.outputPath}-${index}`} className={`px-5 py-3 border-b flex items-center justify-between animate-slide-up ${
+              isDarkMode
+                ? 'bg-emerald-900/20 border-emerald-800/40'
                 : 'bg-emerald-50/80 border-emerald-100'
             }`}>
               <div className="flex items-center gap-3 min-w-0">
@@ -824,28 +912,31 @@ function App() {
                     <span className={`text-sm font-medium ${isDarkMode ? 'text-emerald-300' : 'text-emerald-800'}`}>
                       {t('docx.complete', lang)}
                     </span>
-                    {docxResult.trackChanges && (
+                    {result.trackChanges && (
                       <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
-                        isDarkMode 
-                          ? 'bg-emerald-900/40 text-emerald-300' 
+                        isDarkMode
+                          ? 'bg-emerald-900/40 text-emerald-300'
                           : 'bg-emerald-200/60 text-emerald-700'
                       }`}>
                         {t('docx.trackChanges.created', lang)}
                       </span>
                     )}
                   </div>
+                  <p className={`text-sm truncate mt-0.5 ${isDarkMode ? 'text-emerald-300/90' : 'text-emerald-700/90'}`} title={result.inputName}>
+                    {result.inputName}
+                  </p>
                   <p className={`text-base truncate mt-0.5 ${
                     isDarkMode ? 'text-emerald-400/80' : 'text-emerald-600/80'
-                  }`} title={docxResult.outputPath}>
-                    {docxResult.outputPath}
+                  }`} title={result.outputPath}>
+                    {result.outputPath}
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => invoke('open_folder', { path: docxResult.outputPath })}
+                onClick={() => invoke('open_folder', { path: result.outputPath })}
                 className={`btn-ghost !py-2 !px-3 !text-base flex-shrink-0 ${
-                  isDarkMode 
-                    ? '!text-emerald-300 hover:!bg-emerald-900/30' 
+                  isDarkMode
+                    ? '!text-emerald-300 hover:!bg-emerald-900/30'
                     : '!text-emerald-700 hover:!bg-emerald-100'
                 }`}
               >
@@ -853,7 +944,7 @@ function App() {
                 {t('docx.openFolder', lang)}
               </button>
             </div>
-          )}
+          ))}
 
           {docxWarning && (
             <div className={`px-5 py-3 border-b flex items-start gap-3 animate-slide-up ${
@@ -949,14 +1040,15 @@ function App() {
             <TextEditor
               text={text}
               onChange={handleTextChange}
+              onSubmitShortcut={handleCorrect}
               correctedText={correctedText}
               showDiff={showDiff}
-              readOnly={showDiff || !!docxResult}
+              readOnly={showDiff || docxResults.length > 0}
               isStreaming={isStreaming}
               lang={lang}
               isDarkMode={isDarkMode}
-              docxFile={docxFile}
-              onDocxFile={handleDocxFile}
+              docxFiles={docxFiles}
+              onDocxFiles={handleDocxFiles}
               isCorrecting={isCorrecting}
             />
           </div>
@@ -969,13 +1061,14 @@ function App() {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSave={handleSaveSettings}
+        onResetSettings={handleResetSettings}
         onCheckUpdates={handleManualUpdateCheck}
         lang={lang}
         isDarkMode={isDarkMode}
       />
 
-      {/* === Diff Mode Consent Modal === */}
-      {showDiffModeConsent && (
+      {/* === OpenXML Consent Modal === */}
+      {showOpenXmlConsent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
           <div className={`card w-full max-w-xl mx-4 animate-scale-in ${
             isDarkMode ? '!bg-surface-800 !border-surface-700' : ''
@@ -988,12 +1081,12 @@ function App() {
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
-                  {t('docx.diff_mode.accept_existing.title', lang)}
+                  {t('docx.openxml.accept_existing.title', lang)}
                 </h3>
                 <p className={`mt-2 text-sm whitespace-pre-wrap leading-relaxed ${
                   isDarkMode ? 'text-surface-300' : 'text-surface-600'
                 }`}>
-                  {t('docx.diff_mode.accept_existing.message', lang)}
+                  {t('docx.openxml.accept_existing.message', lang)}
                 </p>
               </div>
             </div>
@@ -1003,16 +1096,16 @@ function App() {
                 : 'bg-surface-50 border-surface-100'
             }`}>
               <button
-                onClick={handleDiffModeConsentCancel}
+                onClick={handleOpenXmlConsentCancel}
                 className="btn-secondary !text-base"
               >
-                {t('docx.diff_mode.accept_existing.cancel', lang)}
+                {t('docx.openxml.accept_existing.cancel', lang)}
               </button>
               <button
-                onClick={handleDiffModeConsentContinue}
+                onClick={handleOpenXmlConsentContinue}
                 className="btn-primary !text-base"
               >
-                {t('docx.diff_mode.accept_existing.continue', lang)}
+                {t('docx.openxml.accept_existing.continue', lang)}
               </button>
             </div>
           </div>

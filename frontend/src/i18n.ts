@@ -38,6 +38,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Streaming...',
     en: 'Streaming...',
   },
+  'theme.toggle': {
+    de: 'Dunkelmodus umschalten',
+    en: 'Toggle dark mode',
+  },
   'button.stop': {
     de: 'Stopp',
     en: 'Stop',
@@ -89,6 +93,10 @@ const translations: Record<string, Record<Language, string>> = {
   'error.load_settings': {
     de: 'Einstellungen konnten nicht geladen werden.',
     en: 'Could not load settings.',
+  },
+  'error.load_settings_reset': {
+    de: 'Einstellungen konnten nicht geladen werden. Öffnen Sie Einstellungen > Erweitert und wählen Sie "App zurücksetzen".',
+    en: 'Could not load settings. Open Settings > Advanced and choose "Reset app".',
   },
   'error.empty_result': {
     de: 'Die Korrektur lieferte keinen Text. Bitte prüfen Sie API-Key, Modell und Provider in den Einstellungen.',
@@ -156,6 +164,14 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Modelle laden',
     en: 'Load models',
   },
+  'settings.model.loading': {
+    de: 'Modelle werden geladen...',
+    en: 'Loading models...',
+  },
+  'settings.model.none': {
+    de: 'Keine Modelle verfügbar',
+    en: 'No models available',
+  },
   'settings.model.error': {
     de: 'Fehler beim Laden der Modelle',
     en: 'Error loading models',
@@ -163,6 +179,66 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.prompt': {
     de: 'Prompt',
     en: 'Prompt',
+  },
+  'settings.prompt_presets': {
+    de: 'Prompt',
+    en: 'Prompt',
+  },
+  'settings.prompt_presets.select_label': {
+    de: 'Vorlage auswählen',
+    en: 'Select preset',
+  },
+  'settings.prompt_presets.editor_label': {
+    de: 'Inhalt der aktiven Vorlage',
+    en: 'Content of active preset',
+  },
+  'settings.prompt_presets.name_label': {
+    de: 'Name',
+    en: 'Name',
+  },
+  'settings.prompt_presets.new': {
+    de: 'Neu',
+    en: 'New',
+  },
+  'settings.prompt_presets.duplicate': {
+    de: 'Duplizieren',
+    en: 'Duplicate',
+  },
+  'settings.prompt_presets.rename': {
+    de: 'Umbenennen',
+    en: 'Rename',
+  },
+  'settings.prompt_presets.delete': {
+    de: 'Löschen',
+    en: 'Delete',
+  },
+  'settings.prompt_presets.new_name_prompt': {
+    de: 'Name der neuen Vorlage:',
+    en: 'Name of the new preset:',
+  },
+  'settings.prompt_presets.new_name_default': {
+    de: 'Neue Vorlage',
+    en: 'New preset',
+  },
+  'settings.prompt_presets.rename_prompt': {
+    de: 'Neuer Name für die Vorlage:',
+    en: 'New name for the preset:',
+  },
+  'settings.prompt_presets.delete_confirm': {
+    de: 'Vorlage "{name}" wirklich löschen?',
+    en: 'Delete preset "{name}"?',
+  },
+  'settings.prompt_presets.keep_one': {
+    de: 'Mindestens eine Vorlage muss erhalten bleiben.',
+    en: 'At least one preset must remain.',
+  },
+  'settings.prompt_presets.empty_name': {
+    de: 'Bitte einen Namen für die Vorlage eingeben.',
+    en: 'Please enter a preset name.',
+  },
+  'settings.prompt_presets.copy_suffix': {
+    de: 'Kopie',
+    en: 'Copy',
   },
   'settings.prompt.placeholder': {
     de: 'Geben Sie Ihren Prompt ein...',
@@ -172,10 +248,6 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Der Text, den Sie korrigieren möchten, wird automatisch an den Prompt angehängt.',
     en: 'The text you want to correct will be automatically appended to the prompt.',
   },
-  'settings.prompt.default': {
-    de: 'Korrigiere den folgenden Text auf Fehler.',
-    en: 'Correct the following text for mistakes.',
-  },
   'settings.system_prompt': {
     de: 'System-Prompt',
     en: 'System Prompt',
@@ -184,9 +256,9 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Wird automatisch unter den Prompt angehängt und gilt für Editor und DOCX.',
     en: 'Appended to the prompt and used for both editor and DOCX.',
   },
-  'settings.system_prompt.value': {
-    de: 'Wichtig: Antworte nur mit dem korrigierten Text. Keine Erklärungen, keine Notizen, keine zusätzlichen Sätze.',
-    en: 'Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.',
+  'settings.system_prompt.placeholder': {
+    de: 'Geben Sie einen System-Prompt ein...',
+    en: 'Enter a system prompt...',
   },
   'settings.cancel': {
     de: 'Abbrechen',
@@ -218,6 +290,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Oder klicken, um eine Datei auszuwählen',
     en: 'Or click to choose a file',
   },
+  'editor.files_selected': {
+    de: '{count} Datei(en) ausgewählt',
+    en: '{count} file(s) selected',
+  },
   'editor.dropHere': {
     de: 'Hier ablegen',
     en: 'Drop here',
@@ -241,7 +317,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Correction complete',
   },
   'docx.trackChanges': {
-    de: 'Änderungen verfolgen',
+    de: 'Änderungsverfolgung',
     en: 'Track Changes',
   },
   'docx.trackChanges.created': {
@@ -261,8 +337,8 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Error during DOCX correction',
   },
   'docx.openFolder': {
-    de: 'Ordner öffnen',
-    en: 'Open folder',
+    de: 'Datei anzeigen',
+    en: 'Show file',
   },
   'docx.logs': {
     de: 'Logs',
@@ -277,8 +353,12 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'No logs yet.',
   },
   'docx.logs.compare_fallback_manual_hint': {
-    de: 'Korrigierte Datei ohne Track Changes bereitgestellt. Sie können den Vergleich manuell in Ihrer Office-Anwendung durchführen.',
+    de: 'Korrigierte Datei ohne Änderungsverfolgung bereitgestellt. Sie können den Vergleich manuell in Ihrer Office-Anwendung durchführen.',
     en: 'Returned corrected file without track changes. You can run the comparison manually in your office application.',
+  },
+  'docx.logs.compare_fallback_manual_hint.backend_source': {
+    de: 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.',
+    en: 'Returning corrected file without generated track changes. You can run the document comparison manually in your office application.',
   },
   'docx.cancelled': {
     de: 'DOCX-Verarbeitung wurde gestoppt.',
@@ -288,27 +368,26 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Hinweis',
     en: 'Notice',
   },
-  'docx.diff_mode.accept_existing.title': {
+  'docx.openxml.accept_existing.title': {
     de: 'Vorhandene Änderungen gefunden',
     en: 'Existing changes detected',
   },
-  'docx.diff_mode.accept_existing.message': {
-    de: 'Im Diff-Modus kann die Korrektur nur fortgesetzt werden, wenn Lingofix vorab alle vorhandenen Track Changes automatisch akzeptiert.\n\nMöchten Sie fortfahren?',
-    en: 'In diff mode, correction can continue only if Lingofix automatically accepts all existing track changes before correction.\n\nDo you want to continue?',
+  'docx.openxml.accept_existing.message': {
+    de: 'Im OpenXML-Modus kann die Korrektur nur fortgesetzt werden, wenn Lingofix vorab alle vorhandenen Änderungen automatisch akzeptiert.\n\nMöchten Sie fortfahren?',
+    en: 'In OpenXML mode, correction can continue only if Lingofix automatically accepts all existing tracked changes before correction.\n\nDo you want to continue?',
   },
-  'docx.diff_mode.accept_existing.cancel': {
+  'docx.openxml.accept_existing.cancel': {
     de: 'Abbrechen',
     en: 'Cancel',
   },
-  'docx.diff_mode.accept_existing.continue': {
+  'docx.openxml.accept_existing.continue': {
     de: 'Fortfahren',
     en: 'Continue',
   },
-  'docx.diff_mode.accept_existing.cancelled': {
-    de: 'DOCX-Korrektur im Diff-Modus wurde abgebrochen.',
-    en: 'DOCX correction in diff mode was cancelled.',
+  'docx.openxml.accept_existing.cancelled': {
+    de: 'DOCX-Korrektur im OpenXML-Modus wurde abgebrochen.',
+    en: 'DOCX correction in OpenXML mode was cancelled.',
   },
-
   // Settings Modal - Tabs
   'settings.tab.general': {
     de: 'Allgemein',
@@ -341,7 +420,7 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'LibreOffice UNO (native, soffice)',
   },
   'settings.docx.openxml.warning': {
-    de: 'OpenXML bietet keine odt.-Kompatibilität. Auch bei docx.-Dateien kann es zu Veränderungen im Layout kommen. Word wird für docx.-Dateien, LibreOffice für odt.-Dateien empfohlen.',
+    de: 'OpenXML bietet keine ODT-Kompatibilität. Auch bei DOCX-Dateien kann es zu Veränderungen im Layout kommen. Word wird für DOCX-Dateien, LibreOffice für ODT-Dateien empfohlen.',
     en: 'OpenXML does not offer odt compatibility. Even with docx files, there may be changes in layout. Word is recommended for docx files, LibreOffice for odt files.',
   },
   'settings.docx.word_check.hint': {
@@ -373,16 +452,16 @@ const translations: Record<string, Record<Language, string>> = {
     en: 'Could not verify compare mode access.',
   },
   'settings.temperature': {
-    de: 'Temperature',
+    de: 'Temperatur',
     en: 'Temperature',
   },
   'settings.docx.batching': {
     de: 'Batching',
     en: 'Batching',
   },
-  'settings.docx.batch_prompt': {
-    de: 'Korrigiere nur den Text innerhalb der Tags. Gib die Antwort mit exakt denselben Tags und IDs zurück.\nKeine zusätzlichen Zeilen außerhalb der Tags.',
-    en: 'Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags.',
+  'settings.docx.chunk_size': {
+    de: 'Chunk-Größe',
+    en: 'Chunk size',
   },
   'settings.docx.batch_max_chars': {
     de: 'Max. Zeichen pro Batch',
@@ -391,6 +470,34 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.docx.batch_max_paragraphs': {
     de: 'Max. Absätze pro Batch',
     en: 'Max paragraphs per batch',
+  },
+  'settings.docx.batching_parts': {
+    de: 'Batching anwenden auf',
+    en: 'Apply batching to',
+  },
+  'settings.docx.batching_parts.main': {
+    de: 'Haupttext',
+    en: 'Main text',
+  },
+  'settings.docx.batching_parts.footnotes': {
+    de: 'Fußnoten',
+    en: 'Footnotes',
+  },
+  'settings.docx.batching_parts.endnotes': {
+    de: 'Endnoten',
+    en: 'Endnotes',
+  },
+  'settings.docx.batching_parts.headers': {
+    de: 'Kopfzeilen',
+    en: 'Headers',
+  },
+  'settings.docx.batching_parts.footers': {
+    de: 'Fußzeilen',
+    en: 'Footers',
+  },
+  'settings.docx.batching_parts.glossary': {
+    de: 'Glossar',
+    en: 'Glossary',
   },
   'settings.docx.cache': {
     de: 'Cache',
@@ -450,9 +557,29 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Systempfade',
     en: 'System paths',
   },
+  'settings.app_reset': {
+    de: 'App zurücksetzen',
+    en: 'Reset app',
+  },
+  'settings.app_reset.hint': {
+    de: 'Erstellt die settings.json neu mit Standardwerten. Verwenden Sie dies bei beschädigter Konfiguration.',
+    en: 'Recreates settings.json with default values. Use this if your configuration is broken.',
+  },
+  'settings.app_reset.button': {
+    de: 'App zurücksetzen',
+    en: 'Reset app',
+  },
+  'settings.app_reset.success': {
+    de: 'Die App wurde zurückgesetzt. Die Standard-Einstellungen sind wiederhergestellt.',
+    en: 'App reset complete. Default settings were restored.',
+  },
+  'settings.app_reset.failed': {
+    de: 'App konnte nicht zurückgesetzt werden',
+    en: 'Could not reset app',
+  },
   'settings.system_paths.hint': {
-    de: 'Temp-Ordner und settings.json direkt im Dateiexplorer öffnen.',
-    en: 'Open the temp folder and settings.json directly in your file explorer.',
+    de: 'Temp-Ordner, settings.json und debug.log direkt im Dateiexplorer öffnen.',
+    en: 'Open the temp folder, settings.json, and debug.log directly in your file explorer.',
   },
   'settings.system_paths.temp_folder': {
     de: 'Temp-Ordner öffnen',
@@ -461,6 +588,10 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.system_paths.settings_json': {
     de: 'settings.json öffnen',
     en: 'Open settings.json',
+  },
+  'settings.system_paths.debug_log': {
+    de: 'debug.log öffnen',
+    en: 'Open debug.log',
   },
   'settings.system_paths.open_failed': {
     de: 'Konnte Pfad nicht öffnen',

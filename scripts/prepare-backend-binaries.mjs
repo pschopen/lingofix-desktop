@@ -85,6 +85,7 @@ for (const target of targets) {
   console.log(`Prepared ${target}`);
   console.log(`  source: ${sourceBinary}`);
   console.log(`  target: ${targetBinary}`);
+
 }
 
 if (!existsSync(wordCompareScript)) {
