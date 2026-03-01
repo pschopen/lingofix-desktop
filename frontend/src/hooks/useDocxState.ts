@@ -2,18 +2,22 @@ import { useCallback, useState } from 'react';
 import { DocxFile } from '../types';
 
 type DocxLog = { level: string; message: string; timestamp: number };
+type DocxResult = { inputName: string; outputPath: string; trackChanges: boolean };
 
 export function useDocxState() {
-  const [docxFile, setDocxFile] = useState<DocxFile | null>(null);
+  const [docxFiles, setDocxFiles] = useState<DocxFile[]>([]);
+  const [activeDocxFileIndex, setActiveDocxFileIndex] = useState(0);
   const [docxProgress, setDocxProgress] = useState<{ percent: number; message: string } | null>(null);
-  const [docxResult, setDocxResult] = useState<{ outputPath: string; trackChanges: boolean } | null>(null);
+  const [docxResults, setDocxResults] = useState<DocxResult[]>([]);
   const [docxWarning, setDocxWarning] = useState<string | null>(null);
   const [docxLogs, setDocxLogs] = useState<DocxLog[]>([]);
   const [showLogs, setShowLogs] = useState(false);
+  const docxFile = docxFiles[activeDocxFileIndex] ?? null;
 
-  const setDocxSelection = useCallback((file: DocxFile | null) => {
-    setDocxFile(file);
-    setDocxResult(null);
+  const setDocxSelection = useCallback((files: DocxFile[] | null) => {
+    setDocxFiles(files ?? []);
+    setActiveDocxFileIndex(0);
+    setDocxResults([]);
     setDocxWarning(null);
     setDocxProgress(null);
     setDocxLogs([]);
@@ -21,7 +25,7 @@ export function useDocxState() {
   }, []);
 
   const resetDocxRunState = useCallback(() => {
-    setDocxResult(null);
+    setDocxResults([]);
     setDocxWarning(null);
     setDocxProgress(null);
     setDocxLogs([]);
@@ -36,16 +40,20 @@ export function useDocxState() {
   }, []);
 
   return {
+    docxFiles,
+    activeDocxFileIndex,
+    setActiveDocxFileIndex,
     docxFile,
     docxProgress,
-    docxResult,
+    docxResults,
     docxWarning,
     docxLogs,
     showLogs,
     setShowLogs,
     setDocxSelection,
     setDocxProgress,
-    setDocxResult,
+    setDocxResults,
+    setDocxFiles,
     setDocxWarning,
     setDocxLogs,
     appendDocxLog,

@@ -349,7 +349,17 @@ public static class TrackChangesGenerator
             else
             {
                 var markers = CollectReferenceMarkers(outputParagraphs[i]);
-                var diffNodes = BuildWordDiffRuns(outText, corText, markers, author, revDate, ref revId);
+                var originalStyleSpans = BuildRunStyleSpans(outputParagraphs[i]);
+                var correctedStyleSpans = BuildRunStyleSpans(correctedParagraphs[i]);
+                var diffNodes = BuildWordDiffRuns(
+                    outText,
+                    corText,
+                    markers,
+                    author,
+                    revDate,
+                    ref revId,
+                    originalStyleSpans,
+                    correctedStyleSpans);
                 ReplaceParagraphRuns(outputParagraphs[i], diffNodes);
             }
         }
@@ -619,7 +629,15 @@ public static class TrackChangesGenerator
         }
     }
 
-    private static List<OpenXmlElement> BuildWordDiffRuns(string originalText, string correctedText, List<ReferenceMarker> markers, string author, DateTime revDate, ref int revId)
+    private static List<OpenXmlElement> BuildWordDiffRuns(
+        string originalText,
+        string correctedText,
+        List<ReferenceMarker> markers,
+        string author,
+        DateTime revDate,
+        ref int revId,
+        List<RunStyleSpan>? originalStyleSpans = null,
+        List<RunStyleSpan>? correctedStyleSpans = null)
     {
         var originalTokens = DiffUtils.TokenizeWords(originalText);
         var correctedTokens = DiffUtils.TokenizeWords(correctedText);
@@ -633,6 +651,7 @@ public static class TrackChangesGenerator
             .ToList();
         var markerIndex = 0;
         var originalPos = 0;
+        var correctedPos = 0;
 
         foreach (var op in ops)
         {
@@ -644,23 +663,53 @@ public static class TrackChangesGenerator
 
             if (op.Kind == DiffKind.Equal)
             {
-                AppendTextWithMarkers(op.Token, isDelete: false, ref markerIndex, orderedMarkers, ref originalPos, nodes, author, revDate, ref revId);
+                AppendTextWithMarkers(
+                    op.Token,
+                    isDelete: false,
+                    ref markerIndex,
+                    orderedMarkers,
+                    ref originalPos,
+                    nodes,
+                    author,
+                    revDate,
+                    ref revId,
+                    originalStyleSpans);
+                correctedPos += op.Token.Length;
             }
             else if (op.Kind == DiffKind.Insert)
             {
+                var runProps = ResolveRunPropertiesAtOffset(correctedStyleSpans, correctedPos);
                 var ins = new InsertedRun
                 {
                     Id = revId++.ToString(),
                     Author = author,
                     Date = revDate
                 };
-                ins.AppendChild(new RunProperties());
+                if (runProps is not null)
+                {
+                    ins.AppendChild(runProps);
+                }
+                else
+                {
+                    ins.AppendChild(new RunProperties());
+                }
                 ins.AppendChild(new Text(op.Token) { Space = SpaceProcessingModeValues.Preserve });
                 nodes.Add(new Run(ins));
+                correctedPos += op.Token.Length;
             }
             else if (op.Kind == DiffKind.Delete)
             {
-                AppendTextWithMarkers(op.Token, isDelete: true, ref markerIndex, orderedMarkers, ref originalPos, nodes, author, revDate, ref revId);
+                AppendTextWithMarkers(
+                    op.Token,
+                    isDelete: true,
+                    ref markerIndex,
+                    orderedMarkers,
+                    ref originalPos,
+                    nodes,
+                    author,
+                    revDate,
+                    ref revId,
+                    originalStyleSpans);
             }
         }
 
@@ -682,7 +731,8 @@ public static class TrackChangesGenerator
         List<OpenXmlElement> nodes,
         string author,
         DateTime revDate,
-        ref int revId)
+        ref int revId,
+        List<RunStyleSpan>? styleSpans)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -708,7 +758,9 @@ public static class TrackChangesGenerator
             var cut = markerOffset - originalPos;
             if (cut > localPos)
             {
-                AppendSegment(text.Substring(localPos, cut - localPos), isDelete, nodes, author, revDate, ref revId);
+                var segmentStart = originalPos + localPos;
+                var runProps = ResolveRunPropertiesAtOffset(styleSpans, segmentStart);
+                AppendSegment(text.Substring(localPos, cut - localPos), isDelete, nodes, author, revDate, ref revId, runProps);
             }
 
             nodes.Add(orderedMarkers[markerIndex].Run.CloneNode(true));
@@ -718,7 +770,9 @@ public static class TrackChangesGenerator
 
         if (localPos < text.Length)
         {
-            AppendSegment(text.Substring(localPos), isDelete, nodes, author, revDate, ref revId);
+            var segmentStart = originalPos + localPos;
+            var runProps = ResolveRunPropertiesAtOffset(styleSpans, segmentStart);
+            AppendSegment(text.Substring(localPos), isDelete, nodes, author, revDate, ref revId, runProps);
         }
 
         originalPos += text.Length;
@@ -730,7 +784,8 @@ public static class TrackChangesGenerator
         List<OpenXmlElement> nodes,
         string author,
         DateTime revDate,
-        ref int revId)
+        ref int revId,
+        RunProperties? runProps)
     {
         if (segment.Length == 0)
         {
@@ -745,42 +800,454 @@ public static class TrackChangesGenerator
                 Author = author,
                 Date = revDate
             };
-            del.AppendChild(new RunProperties());
+            if (runProps is not null)
+            {
+                del.AppendChild((RunProperties)runProps.CloneNode(true));
+            }
+            else
+            {
+                del.AppendChild(new RunProperties());
+            }
             del.AppendChild(new DeletedText(segment));
             nodes.Add(new Run(del));
         }
         else
         {
-            nodes.Add(new Run(new Text(segment) { Space = SpaceProcessingModeValues.Preserve }));
+            var run = new Run(new Text(segment) { Space = SpaceProcessingModeValues.Preserve });
+            if (runProps is not null)
+            {
+                run.RunProperties = (RunProperties)runProps.CloneNode(true);
+            }
+
+            nodes.Add(run);
         }
     }
 
-    private sealed record ReferenceMarker(int Offset, Run Run);
+    private static List<RunStyleSpan> BuildRunStyleSpans(Paragraph paragraph)
+    {
+        var spans = new List<RunStyleSpan>();
+        var offset = 0;
 
-    public static void GenerateWithWord(string originalPath, string correctedPath, string outputPath, string author)
+        foreach (var run in paragraph.Descendants<Run>())
+        {
+            var runText = string.Concat(run.Descendants<Text>().Select(t => t.Text));
+            if (runText.Length == 0)
+            {
+                continue;
+            }
+
+            var props = run.RunProperties is null
+                ? null
+                : (RunProperties)run.RunProperties.CloneNode(true);
+
+            var start = offset;
+            offset += runText.Length;
+            spans.Add(new RunStyleSpan(start, offset, props));
+        }
+
+        return spans;
+    }
+
+    private static RunProperties? ResolveRunPropertiesAtOffset(List<RunStyleSpan>? spans, int offset)
+    {
+        if (spans is null || spans.Count == 0)
+        {
+            return null;
+        }
+
+        var maxOffset = spans[^1].End;
+        var clampedOffset = Math.Clamp(offset, 0, maxOffset);
+
+        foreach (var span in spans)
+        {
+            if (clampedOffset >= span.Start && clampedOffset < span.End)
+            {
+                return span.RunProperties is null ? null : (RunProperties)span.RunProperties.CloneNode(true);
+            }
+        }
+
+        var previous = spans.LastOrDefault(span => span.End <= clampedOffset);
+        if (previous is not null)
+        {
+            return previous.RunProperties is null ? null : (RunProperties)previous.RunProperties.CloneNode(true);
+        }
+
+        var next = spans.FirstOrDefault(span => span.Start >= clampedOffset);
+        if (next is not null)
+        {
+            return next.RunProperties is null ? null : (RunProperties)next.RunProperties.CloneNode(true);
+        }
+
+        return null;
+    }
+
+    private sealed record ReferenceMarker(int Offset, Run Run);
+    private sealed record RunStyleSpan(int Start, int End, RunProperties? RunProperties);
+
+    public static void GenerateWithWord(string originalPath, string correctedPath, string outputPath, string author, bool strictTextChangesOnly = false)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            RunWordCompareMac(originalPath, correctedPath, outputPath, author);
-            RejectFormattingChanges(outputPath);
+            RunWordCompareMac(originalPath, correctedPath, outputPath, author, strictTextChangesOnly);
+            if (strictTextChangesOnly)
+            {
+                RejectNonInsertionDeletionChanges(outputPath);
+            }
+            else
+            {
+                RejectFormattingChanges(outputPath);
+            }
             return;
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            RunWordCompareWindows(originalPath, correctedPath, outputPath, author);
-            RejectFormattingChanges(outputPath);
+            RunWordCompareWindows(originalPath, correctedPath, outputPath, author, strictTextChangesOnly);
+            if (strictTextChangesOnly)
+            {
+                RejectNonInsertionDeletionChanges(outputPath);
+            }
+            else
+            {
+                RejectFormattingChanges(outputPath);
+            }
             return;
         }
 
         throw new PlatformNotSupportedException("Word comparison is not supported on this operating system.");
     }
 
-    public static void GenerateWithLibreOffice(string originalPath, string correctedPath, string outputPath, string author)
+    public static void GenerateWithLibreOffice(string originalPath, string correctedPath, string outputPath, string author, bool strictTextChangesOnly = false)
     {
         var sofficePath = ResolveUsableLibreOfficeExecutable();
-        LibreOfficeUnoCompareRunner.GenerateWithUno(sofficePath, originalPath, correctedPath, outputPath, author, ExternalCompareTimeout);
-        RejectFormattingChanges(outputPath);
+        LibreOfficeUnoCompareRunner.GenerateWithUno(
+            sofficePath,
+            originalPath,
+            correctedPath,
+            outputPath,
+            author,
+            ExternalCompareTimeout,
+            strictTextChangesOnly ? "text-only" : "all");
+        if (outputPath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+        {
+            if (strictTextChangesOnly)
+            {
+                RejectNonInsertionDeletionChanges(outputPath);
+            }
+            else
+            {
+                RejectFormattingChanges(outputPath);
+            }
+        }
+    }
+
+    private static void RejectNonInsertionDeletionChanges(string documentPath)
+    {
+        using var doc = WordprocessingDocument.Open(documentPath, true);
+        RejectFormattingChanges(doc);
+        RejectMoveTrackedChanges(doc);
+        RejectNonInsDelRevisionElements(doc);
+        NormalizeInsertedRunFormatting(doc);
+        doc.Save();
+    }
+
+    private static void NormalizeInsertedRunFormatting(WordprocessingDocument doc)
+    {
+        foreach (var root in EnumerateRevisionRoots(doc))
+        {
+            foreach (var paragraph in root.Descendants<Paragraph>())
+            {
+                NormalizeInsertedRunFormattingInParagraph(paragraph);
+            }
+        }
+    }
+
+    private static void NormalizeInsertedRunFormattingInParagraph(Paragraph paragraph)
+    {
+        var runs = paragraph.Descendants<Run>().ToList();
+        if (runs.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < runs.Count; i++)
+        {
+            var run = runs[i];
+            if (!IsInsertedRun(run))
+            {
+                continue;
+            }
+
+            var sourceProps = ResolveNeighborRunProperties(runs, i);
+            if (sourceProps is null)
+            {
+                run.RunProperties?.Remove();
+            }
+            else
+            {
+                run.RunProperties = (RunProperties)sourceProps.CloneNode(true);
+            }
+        }
+
+        foreach (var ins in paragraph
+                     .Descendants()
+                     .Where(IsWordprocessingElement)
+                     .Where(e => e.LocalName == "ins")
+                     .ToList())
+        {
+            var sourceProps = ResolveNeighborRunPropertiesForInsertedElement(paragraph, ins);
+            foreach (var rPr in ins
+                         .ChildElements
+                         .Where(IsWordprocessingElement)
+                         .Where(e => e.LocalName == "rPr")
+                         .ToList())
+            {
+                rPr.Remove();
+            }
+
+            if (sourceProps is not null)
+            {
+                ins.PrependChild((RunProperties)sourceProps.CloneNode(true));
+            }
+        }
+    }
+
+    private static RunProperties? ResolveNeighborRunProperties(List<Run> runs, int index)
+    {
+        for (var left = index - 1; left >= 0; left--)
+        {
+            var leftRun = runs[left];
+            if (IsInsertedRun(leftRun))
+            {
+                continue;
+            }
+
+            var leftProps = leftRun.RunProperties;
+            return leftProps is null
+                ? null
+                : (RunProperties)leftProps.CloneNode(true);
+        }
+
+        for (var right = index + 1; right < runs.Count; right++)
+        {
+            var rightRun = runs[right];
+            if (IsInsertedRun(rightRun))
+            {
+                continue;
+            }
+
+            var rightProps = rightRun.RunProperties;
+            return rightProps is null
+                ? null
+                : (RunProperties)rightProps.CloneNode(true);
+        }
+
+        return null;
+    }
+
+    private static RunProperties? ResolveNeighborRunPropertiesForInsertedElement(Paragraph paragraph, OpenXmlElement insertedElement)
+    {
+        var runs = paragraph.Descendants<Run>().ToList();
+        var firstInsertedRunIndex = runs.FindIndex(run => run.Ancestors().Contains(insertedElement));
+        if (firstInsertedRunIndex >= 0)
+        {
+            return ResolveNeighborRunProperties(runs, firstInsertedRunIndex);
+        }
+
+        return null;
+    }
+
+    private static bool IsInsertedRun(Run run)
+    {
+        if (run.Ancestors().Any(a => IsWordprocessingElement(a) && a.LocalName == "ins"))
+        {
+            return true;
+        }
+
+        return run
+            .Descendants()
+            .Any(e => IsWordprocessingElement(e) && e.LocalName == "ins");
+    }
+
+    private static void RejectNonInsDelRevisionElements(WordprocessingDocument doc)
+    {
+        foreach (var root in EnumerateRevisionRoots(doc))
+        {
+            foreach (var element in root.Descendants().Where(IsWordprocessingElement).ToList())
+            {
+                var localName = element.LocalName;
+                if (localName == "ins" || localName == "del" || localName == "delText")
+                {
+                    continue;
+                }
+
+                if (!RevisionMarkerElements.Contains(localName) && element is not TrackChangeType)
+                {
+                    continue;
+                }
+
+                if (localName == "moveFrom" || localName == "moveFromRun")
+                {
+                    var children = element.ChildElements.ToList();
+                    foreach (var child in children)
+                    {
+                        child.Remove();
+                        element.InsertBeforeSelf(child);
+                    }
+
+                    element.Remove();
+                    continue;
+                }
+
+                if (localName == "moveTo" || localName == "moveToRun")
+                {
+                    element.Remove();
+                    continue;
+                }
+
+                if (PropertyChangeElements.Contains(localName) ||
+                    localName == "moveFromRangeStart" ||
+                    localName == "moveFromRangeEnd" ||
+                    localName == "moveToRangeStart" ||
+                    localName == "moveToRangeEnd")
+                {
+                    element.Remove();
+                    continue;
+                }
+
+                if (element is TrackChangeType)
+                {
+                    element.Remove();
+                }
+            }
+        }
+    }
+
+    private static void RejectMoveTrackedChanges(WordprocessingDocument doc)
+    {
+        foreach (var root in EnumerateRevisionRoots(doc))
+        {
+            foreach (var marker in root
+                         .Descendants()
+                         .Where(IsWordprocessingElement)
+                         .Where(e =>
+                             e.LocalName == "moveFromRangeStart" ||
+                             e.LocalName == "moveFromRangeEnd" ||
+                             e.LocalName == "moveToRangeStart" ||
+                             e.LocalName == "moveToRangeEnd")
+                         .ToList())
+            {
+                marker.Remove();
+            }
+
+            foreach (var moveFrom in root.Descendants().Where(IsWordprocessingElement).Where(e => e.LocalName == "moveFrom" || e.LocalName == "moveFromRun").ToList())
+            {
+                var children = moveFrom.ChildElements.ToList();
+                foreach (var child in children)
+                {
+                    child.Remove();
+                    moveFrom.InsertBeforeSelf(child);
+                }
+
+                moveFrom.Remove();
+            }
+
+            foreach (var moveTo in root.Descendants().Where(IsWordprocessingElement).Where(e => e.LocalName == "moveTo" || e.LocalName == "moveToRun").ToList())
+            {
+                moveTo.Remove();
+            }
+        }
+    }
+
+    public static void ConvertWithLibreOffice(string inputPath, string outputPath, string targetExtension)
+    {
+        if (string.IsNullOrWhiteSpace(inputPath))
+        {
+            throw new ArgumentException("Missing input path for LibreOffice conversion.", nameof(inputPath));
+        }
+
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            throw new ArgumentException("Missing output path for LibreOffice conversion.", nameof(outputPath));
+        }
+
+        var normalizedTarget = targetExtension.Trim();
+        if (!normalizedTarget.StartsWith(".", StringComparison.Ordinal))
+        {
+            normalizedTarget = "." + normalizedTarget;
+        }
+
+        var sofficePath = ResolveUsableLibreOfficeExecutable();
+        var workDir = Path.Combine(PathUtils.GetLingofixTempRoot(), "libreoffice-convert", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workDir);
+        try
+        {
+            var expectedOutput = Path.Combine(
+                workDir,
+                Path.GetFileNameWithoutExtension(inputPath) + normalizedTarget);
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = sofficePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+            };
+            psi.ArgumentList.Add("--headless");
+            psi.ArgumentList.Add("--convert-to");
+            psi.ArgumentList.Add(normalizedTarget.TrimStart('.'));
+            psi.ArgumentList.Add("--outdir");
+            psi.ArgumentList.Add(workDir);
+            psi.ArgumentList.Add(inputPath);
+
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null)
+            {
+                throw new InvalidOperationException("Failed to start LibreOffice conversion process.");
+            }
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+
+            if (!proc.WaitForExit((int)ExternalCompareTimeout.TotalMilliseconds))
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+
+                throw new TimeoutException($"LibreOffice conversion timed out after {ExternalCompareTimeout.TotalSeconds:0} seconds.");
+            }
+
+            Task.WaitAll([stdoutTask, stderrTask]);
+            if (proc.ExitCode != 0)
+            {
+                var stderr = stderrTask.GetAwaiter().GetResult();
+                var stdout = stdoutTask.GetAwaiter().GetResult();
+                var details = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                throw new InvalidOperationException($"LibreOffice conversion failed: {details.Trim()}");
+            }
+
+            if (!File.Exists(expectedOutput))
+            {
+                throw new FileNotFoundException($"LibreOffice conversion did not produce expected file: {expectedOutput}", expectedOutput);
+            }
+
+            var outputDir = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrWhiteSpace(outputDir))
+            {
+                Directory.CreateDirectory(outputDir);
+            }
+            File.Copy(expectedOutput, outputPath, overwrite: true);
+        }
+        finally
+        {
+        }
     }
 
     private static void RejectFormattingChanges(string documentPath)
@@ -960,7 +1427,7 @@ public static class TrackChangesGenerator
         }
     }
 
-    private static void RunWordCompareMac(string originalPath, string correctedPath, string outputPath, string author)
+    private static void RunWordCompareMac(string originalPath, string correctedPath, string outputPath, string author, bool strictTextChangesOnly)
     {
         // Search for word-compare.scpt in multiple locations
         var searchPaths = new[]
@@ -1007,7 +1474,7 @@ public static class TrackChangesGenerator
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "osascript",
-            ArgumentList = { scriptPath, originalPath, correctedPath, outputPath, author },
+            ArgumentList = { scriptPath, originalPath, correctedPath, outputPath, author, strictTextChangesOnly ? "strict" : "default" },
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -1017,19 +1484,22 @@ public static class TrackChangesGenerator
         RunProcess(psi, "osascript failed");
     }
 
-    private static void RunWordCompareWindows(string originalPath, string correctedPath, string outputPath, string author)
+    private static void RunWordCompareWindows(string originalPath, string correctedPath, string outputPath, string author, bool strictTextChangesOnly)
     {
         var psScript = @"
 param(
     [Parameter(Mandatory = $true)][string]$orig,
     [Parameter(Mandatory = $true)][string]$corr,
     [Parameter(Mandatory = $true)][string]$outp,
-    [Parameter(Mandatory = $true)][string]$author
+    [Parameter(Mandatory = $true)][string]$author,
+    [Parameter(Mandatory = $true)][string]$mode
 )
 
 $ErrorActionPreference = 'Stop'
 $maxAttempts = 3
 $lastError = $null
+$strictMode = $mode -eq 'strict'
+$compareFormatting = if ($strictMode) { $false } else { $true }
 
 function Release-ComObjectSafe {
     param([object]$obj)
@@ -1050,11 +1520,13 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     $doc1 = $null
     $doc2 = $null
     $comp = $null
+    $previousUserName = $null
 
     try {
         $word = New-Object -ComObject Word.Application
         $word.Visible = $false
         $word.DisplayAlerts = 0
+        try { $previousUserName = [string]$word.UserName } catch { $previousUserName = $null }
         $word.UserName = $author
 
         try { $word.ScreenUpdating = $false } catch { }
@@ -1072,7 +1544,7 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             $doc2,
             2,
             1,
-            $true,
+            $compareFormatting,
             $true,
             $true,
             $true,
@@ -1112,6 +1584,9 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             try { $doc1.Close($false) } catch { }
         }
         if ($null -ne $word) {
+            if ($null -ne $previousUserName) {
+                try { $word.UserName = $previousUserName } catch { }
+            }
             try { $word.Quit() } catch { }
         }
 
@@ -1138,7 +1613,7 @@ if ($null -ne $lastError) {
 }
 ";
 
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"lingofix-word-compare-{Guid.NewGuid():N}.ps1");
+        var scriptPath = Path.Combine(PathUtils.GetLingofixTempRoot(), $"lingofix-word-compare-{Guid.NewGuid():N}.ps1");
         File.WriteAllText(scriptPath, psScript);
 
         try
@@ -1157,7 +1632,8 @@ if ($null -ne $lastError) {
                     originalPath,
                     correctedPath,
                     outputPath,
-                    author
+                    author,
+                    strictTextChangesOnly ? "strict" : "default"
                 },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -1176,10 +1652,6 @@ if ($null -ne $lastError) {
         }
         finally
         {
-            if (File.Exists(scriptPath))
-            {
-                File.Delete(scriptPath);
-            }
         }
     }
 

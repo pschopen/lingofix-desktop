@@ -2,17 +2,23 @@ namespace Lingofix.Backend.Documents;
 
 public static class PathUtils
 {
+    public const string TempDirectoryEnv = "LINGOFIX_TEMP_DIR";
+
+    public static string GetLingofixTempRoot()
+    {
+        var fromEnv = Environment.GetEnvironmentVariable(TempDirectoryEnv)?.Trim();
+        var root = string.IsNullOrWhiteSpace(fromEnv)
+            ? Path.Combine(Path.GetTempPath(), "Lingofix")
+            : Path.GetFullPath(fromEnv);
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
     public static string BuildWordCompareWorkspace(string inputPath)
     {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        if (string.IsNullOrWhiteSpace(appData))
-        {
-            appData = Path.Combine(Path.GetTempPath(), "Lingofix");
-        }
-
         var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(inputPath)))
             .ToLowerInvariant();
-        var workspace = Path.Combine(appData, "Lingofix", "compare", key);
+        var workspace = Path.Combine(GetLingofixTempRoot(), "compare", key);
         Directory.CreateDirectory(workspace);
         return workspace;
     }
@@ -60,7 +66,7 @@ public static class PathUtils
     {
         var fileName = Path.GetFileNameWithoutExtension(inputPath);
         var ext = Path.GetExtension(inputPath);
-        var tempDir = Path.Combine(Path.GetTempPath(), "Lingofix");
+        var tempDir = GetLingofixTempRoot();
         Directory.CreateDirectory(tempDir);
         var unique = Guid.NewGuid().ToString("N");
         return Path.Combine(tempDir, $"{fileName}_corrected_{unique}{ext}");
@@ -70,7 +76,7 @@ public static class PathUtils
     {
         var fileName = Path.GetFileNameWithoutExtension(outputPath);
         var ext = Path.GetExtension(outputPath);
-        var tempDir = Path.Combine(Path.GetTempPath(), "Lingofix");
+        var tempDir = GetLingofixTempRoot();
         Directory.CreateDirectory(tempDir);
         var unique = Guid.NewGuid().ToString("N");
         return Path.Combine(tempDir, $"{fileName}_output_{unique}{ext}");
@@ -89,7 +95,7 @@ public static class PathUtils
 
     public static string BuildCheckpointPath(string inputPath)
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "Lingofix", "checkpoints");
+        var tempDir = Path.Combine(GetLingofixTempRoot(), "checkpoints");
         Directory.CreateDirectory(tempDir);
         var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(inputPath)))
             .ToLowerInvariant();
