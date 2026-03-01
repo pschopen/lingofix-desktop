@@ -190,38 +190,21 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
             flatpak \
             flatpak-builder
 
       - name: Configure Flatpak runtime
         run: |
           flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: tauri -> target
-
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version ^2 --locked
-
-      - name: Install frontend dependencies
-        run: npm ci --prefix frontend
+          flatpak install --user -y flathub \
+            org.freedesktop.Platform//24.08 \
+            org.freedesktop.Sdk//24.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//24.08 \
+            org.freedesktop.Sdk.Extension.node20//24.08
 
       - name: Build Linux x64 Flatpak inputs
         run: npm run build:app:linux:flatpak:prep

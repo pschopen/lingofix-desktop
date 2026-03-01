@@ -57,17 +57,14 @@ These commands publish the .NET backend as self-contained binaries and bundle th
 - Linux Flatpak prep build (includes linux-x64 backend binary): `npm run build:app:linux:flatpak:prep`
 - Linux Flatpak bundle build: `npm run build:app:linux:flatpak`
 
-For local Flatpak bundle builds, install `flatpak` and `flatpak-builder` first and add Flathub as a remote.
+For local Flatpak bundle builds, install `flatpak` and `flatpak-builder` first, add Flathub as a remote, and install:
 
-### Linux Graphics Compatibility
+- `org.freedesktop.Platform//24.08`
+- `org.freedesktop.Sdk//24.08`
+- `org.freedesktop.Sdk.Extension.rust-stable//24.08`
+- `org.freedesktop.Sdk.Extension.node20//24.08`
 
-The Linux desktop bundle enables WebKitGTK graphics workarounds by default to reduce white-screen startup issues on some Wayland/EGL driver combinations (for example on Fedora/Arch setups).
-
-If you need to disable these workarounds for troubleshooting, start the app with:
-
-```bash
-LINGOFIX_LINUX_GRAPHICS_WORKAROUNDS=0 ./Lingofix-Desktop-*.AppImage
-```
+The Linux Flatpak build compiles frontend + Tauri inside the Flatpak SDK for reproducible builds. The self-contained .NET backend binary is prepared beforehand via `npm run build:app:linux:flatpak:prep`.
 
 You can also prepare backend binaries directly:
 
