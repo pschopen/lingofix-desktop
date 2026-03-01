@@ -171,7 +171,7 @@ jobs:
           path: tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
 
   linux-x64:
-    name: Linux x64 AppImage
+    name: Linux x64 Flatpak Bundle
     runs-on: ubuntu-22.04
 
     steps:
@@ -203,7 +203,14 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            flatpak \
+            flatpak-builder
+
+      - name: Configure Flatpak runtime
+        run: |
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -216,11 +223,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
-      - name: Build Linux x64 AppImage
-        run: npm run build:app:linux
+      - name: Build Linux x64 Flatpak inputs
+        run: npm run build:app:linux:flatpak:prep
 
-      - name: Upload Linux AppImage artifact
+      - name: Build Linux x64 Flatpak bundle
+        run: |
+          flatpak-builder --user --force-clean --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json
+          mkdir -p artifacts
+          flatpak build-bundle flatpak-repo artifacts/Lingofix-Desktop-linux-x64.flatpak com.lingofix.desktop
+
+      - name: Upload Linux Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
           name: Lingofix-Desktop-linux-x64
-          path: tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+          path: artifacts/Lingofix-Desktop-linux-x64.flatpak

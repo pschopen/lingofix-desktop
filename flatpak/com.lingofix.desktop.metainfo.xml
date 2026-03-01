@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.lingofix.desktop</id>
+  <name>Lingofix Desktop</name>
+  <summary>Desktop text and DOCX correction tool</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <description>
+    <p>
+      Lingofix is a desktop app for text and DOCX correction with streaming
+      output and track-changes workflows.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.lingofix.desktop.desktop</launchable>
+</component>
