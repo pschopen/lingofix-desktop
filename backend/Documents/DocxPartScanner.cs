@@ -3,17 +3,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace Lingofix.Backend.Documents;
 
-internal enum ProcessorWorkItemKind
-{
-    Main,
-    Footnotes,
-    Endnotes,
-    Headers,
-    Footers,
-    Glossary
-}
-
-internal sealed record ProcessorWorkItem(ProcessorWorkItemKind Kind, string Label, int Weight, List<Paragraph> Paragraphs);
+internal sealed record ProcessorWorkItem(string Label, int Weight, List<Paragraph> Paragraphs);
 
 internal sealed class DocxCoverageReport
 {
@@ -37,7 +27,7 @@ internal static class DocxPartScanner
             var bodyParagraphs = FilterEditableParagraphs(doc.MainDocumentPart.Document.Body.Descendants<Paragraph>());
             if (bodyParagraphs.Count > 0)
             {
-                workItems.Add(new ProcessorWorkItem(ProcessorWorkItemKind.Main, "Main Document", 70, bodyParagraphs));
+                workItems.Add(new ProcessorWorkItem("Main Document", 70, bodyParagraphs));
                 totalParagraphs += bodyParagraphs.Count;
             }
         }
@@ -47,7 +37,7 @@ internal static class DocxPartScanner
             var footnoteParagraphs = FilterEditableParagraphs(doc.MainDocumentPart.FootnotesPart.Footnotes.Descendants<Paragraph>());
             if (footnoteParagraphs.Count > 0)
             {
-                workItems.Add(new ProcessorWorkItem(ProcessorWorkItemKind.Footnotes, "Footnotes", 5, footnoteParagraphs));
+                workItems.Add(new ProcessorWorkItem("Footnotes", 5, footnoteParagraphs));
                 totalParagraphs += footnoteParagraphs.Count;
             }
         }
@@ -57,7 +47,7 @@ internal static class DocxPartScanner
             var endnoteParagraphs = FilterEditableParagraphs(doc.MainDocumentPart.EndnotesPart.Endnotes.Descendants<Paragraph>());
             if (endnoteParagraphs.Count > 0)
             {
-                workItems.Add(new ProcessorWorkItem(ProcessorWorkItemKind.Endnotes, "Endnotes", 5, endnoteParagraphs));
+                workItems.Add(new ProcessorWorkItem("Endnotes", 5, endnoteParagraphs));
                 totalParagraphs += endnoteParagraphs.Count;
             }
         }
@@ -70,7 +60,7 @@ internal static class DocxPartScanner
                 var headerParagraphs = FilterEditableParagraphs(header.Header?.Descendants<Paragraph>() ?? Enumerable.Empty<Paragraph>());
                 if (headerParagraphs.Count > 0)
                 {
-                    workItems.Add(new ProcessorWorkItem(ProcessorWorkItemKind.Headers, $"Header {headerIndex + 1}", 2, headerParagraphs));
+                    workItems.Add(new ProcessorWorkItem($"Header {headerIndex + 1}", 2, headerParagraphs));
                     totalParagraphs += headerParagraphs.Count;
                 }
 
@@ -83,7 +73,7 @@ internal static class DocxPartScanner
                 var footerParagraphs = FilterEditableParagraphs(footer.Footer?.Descendants<Paragraph>() ?? Enumerable.Empty<Paragraph>());
                 if (footerParagraphs.Count > 0)
                 {
-                    workItems.Add(new ProcessorWorkItem(ProcessorWorkItemKind.Footers, $"Footer {footerIndex + 1}", 3, footerParagraphs));
+                    workItems.Add(new ProcessorWorkItem($"Footer {footerIndex + 1}", 3, footerParagraphs));
                     totalParagraphs += footerParagraphs.Count;
                 }
 
@@ -96,7 +86,7 @@ internal static class DocxPartScanner
             var glossaryParagraphs = FilterEditableParagraphs(doc.MainDocumentPart.GlossaryDocumentPart.GlossaryDocument.Descendants<Paragraph>());
             if (glossaryParagraphs.Count > 0)
             {
-                workItems.Add(new ProcessorWorkItem(ProcessorWorkItemKind.Glossary, "Glossary", 2, glossaryParagraphs));
+                workItems.Add(new ProcessorWorkItem("Glossary", 2, glossaryParagraphs));
                 totalParagraphs += glossaryParagraphs.Count;
             }
         }

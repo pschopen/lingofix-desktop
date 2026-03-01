@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState, useCallback, type KeyboardEvent } from 'react';
+import { useMemo, useEffect, useState, useCallback } from 'react';
 import { diffWordsWithSpace } from 'diff';
 import { invoke, listen, open } from '../lib/bridge';
 import { FileText, Upload, X } from 'lucide-react';
@@ -8,30 +8,28 @@ import { DocxFile } from '../types';
 interface TextEditorProps {
   text: string;
   onChange: (text: string) => void;
-  onSubmitShortcut?: () => void;
   correctedText: string;
   showDiff: boolean;
   readOnly: boolean;
   isStreaming?: boolean;
   lang: Language;
   isDarkMode?: boolean;
-  docxFiles: DocxFile[];
-  onDocxFiles: (files: DocxFile[] | null) => void;
+  docxFile: DocxFile | null;
+  onDocxFile: (file: DocxFile | null) => void;
   isCorrecting: boolean;
 }
 
 export function TextEditor({
   text,
   onChange,
-  onSubmitShortcut,
   correctedText,
   showDiff,
   readOnly,
   isStreaming = false,
   lang,
   isDarkMode = false,
-  docxFiles,
-  onDocxFiles,
+  docxFile,
+  onDocxFile,
   isCorrecting,
 }: TextEditorProps) {
   const [isDragging, setIsDragging] = useState(false);
@@ -85,14 +83,15 @@ export function TextEditor({
     return null;
   }, [normalizeDroppedPath]);
 
-  const importBrowserFile = useCallback(async (file: File): Promise<DocxFile | null> => {
+  const importBrowserFile = useCallback(async (file: File) => {
     if (!isSupportedOfficeFile(file.name)) {
-      return null;
+      return;
     }
 
     const nativePath = normalizeDroppedPath((file as File & { path?: string }).path);
     if (nativePath) {
-      return { name: file.name, path: nativePath, size: file.size, originalPath: nativePath };
+      onDocxFile({ name: file.name, path: nativePath, size: file.size, originalPath: nativePath });
+      return;
     }
 
     const buffer = await file.arrayBuffer();
@@ -107,30 +106,8 @@ export function TextEditor({
       base64,
     });
 
-    return { name: file.name, path, size: file.size };
-  }, [isSupportedOfficeFile, normalizeDroppedPath]);
-
-  const filesFromPaths = useCallback(async (paths: string[]): Promise<DocxFile[]> => {
-    const supportedPaths = paths.filter((path) => isSupportedOfficeFile(path));
-    const files = await Promise.all(supportedPaths.map(async (filePath) => {
-      const fileName = filePath.split(/[/\\]/).pop() || 'document.docx';
-      try {
-        const size = await invoke<number>('get_file_size', { path: filePath });
-        return { name: fileName, path: filePath, size, originalPath: filePath };
-      } catch {
-        return { name: fileName, path: filePath, size: 0, originalPath: filePath };
-      }
-    }));
-    return files;
-  }, [isSupportedOfficeFile]);
-
-  const dedupeFiles = useCallback((files: DocxFile[]): DocxFile[] => {
-    const map = new Map<string, DocxFile>();
-    for (const file of files) {
-      map.set(file.path, file);
-    }
-    return [...map.values()];
-  }, []);
+    onDocxFile({ name: file.name, path, size: file.size });
+  }, [isSupportedOfficeFile, normalizeDroppedPath, onDocxFile]);
 
   // Drag and drop handling with visual feedback
   useEffect(() => {
@@ -141,9 +118,16 @@ export function TextEditor({
       setIsDragging(false);
       const paths = event.payload.paths;
       if (paths && paths.length > 0) {
-        const files = await filesFromPaths(paths);
-        if (files.length > 0) {
-          onDocxFiles(dedupeFiles(files));
+        const filePath = paths[0];
+        if (isSupportedOfficeFile(filePath)) {
+          const fileName = filePath.split(/[/\\]/).pop() || 'document.docx';
+          try {
+            const size = await invoke<number>('get_file_size', { path: filePath });
+            onDocxFile({ name: fileName, path: filePath, size, originalPath: filePath });
+          } catch (err) {
+            console.error('Failed to get file size:', err);
+            onDocxFile({ name: fileName, path: filePath, size: 0, originalPath: filePath });
+          }
         }
       }
     });
@@ -165,23 +149,23 @@ export function TextEditor({
 
       const droppedPath = extractPathFromDropEvent(event);
       if (droppedPath && isSupportedOfficeFile(droppedPath)) {
-        const files = await filesFromPaths([droppedPath]);
-        if (files.length > 0) {
-          onDocxFiles(dedupeFiles(files));
+        const fileName = droppedPath.split(/[/\\]/).pop() || 'document.docx';
+        try {
+          const size = await invoke<number>('get_file_size', { path: droppedPath });
+          onDocxFile({ name: fileName, path: droppedPath, size, originalPath: droppedPath });
+          return;
+        } catch {
+          onDocxFile({ name: fileName, path: droppedPath, size: 0, originalPath: droppedPath });
           return;
         }
       }
 
-      const droppedFiles = Array.from(event.dataTransfer?.files ?? []);
-      if (droppedFiles.length === 0) {
+      const file = event.dataTransfer?.files?.[0];
+      if (!file) {
         return;
       }
-
       try {
-        const imported = (await Promise.all(droppedFiles.map((file) => importBrowserFile(file)))).filter((file): file is DocxFile => file !== null);
-        if (imported.length > 0) {
-          onDocxFiles(dedupeFiles(imported));
-        }
+        await importBrowserFile(file);
       } catch (err) {
         console.error('Failed to import dropped file:', err);
       }
@@ -202,38 +186,36 @@ export function TextEditor({
       window.removeEventListener('dragleave', handleDomDragLeave);
       window.removeEventListener('drop', handleDomDrop);
     };
-  }, [dedupeFiles, extractPathFromDropEvent, filesFromPaths, importBrowserFile, isSupportedOfficeFile, onDocxFiles]);
+  }, [extractPathFromDropEvent, importBrowserFile, isSupportedOfficeFile, onDocxFile]);
 
   const handlePickFile = async () => {
     if (isCorrecting) return;
     try {
       const selected = await open({
-        multiple: true,
+        multiple: false,
         filters: [{ name: 'Word/OpenDocument', extensions: ['docx', 'odt'] }],
       });
 
-      if (selected) {
-        const selectedPaths = Array.isArray(selected) ? selected : [selected];
-        const files = await filesFromPaths(selectedPaths);
-        if (files.length > 0) {
-          onDocxFiles(dedupeFiles(files));
-          return;
+      if (selected && typeof selected === 'string') {
+        const fileName = selected.split(/[/\\]/).pop() || 'document.docx';
+        try {
+          const size = await invoke<number>('get_file_size', { path: selected });
+          onDocxFile({ name: fileName, path: selected, size, originalPath: selected });
+        } catch (err) {
+          console.error('Failed to get file size:', err);
+          onDocxFile({ name: fileName, path: selected, size: 0, originalPath: selected });
         }
       } else {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.docx,.odt';
-        input.multiple = true;
         input.onchange = async () => {
-          const files = Array.from(input.files ?? []);
-          if (files.length === 0) {
+          const file = input.files?.[0];
+          if (!file) {
             return;
           }
           try {
-            const imported = (await Promise.all(files.map((file) => importBrowserFile(file)))).filter((file): file is DocxFile => file !== null);
-            if (imported.length > 0) {
-              onDocxFiles(dedupeFiles(imported));
-            }
+            await importBrowserFile(file);
           } catch (error) {
             console.error('Failed to import selected file:', error);
           }
@@ -243,19 +225,6 @@ export function TextEditor({
     } catch (err) {
       console.error('Failed to open file dialog:', err);
     }
-  };
-
-  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') {
-      return;
-    }
-
-    if (readOnly || isCorrecting) {
-      return;
-    }
-
-    event.preventDefault();
-    onSubmitShortcut?.();
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -314,7 +283,7 @@ export function TextEditor({
   }, [text, correctedText, showDiff, isStreaming]);
 
   const isEmpty = !text.trim();
-  const showEmptyHint = isEmpty && docxFiles.length === 0 && !showDiff;
+  const showEmptyHint = isEmpty && !docxFile && !showDiff;
   const dragContainerClass = isDragging
     ? (isDarkMode ? 'bg-accent-900/20' : 'bg-accent-50')
     : '';
@@ -355,7 +324,7 @@ export function TextEditor({
   }
 
   // DOCX file loaded view - no border
-  if (docxFiles.length > 0) {
+  if (docxFile) {
     return (
       <div className={`relative w-full h-full transition-colors duration-200 ${dragContainerClass}`} style={{ padding: 0, margin: 0 }}>
         {dragOverlay}
@@ -368,59 +337,39 @@ export function TextEditor({
                       }`}
           style={{ margin: 0 }}
         >
-          <div className={`rounded-2xl px-4 py-4 max-w-2xl w-full shadow-premium-md animate-scale-in ${
+          <div className={`flex items-center gap-4 rounded-2xl px-6 py-4 max-w-md w-full shadow-premium-md animate-scale-in ${
             isDarkMode
               ? 'bg-surface-700 border border-surface-600'
               : 'bg-accent-50/60 border border-accent-200/60'
           }`}>
-            <div className="flex items-center justify-between gap-4 mb-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className={`flex-shrink-0 w-11 h-11 rounded-xl flex items-center justify-center ${
-                  isDarkMode ? 'bg-surface-600' : 'bg-accent-100'
-                }`}>
-                  <FileText className={`w-5 h-5 ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`} />
-                </div>
-                <p className={`text-base font-medium ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
-                  {t('editor.files_selected', lang).replace('{count}', String(docxFiles.length))}
+            <div className={`flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center ${
+              isDarkMode ? 'bg-surface-600' : 'bg-accent-100'
+            }`}>
+              <FileText className={`w-6 h-6 ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-base font-medium truncate ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
+                {docxFile.name}
+              </p>
+              {docxFile.size > 0 && (
+                <p className={`text-sm mt-0.5 ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
+                  {formatFileSize(docxFile.size)}
                 </p>
-              </div>
-              {!isCorrecting && (
-                <button
-                  onClick={() => onDocxFiles(null)}
-                  className={`flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 ${
-                    isDarkMode
-                      ? 'text-surface-400 hover:text-red-400 hover:bg-surface-600'
-                      : 'text-surface-500 hover:text-red-500 hover:bg-red-50'
-                  }`}
-                  title={t('editor.removeFile', lang)}
-                >
-                  <X className="w-5 h-5" />
-                </button>
               )}
             </div>
-
-            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-              {docxFiles.map((file) => (
-                <div
-                  key={file.path}
-                  className={`flex items-center gap-3 rounded-xl px-3 py-2 ${
-                    isDarkMode ? 'bg-surface-800/60' : 'bg-white/80'
-                  }`}
-                >
-                  <FileText className={`w-4 h-4 flex-shrink-0 ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
-                      {file.name}
-                    </p>
-                    {file.size > 0 && (
-                      <p className={`text-xs mt-0.5 ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
-                        {formatFileSize(file.size)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            {!isCorrecting && (
+              <button
+                onClick={() => onDocxFile(null)}
+                className={`flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 ${
+                  isDarkMode
+                    ? 'text-surface-400 hover:text-red-400 hover:bg-surface-600'
+                    : 'text-surface-500 hover:text-red-500 hover:bg-red-50'
+                }`}
+                title={t('editor.removeFile', lang)}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -439,7 +388,6 @@ export function TextEditor({
       <textarea
         value={text}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={handleEditorKeyDown}
         placeholder={t('editor.placeholder', lang)}
         disabled={readOnly}
         className={`w-full h-full font-sans text-base leading-relaxed

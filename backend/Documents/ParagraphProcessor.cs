@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using DocumentFormat.OpenXml.Wordprocessing;
 
@@ -7,7 +8,16 @@ namespace Lingofix.Backend.Documents;
 
 public static class ParagraphProcessor
 {
-    private const string BatchParagraphSeparator = "\n\n";
+    private const int MaxChunkChars = 5000;
+    private const int MinBatchChars = 500;
+    private const int MaxBatchChars = 50000;
+    private const int MinBatchParagraphs = 1;
+    private const int MaxBatchParagraphs = 100;
+    private const int MinParallelRequests = 1;
+    private const int MaxParallelRequests = 32;
+    private static readonly Regex BatchRegex = new(
+        @"<<P:(\d+)>>\s*(.*?)\s*<</P:\1>>",
+        RegexOptions.Singleline | RegexOptions.Compiled);
 
     public static async Task ProcessAsync(
         IEnumerable<Paragraph> paragraphs,
@@ -20,12 +30,11 @@ public static class ParagraphProcessor
         CancellationToken cancellationToken = default)
     {
         var enableBatching = settings.EnableBatching;
-        var chunkSize = Math.Clamp(settings.ChunkSize, Settings.MinChunkSize, Settings.MaxChunkSize);
-        var batchMaxChars = Math.Clamp(settings.BatchMaxChars, Settings.MinBatchMaxChars, Settings.MaxBatchMaxChars);
-        var batchMaxParagraphs = Math.Clamp(settings.BatchMaxParagraphs, Settings.MinBatchMaxParagraphs, Settings.MaxBatchMaxParagraphs);
+        var batchMaxChars = Math.Clamp(settings.BatchMaxChars, MinBatchChars, MaxBatchChars);
+        var batchMaxParagraphs = Math.Clamp(settings.BatchMaxParagraphs, MinBatchParagraphs, MaxBatchParagraphs);
         var enableCache = settings.EnableCache;
         var enableParallel = settings.EnableParallelization;
-        var maxParallel = Math.Clamp(settings.MaxParallelRequests, Settings.MinMaxParallelRequests, Settings.MaxMaxParallelRequests);
+        var maxParallel = Math.Clamp(settings.MaxParallelRequests, MinParallelRequests, MaxParallelRequests);
         var cache = enableCache ? new ConcurrentDictionary<string, string>(StringComparer.Ordinal) : null;
 
         var batchItems = new List<ParagraphItem>();
@@ -120,8 +129,8 @@ public static class ParagraphProcessor
             foreach (var batch in work)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, null, cancellationToken);
-                ApplyBatchResult(result, cache, logger);
+                var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, null, settings.BatchPrompt, cancellationToken);
+                ApplyBatchResult(result, cache);
                 completedBatches++;
                 processedParagraphs += batch.Items.Count;
                 completedChars += batch.Items.Sum(item => item.Original.Length);
@@ -147,10 +156,10 @@ public static class ParagraphProcessor
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, concurrency, cancellationToken);
+                    var result = await ExecuteWorkBatchAsync(batch, llmClient, logger, cache, concurrency, settings.BatchPrompt, cancellationToken);
                     lock (progressLock)
                     {
-                        ApplyBatchResult(result, cache, logger);
+                        ApplyBatchResult(result, cache);
                         completedBatches++;
                         processedParagraphs += batch.Items.Count;
                         completedChars += batch.Items.Sum(item => item.Original.Length);
@@ -182,14 +191,14 @@ public static class ParagraphProcessor
         await Task.WhenAll(running);
     }
 
-    private static async Task<string> CorrectWithChunkingAsync(string original, int chunkSize, LlmClient llmClient, CancellationToken cancellationToken)
+    private static async Task<string> CorrectWithChunkingAsync(string original, LlmClient llmClient, CancellationToken cancellationToken)
     {
-        if (original.Length <= chunkSize)
+        if (original.Length <= MaxChunkChars)
         {
             return await llmClient.CorrectAsync(original, cancellationToken);
         }
 
-        var chunks = SplitIntoChunks(original, chunkSize);
+        var chunks = SplitIntoChunks(original, MaxChunkChars);
         if (chunks.Count == 1)
         {
             return await llmClient.CorrectAsync(original, cancellationToken);
@@ -213,15 +222,7 @@ public static class ParagraphProcessor
         return builder.ToString();
     }
 
-    private static async Task<BatchResult> ExecuteWorkBatchAsync(
-        WorkBatch batch,
-        LlmClient llmClient,
-        Settings settings,
-        IRunLogger? logger,
-        ConcurrentDictionary<string, string>? cache,
-        int chunkSize,
-        AdaptiveConcurrency? concurrency,
-        CancellationToken cancellationToken)
+    private static async Task<BatchResult> ExecuteWorkBatchAsync(WorkBatch batch, LlmClient llmClient, IRunLogger? logger, ConcurrentDictionary<string, string>? cache, AdaptiveConcurrency? concurrency, string batchPrompt, CancellationToken cancellationToken)
     {
         var results = new Dictionary<int, string>();
 
@@ -234,7 +235,7 @@ public static class ParagraphProcessor
         {
             foreach (var item in batch.Items)
             {
-                var corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, cancellationToken);
+                var corrected = await CorrectWithCacheAsync(item.Original, llmClient, cache, cancellationToken);
                 if (string.IsNullOrWhiteSpace(corrected))
                 {
                     continue;
@@ -247,11 +248,11 @@ public static class ParagraphProcessor
             return new BatchResult(batch, results);
         }
 
-        var request = BuildBatchRequest(batch.Items);
+        var request = BuildBatchRequest(batch.Items, batchPrompt);
         string response;
         try
         {
-            response = await llmClient.CorrectBatchAsync(request, settings.BatchPrompt, cancellationToken);
+            response = await llmClient.CorrectAsync(request, cancellationToken);
         }
         catch (LlmRateLimitException ex)
         {
@@ -267,42 +268,18 @@ public static class ParagraphProcessor
             }
 
             logger?.Info($"Batching: rate limit, falling back to single requests (paragraphs: {batch.Items.Count}).");
-            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
+            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
         }
         catch
         {
             logger?.Info($"Batching: LLM error, falling back to single requests (paragraphs: {batch.Items.Count}).");
-            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
+            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
         }
 
-        if (!TryParseBatchResponse(response, batch.Items, out var parsed, out var parseFailure))
+        if (!TryParseBatchResponse(response, batch.Items.Count, out var parsed))
         {
-            logger?.Info($"Batching: invalid response ({parseFailure}), falling back to single requests (paragraphs: {batch.Items.Count}).");
-            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
-        }
-
-        if (parsed.Count < batch.Items.Count)
-        {
-            var missingItems = batch.Items
-                .Where(item => !parsed.ContainsKey(item.Id))
-                .ToList();
-            logger?.Info($"Batching: partial fallback start (missing: {missingItems.Count}/{batch.Items.Count}).");
-            var partialBatch = new WorkBatch(missingItems, UseBatch: false);
-            var partialResult = await ProcessBatchFallbackAsync(
-                partialBatch,
-                llmClient,
-                logger,
-                cache,
-                chunkSize,
-                concurrency,
-                cancellationToken,
-                context: "partial fallback");
-            foreach (var pair in partialResult.Corrections)
-            {
-                parsed[pair.Key] = pair.Value;
-            }
-
-            logger?.Info("Batching: partial fallback done.");
+            logger?.Info($"Batching: invalid response, falling back to single requests (paragraphs: {batch.Items.Count}).");
+            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, concurrency, cancellationToken);
         }
 
         concurrency?.Success();
@@ -310,17 +287,9 @@ public static class ParagraphProcessor
         return new BatchResult(batch, parsed);
     }
 
-    private static async Task<BatchResult> ProcessBatchFallbackAsync(
-        WorkBatch batch,
-        LlmClient llmClient,
-        IRunLogger? logger,
-        ConcurrentDictionary<string, string>? cache,
-        int chunkSize,
-        AdaptiveConcurrency? concurrency,
-        CancellationToken cancellationToken,
-        string context = "single fallback")
+    private static async Task<BatchResult> ProcessBatchFallbackAsync(WorkBatch batch, LlmClient llmClient, IRunLogger? logger, ConcurrentDictionary<string, string>? cache, AdaptiveConcurrency? concurrency, CancellationToken cancellationToken)
     {
-        logger?.Info($"Batching: {context} start (paragraphs: {batch.Items.Count}).");
+        logger?.Info($"Batching: single fallback start (paragraphs: {batch.Items.Count}).");
         var results = new Dictionary<int, string>();
         foreach (var item in batch.Items)
         {
@@ -328,7 +297,7 @@ public static class ParagraphProcessor
             string corrected;
             try
             {
-                corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, cancellationToken);
+                corrected = await CorrectWithCacheAsync(item.Original, llmClient, cache, cancellationToken);
             }
             catch (LlmRateLimitException ex)
             {
@@ -343,7 +312,7 @@ public static class ParagraphProcessor
                     await Task.Delay(ex.RetryAfterSeconds.Value * 1000, cancellationToken);
                 }
 
-                corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, cancellationToken);
+                corrected = await CorrectWithCacheAsync(item.Original, llmClient, cache, cancellationToken);
             }
 
             if (string.IsNullOrWhiteSpace(corrected))
@@ -354,18 +323,18 @@ public static class ParagraphProcessor
             results[item.Id] = corrected;
         }
 
-        logger?.Info($"Batching: {context} done.");
+        logger?.Info("Batching: single fallback done.");
         return new BatchResult(batch, results);
     }
 
-    private static async Task<string> CorrectWithCacheAsync(string original, int chunkSize, LlmClient llmClient, ConcurrentDictionary<string, string>? cache, CancellationToken cancellationToken)
+    private static async Task<string> CorrectWithCacheAsync(string original, LlmClient llmClient, ConcurrentDictionary<string, string>? cache, CancellationToken cancellationToken)
     {
         if (cache is not null && cache.TryGetValue(original, out var cached))
         {
             return cached;
         }
 
-        var corrected = await CorrectWithChunkingAsync(original, chunkSize, llmClient, cancellationToken);
+        var corrected = await CorrectWithChunkingAsync(original, llmClient, cancellationToken);
         if (cache is not null && !string.IsNullOrWhiteSpace(corrected))
         {
             cache.TryAdd(original, corrected);
@@ -374,19 +343,13 @@ public static class ParagraphProcessor
         return corrected;
     }
 
-    private static void ApplyBatchResult(BatchResult result, ConcurrentDictionary<string, string>? cache, IRunLogger? logger)
+    private static void ApplyBatchResult(BatchResult result, ConcurrentDictionary<string, string>? cache)
     {
         foreach (var item in result.Batch.Items)
         {
             if (!result.Corrections.TryGetValue(item.Id, out var corrected))
             {
                 continue;
-            }
-
-            corrected = XmlTextSanitizer.StripInvalidXmlChars(corrected, out var removedChars);
-            if (removedChars > 0)
-            {
-                logger?.Warning($"Batching: removed {removedChars} invalid XML character(s) from item {item.Id}.");
             }
 
             if (string.IsNullOrWhiteSpace(corrected))
@@ -403,255 +366,72 @@ public static class ParagraphProcessor
         }
     }
 
-    private static string BuildBatchRequest(List<ParagraphItem> items)
+    private static string BuildBatchRequest(List<ParagraphItem> items, string batchPrompt)
     {
         var builder = new StringBuilder();
-        AppendBatchItems(builder, items);
+        var normalizedPrompt = string.IsNullOrWhiteSpace(batchPrompt)
+            ? "Correct only the text inside the tags. Return the response with the exact same tags and IDs.\nNo extra lines outside the tags."
+            : batchPrompt.Trim();
+        builder.AppendLine(normalizedPrompt);
+        builder.AppendLine();
+
+        foreach (var item in items)
+        {
+            builder.Append("<<P:");
+            builder.Append(item.Id);
+            builder.AppendLine(">>");
+            builder.AppendLine(item.Original);
+            builder.Append("<<");
+            builder.Append("/P:");
+            builder.Append(item.Id);
+            builder.AppendLine(">>");
+        }
+
         return builder.ToString();
     }
 
-    private static void AppendBatchItems(StringBuilder builder, List<ParagraphItem> items)
-    {
-        for (var i = 0; i < items.Count; i++)
-        {
-            var item = items[i];
-            builder.Append(item.Original);
-
-            if (i < items.Count - 1)
-            {
-                builder.Append(BatchParagraphSeparator);
-            }
-        }
-    }
-
-    private static bool TryParseBatchResponse(
-        string response,
-        IReadOnlyList<ParagraphItem> expectedItems,
-        out Dictionary<int, string> results,
-        out string failureCode)
+    private static bool TryParseBatchResponse(string response, int expectedCount, out Dictionary<int, string> results)
     {
         results = new Dictionary<int, string>();
-        failureCode = "unknown";
         if (string.IsNullOrWhiteSpace(response))
         {
-            failureCode = "empty_response";
-            return false;
-        }
-        var parsedParagraphs = ParseBatchParagraphs(response);
-        if (parsedParagraphs is null)
-        {
-            failureCode = "invalid_item_format";
             return false;
         }
 
-        if (parsedParagraphs.Count != expectedItems.Count)
+        var matches = BatchRegex.Matches(response);
+        if (matches.Count != expectedCount)
         {
-            if (parsedParagraphs.Count < expectedItems.Count &&
-                TryAlignBatchParagraphs(expectedItems, parsedParagraphs, out var aligned))
+            return false;
+        }
+
+        var remainder = BatchRegex.Replace(response, string.Empty);
+        if (!string.IsNullOrWhiteSpace(remainder))
+        {
+            return false;
+        }
+
+        foreach (Match match in matches)
+        {
+            if (!int.TryParse(match.Groups[1].Value, out var id))
             {
-                results = aligned;
-                failureCode = "partial_count_mismatch";
-                return true;
+                return false;
             }
 
-            failureCode = "count_mismatch";
-            return false;
+            if (results.ContainsKey(id))
+            {
+                return false;
+            }
+
+            var text = match.Groups[2].Value;
+            results[id] = text.Trim();
         }
 
-        for (var i = 0; i < expectedItems.Count; i++)
-        {
-            results[expectedItems[i].Id] = LlmClient.SanitizeCorrection(parsedParagraphs[i]);
-        }
-
-        failureCode = "ok";
-        return true;
-    }
-
-    private static List<string>? ParseBatchParagraphs(string response)
-    {
-        var normalized = RemoveCodeFence(response)
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace('\r', '\n')
-            .Trim();
-        if (normalized.Length == 0)
-        {
-            return null;
-        }
-
-        var parts = normalized
-            .Split([BatchParagraphSeparator], StringSplitOptions.None)
-            .Select(part => part.Trim())
-            .Where(part => part.Length > 0)
-            .ToList();
-        if (parts.Count == 0)
-        {
-            return null;
-        }
-
-        return parts;
-    }
-
-    private static string RemoveCodeFence(string text)
-    {
-        var trimmed = text.Trim();
-        if (!trimmed.StartsWith("```", StringComparison.Ordinal))
-        {
-            return text;
-        }
-
-        var lines = trimmed.Split('\n').ToList();
-        if (lines.Count < 2)
-        {
-            return text;
-        }
-
-        if (lines[0].StartsWith("```", StringComparison.Ordinal))
-        {
-            lines.RemoveAt(0);
-        }
-
-        if (lines.Count > 0 && lines[^1].Trim().Equals("```", StringComparison.Ordinal))
-        {
-            lines.RemoveAt(lines.Count - 1);
-        }
-
-        return string.Join("\n", lines).Trim();
+        return results.Count == expectedCount;
     }
 
     private static int EstimateBatchLength(int currentLength, int nextParagraphLength)
     {
         return currentLength + nextParagraphLength + 16;
-    }
-
-    private static bool TryAlignBatchParagraphs(
-        IReadOnlyList<ParagraphItem> expectedItems,
-        IReadOnlyList<string> parsedParagraphs,
-        out Dictionary<int, string> aligned)
-    {
-        aligned = new Dictionary<int, string>();
-        if (parsedParagraphs.Count == 0 || parsedParagraphs.Count > expectedItems.Count)
-        {
-            return false;
-        }
-
-        var n = parsedParagraphs.Count;
-        var m = expectedItems.Count;
-        var scores = new double[n, m];
-        for (var i = 0; i < n; i++)
-        {
-            for (var j = 0; j < m; j++)
-            {
-                scores[i, j] = ParagraphSimilarity(parsedParagraphs[i], expectedItems[j].Original);
-            }
-        }
-
-        var dp = new double[n + 1, m + 1];
-        var chooseMatch = new bool[n + 1, m + 1];
-        const double negInf = -1_000_000d;
-
-        for (var i = 1; i <= n; i++)
-        {
-            dp[i, 0] = negInf;
-        }
-
-        for (var i = 1; i <= n; i++)
-        {
-            for (var j = 1; j <= m; j++)
-            {
-                var skip = dp[i, j - 1];
-                var match = dp[i - 1, j - 1];
-                if (match > negInf / 2)
-                {
-                    match += scores[i - 1, j - 1];
-                }
-
-                if (match >= skip)
-                {
-                    dp[i, j] = match;
-                    chooseMatch[i, j] = true;
-                }
-                else
-                {
-                    dp[i, j] = skip;
-                }
-            }
-        }
-
-        if (dp[n, m] <= negInf / 2)
-        {
-            return false;
-        }
-
-        var mapping = new int[n];
-        Array.Fill(mapping, -1);
-        var row = n;
-        var col = m;
-        while (row > 0 && col > 0)
-        {
-            if (chooseMatch[row, col])
-            {
-                mapping[row - 1] = col - 1;
-                row--;
-                col--;
-            }
-            else
-            {
-                col--;
-            }
-        }
-
-        if (row > 0 || mapping.Any(index => index < 0))
-        {
-            return false;
-        }
-
-        for (var i = 0; i < n; i++)
-        {
-            var expectedIndex = mapping[i];
-            var score = scores[i, expectedIndex];
-            if (score < 0.34)
-            {
-                return false;
-            }
-
-            var expected = expectedItems[expectedIndex];
-            aligned[expected.Id] = LlmClient.SanitizeCorrection(parsedParagraphs[i]);
-        }
-
-        return true;
-    }
-
-    private static double ParagraphSimilarity(string left, string right)
-    {
-        var leftTokens = Tokenize(left);
-        var rightTokens = Tokenize(right);
-        if (leftTokens.Count == 0 || rightTokens.Count == 0)
-        {
-            return 0;
-        }
-
-        var intersection = leftTokens.Count(token => rightTokens.Contains(token));
-        if (intersection == 0)
-        {
-            return 0;
-        }
-
-        return (2.0 * intersection) / (leftTokens.Count + rightTokens.Count);
-    }
-
-    private static HashSet<string> Tokenize(string input)
-    {
-        var normalized = new StringBuilder(input.Length);
-        foreach (var ch in input)
-        {
-            normalized.Append(char.IsLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : ' ');
-        }
-
-        return normalized
-            .ToString()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(token => token.Length > 1)
-            .ToHashSet(StringComparer.Ordinal);
     }
 
     private static List<string> SplitIntoChunks(string text, int maxChars)

@@ -12,15 +12,6 @@ public sealed class ChatCompletionsRequest
 
     [JsonPropertyName("temperature")]
     public double? Temperature { get; set; }
-
-    [JsonPropertyName("stream")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public bool? Stream { get; set; }
-
-    [JsonPropertyName("reasoning_effort")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? ReasoningEffort { get; set; }
-
 }
 
 public sealed class ChatMessage

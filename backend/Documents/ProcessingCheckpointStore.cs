@@ -8,7 +8,6 @@ internal sealed class ProcessingCheckpoint
     public required string CorrectedPath { get; init; }
     public required List<string> CompletedLabels { get; init; }
     public required Dictionary<string, int> CompletedBatchesByLabel { get; init; }
-    public bool IsActive { get; init; }
 }
 
 internal static class ProcessingCheckpointStore
@@ -41,11 +40,6 @@ internal static class ProcessingCheckpointStore
                 return null;
             }
 
-            if (!parsed.IsActive)
-            {
-                return null;
-            }
-
             return parsed;
         }
         catch
@@ -59,8 +53,7 @@ internal static class ProcessingCheckpointStore
         string inputPath,
         string correctedPath,
         IEnumerable<string> completedLabels,
-        IReadOnlyDictionary<string, int>? completedBatchesByLabel = null,
-        bool isActive = true)
+        IReadOnlyDictionary<string, int>? completedBatchesByLabel = null)
     {
         var checkpointPath = PathUtils.BuildCheckpointPath(inputPath);
         var payload = new ProcessingCheckpoint
@@ -72,11 +65,21 @@ internal static class ProcessingCheckpointStore
                 ? new Dictionary<string, int>(StringComparer.Ordinal)
                 : completedBatchesByLabel
                     .Where(kvp => kvp.Value > 0)
-                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal),
-            IsActive = isActive
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal)
         };
 
         var json = JsonSerializer.Serialize(payload, JsonOptions.Default);
         File.WriteAllText(checkpointPath, json);
+    }
+
+    public static void Delete(string inputPath)
+    {
+        var checkpointPath = PathUtils.BuildCheckpointPath(inputPath);
+        if (!File.Exists(checkpointPath))
+        {
+            return;
+        }
+
+        File.Delete(checkpointPath);
     }
 }

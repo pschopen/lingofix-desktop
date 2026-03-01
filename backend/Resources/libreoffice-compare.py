@@ -78,114 +78,6 @@ def _load_document_with_retry(desktop, url: str, attempts: int = 20):
     return None, last_error
 
 
-def _normalize_redline_type(raw_value) -> str:
-    if raw_value is None:
-        return ""
-    text = str(raw_value).strip().lower()
-    if not text:
-        return ""
-    if "." in text:
-        text = text.split(".")[-1]
-    return text
-
-
-def _is_text_redline(redline) -> bool:
-    redline_type = ""
-    for attr in ("RedlineType", "Type"):
-        try:
-            redline_type = _normalize_redline_type(getattr(redline, attr))
-        except Exception:
-            continue
-        if redline_type:
-            break
-
-    if not redline_type:
-        return False
-
-    return redline_type in {"insert", "delete", "insertion", "deletion"}
-
-
-def _collect_redlines(document):
-    if not hasattr(document, "getRedlines"):
-        return []
-
-    redlines = document.getRedlines()
-    if redlines is None:
-        return []
-
-    if hasattr(redlines, "getCount") and hasattr(redlines, "getByIndex"):
-        count = redlines.getCount()
-        return [redlines.getByIndex(i) for i in range(count)]
-
-    if hasattr(redlines, "createEnumeration"):
-        enum = redlines.createEnumeration()
-        collected = []
-        while enum.hasMoreElements():
-            collected.append(enum.nextElement())
-        return collected
-
-    return []
-
-
-def _reject_redline(frame, dispatcher, redline) -> bool:
-    try:
-        redline.Reject()
-        return True
-    except Exception:
-        pass
-
-    anchor = None
-    for attr in ("Anchor", "TextRange"):
-        try:
-            anchor = getattr(redline, attr)
-        except Exception:
-            continue
-        if anchor is not None:
-            break
-
-    if anchor is None:
-        return False
-
-    try:
-        controller = frame.getController()
-        controller.select(anchor)
-        dispatcher.executeDispatch(frame, ".uno:RejectTrackedChange", "", 0, ())
-        return True
-    except Exception:
-        return False
-
-
-def _filter_to_text_only_redlines(document, frame, dispatcher) -> None:
-    rejected = 0
-    unresolved = 0
-
-    redlines = _collect_redlines(document)
-    for redline in reversed(redlines):
-        if _is_text_redline(redline):
-            continue
-        if _reject_redline(frame, dispatcher, redline):
-            rejected += 1
-        else:
-            unresolved += 1
-
-    if unresolved > 0:
-        raise RuntimeError(
-            "Strict text-only filtering failed: could not reject all non-text tracked changes. "
-            f"rejected={rejected}, unresolved={unresolved}"
-        )
-
-    remaining_non_text = 0
-    for redline in _collect_redlines(document):
-        if not _is_text_redline(redline):
-            remaining_non_text += 1
-
-    if remaining_non_text > 0:
-        raise RuntimeError(
-            "Strict text-only filtering failed: non-text tracked changes remain after filtering. "
-            f"remaining_non_text={remaining_non_text}"
-        )
-
-
 def run_probe(host: str, port: int) -> int:
     try:
         _connect(host, port)
@@ -194,16 +86,7 @@ def run_probe(host: str, port: int) -> int:
         return _fail(f"UNO probe failed: {exc}")
 
 
-def run_compare(
-    host: str,
-    port: int,
-    original_path: str,
-    corrected_path: str,
-    output_path: str,
-    author: str,
-    output_format: str = "docx",
-    change_filter_mode: str = "all",
-) -> int:
+def run_compare(host: str, port: int, original_path: str, corrected_path: str, output_path: str, author: str) -> int:
     del author
     document = None
     try:
@@ -258,15 +141,10 @@ def run_compare(
         wait_seconds = min(20.0, max(8.0, (total_bytes / (1024.0 * 1024.0)) * 1.5 + 6.0))
         time.sleep(wait_seconds)
 
-        if change_filter_mode.strip().lower() == "text-only":
-            _filter_to_text_only_redlines(document, frame, dispatcher)
-
-        filter_name = "writer8" if output_format.strip().lower() == "odt" else "MS Word 2007 XML"
-
         document.storeToURL(
             output_url,
             (
-                _prop("FilterName", filter_name),
+                _prop("FilterName", "MS Word 2007 XML"),
                 _prop("Overwrite", True),
             ),
         )
@@ -293,7 +171,7 @@ def main() -> int:
         return _fail(
             "Usage:\n"
             "  libreoffice-compare.py probe <host> <port>\n"
-            "  libreoffice-compare.py compare <host> <port> <originalPath> <correctedPath> <outputPath> <author> [outputFormat] [changeFilterMode]"
+            "  libreoffice-compare.py compare <host> <port> <originalPath> <correctedPath> <outputPath> <author>"
         )
 
     mode = sys.argv[1].strip().lower()
@@ -303,10 +181,8 @@ def main() -> int:
         return run_probe(sys.argv[2], int(sys.argv[3]))
 
     if mode == "compare":
-        if len(sys.argv) not in (8, 9, 10):
-            return _fail(
-                "Compare mode requires: <host> <port> <originalPath> <correctedPath> <outputPath> <author> [outputFormat] [changeFilterMode]"
-            )
+        if len(sys.argv) != 8:
+            return _fail("Compare mode requires: <host> <port> <originalPath> <correctedPath> <outputPath> <author>")
         return run_compare(
             sys.argv[2],
             int(sys.argv[3]),
@@ -314,8 +190,6 @@ def main() -> int:
             sys.argv[5],
             sys.argv[6],
             sys.argv[7],
-            sys.argv[8] if len(sys.argv) >= 9 else "docx",
-            sys.argv[9] if len(sys.argv) >= 10 else "all",
         )
 
     return _fail(f"Unknown mode: {mode}")

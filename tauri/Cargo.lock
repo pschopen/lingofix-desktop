@@ -1924,7 +1924,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lingofix-desktop"
+name = "lingofix-tauri"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -19,7 +19,6 @@ internal static class ParagraphTextMapper
 
     public static void ApplyCorrection(Paragraph paragraph, string original, string corrected)
     {
-        corrected = XmlTextSanitizer.StripInvalidXmlChars(corrected, out _);
         if (string.IsNullOrWhiteSpace(corrected) || corrected == original)
         {
             return;
