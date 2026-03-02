@@ -8,6 +8,9 @@
   ],
   "command": "lingofix-desktop",
   "build-options": {
+    "build-args": [
+      "--share=network"
+    ],
     "append-path": "/usr/lib/sdk/rust-stable/bin",
     "env": {
       "CARGO_HOME": "/run/build/lingofix-desktop/.cargo",
@@ -29,7 +32,7 @@
       "buildsystem": "simple",
       "build-commands": [
         "test -f frontend/dist/index.html",
-        "cargo build --manifest-path tauri/Cargo.toml --release --target x86_64-unknown-linux-gnu",
+        "cargo build --manifest-path tauri/Cargo.toml --locked --release --target x86_64-unknown-linux-gnu",
         "install -Dm755 tauri/target/x86_64-unknown-linux-gnu/release/lingofix-desktop /app/bin/lingofix-desktop",
         "install -Dm755 tauri/binaries/lingofix-backend-x86_64-unknown-linux-gnu /app/bin/binaries/lingofix-backend",
         "install -Dm644 tauri/resources/binaries/libreoffice-compare.py /app/bin/binaries/libreoffice-compare.py",

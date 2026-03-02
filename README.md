@@ -61,6 +61,7 @@ For local Flatpak bundle builds, install `flatpak` and `flatpak-builder` first a
 `flatpak-builder` installs required runtimes/SDK extensions automatically during the build.
 
 The Linux Flatpak build compiles the Tauri host inside the Flatpak SDK and bundles backend binaries produced by `npm run build:app:linux:flatpak:prep`.
+Rust dependencies are resolved from `tauri/Cargo.lock` (`cargo --locked`) for reproducible Flatpak CI builds.
 
 You can also prepare backend binaries directly:
 
