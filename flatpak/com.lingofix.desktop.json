@@ -1,19 +1,17 @@
 {
   "app-id": "com.lingofix.desktop",
-  "runtime": "org.freedesktop.Platform",
-  "runtime-version": "24.08",
-  "sdk": "org.freedesktop.Sdk",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "47",
+  "sdk": "org.gnome.Sdk",
   "sdk-extensions": [
-    "org.freedesktop.Sdk.Extension.rust-stable",
-    "org.freedesktop.Sdk.Extension.node20"
+    "org.freedesktop.Sdk.Extension.rust-stable//24.08"
   ],
   "command": "lingofix-desktop",
   "build-options": {
-    "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node20/bin",
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
     "env": {
       "CARGO_HOME": "/run/build/lingofix-desktop/.cargo",
-      "XDG_CACHE_HOME": "/run/build/lingofix-desktop/.cache",
-      "npm_config_cache": "/run/build/lingofix-desktop/.npm"
+      "XDG_CACHE_HOME": "/run/build/lingofix-desktop/.cache"
     }
   },
   "finish-args": [
@@ -30,8 +28,7 @@
       "name": "lingofix-desktop",
       "buildsystem": "simple",
       "build-commands": [
-        "npm ci --prefix frontend",
-        "npm run build --prefix frontend",
+        "test -f frontend/dist/index.html",
         "cargo build --manifest-path tauri/Cargo.toml --release --target x86_64-unknown-linux-gnu",
         "install -Dm755 tauri/target/x86_64-unknown-linux-gnu/release/lingofix-desktop /app/bin/lingofix-desktop",
         "install -Dm755 tauri/binaries/lingofix-backend-x86_64-unknown-linux-gnu /app/bin/binaries/lingofix-backend",
@@ -44,7 +41,7 @@
       "sources": [
         {
           "type": "dir",
-          "path": "."
+          "path": ".."
         }
       ]
     }

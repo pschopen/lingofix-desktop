@@ -59,12 +59,11 @@ These commands publish the .NET backend as self-contained binaries and bundle th
 
 For local Flatpak bundle builds, install `flatpak` and `flatpak-builder` first, add Flathub as a remote, and install:
 
-- `org.freedesktop.Platform//24.08`
-- `org.freedesktop.Sdk//24.08`
+- `org.gnome.Platform//47`
+- `org.gnome.Sdk//47`
 - `org.freedesktop.Sdk.Extension.rust-stable//24.08`
-- `org.freedesktop.Sdk.Extension.node20//24.08`
 
-The Linux Flatpak build compiles frontend + Tauri inside the Flatpak SDK for reproducible builds. The self-contained .NET backend binary is prepared beforehand via `npm run build:app:linux:flatpak:prep`.
+The Linux Flatpak build compiles the Tauri host inside the Flatpak SDK and bundles backend binaries produced by `npm run build:app:linux:flatpak:prep`.
 
 You can also prepare backend binaries directly:
 
