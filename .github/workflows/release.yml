@@ -246,10 +246,6 @@ jobs:
       - name: Configure Flatpak runtime
         run: |
           flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub \
-            org.gnome.Platform//47 \
-            org.gnome.Sdk//47 \
-            org.freedesktop.Sdk.Extension.rust-stable//24.08
 
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
@@ -259,7 +255,7 @@ jobs:
 
       - name: Build Linux x64 Flatpak bundle
         run: |
-          flatpak-builder --user --force-clean --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json
+          flatpak-builder --user --force-clean --install-deps-from=flathub --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json
           mkdir -p artifacts
           flatpak build-bundle flatpak-repo "artifacts/Lingofix-Desktop-${{ github.ref_name }}-linux-x64.flatpak" com.lingofix.desktop
 

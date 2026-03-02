@@ -17,7 +17,7 @@
     "build:app:win": "npm run build:web && npm run prepare:backend:binaries:win && cargo tauri build --target x86_64-pc-windows-msvc --bundles nsis",
     "build:app:linux": "npm run build:app:linux:flatpak",
     "build:app:linux:flatpak:prep": "npm run build:web && npm run prepare:backend:binaries:linux",
-    "build:app:linux:flatpak": "npm run build:app:linux:flatpak:prep && mkdir -p artifacts && flatpak-builder --user --force-clean --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json && flatpak build-bundle flatpak-repo artifacts/Lingofix-Desktop-linux-x64.flatpak com.lingofix.desktop",
+    "build:app:linux:flatpak": "npm run build:app:linux:flatpak:prep && mkdir -p artifacts && flatpak-builder --user --force-clean --install-deps-from=flathub --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json && flatpak build-bundle flatpak-repo artifacts/Lingofix-Desktop-linux-x64.flatpak com.lingofix.desktop",
     "run": "npm run build",
     "publish:win": "npm run build:web && dotnet publish backend/Lingofix.Backend.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:SelfContained=true -o out/win-x64",
     "publish:osx-arm64": "npm run build:web && dotnet publish backend/Lingofix.Backend.csproj -c Release -r osx-arm64 -p:PublishSingleFile=true -p:SelfContained=true -o out/osx-arm64",
