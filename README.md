@@ -60,8 +60,7 @@ These commands publish the .NET backend as self-contained binaries and bundle th
 For local Flatpak bundle builds, install `flatpak` and `flatpak-builder` first and add Flathub as a remote.
 `flatpak-builder` installs required runtimes/SDK extensions automatically during the build.
 
-The Linux Flatpak build compiles the Tauri host inside the Flatpak SDK and bundles backend binaries produced by `npm run build:app:linux:flatpak:prep`.
-Rust dependencies are resolved from `tauri/Cargo.lock` (`cargo --locked`) for reproducible Flatpak CI builds.
+The Linux Flatpak build bundles artifacts produced by `npm run build:app:linux:flatpak:prep`.
 
 You can also prepare backend binaries directly:
 

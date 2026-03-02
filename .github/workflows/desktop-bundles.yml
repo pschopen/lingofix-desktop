@@ -190,10 +190,20 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
             flatpak \
             flatpak-builder
 
@@ -203,6 +213,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version ^2 --locked
 
       - name: Build Linux x64 Flatpak inputs
         run: npm run build:app:linux:flatpak:prep
