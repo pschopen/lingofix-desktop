@@ -23,6 +23,8 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
 
 export const DOCX_COMPARE_MODES = ['openxml', 'word-native', 'libreoffice-uno'] as const;
 export type DocxCompareMode = (typeof DOCX_COMPARE_MODES)[number];
+export const REASONING_EFFORTS = ['low', 'medium', 'high'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 export const DOCX_DOCUMENT_PARTS = ['main', 'footnotes', 'endnotes', 'headers', 'footers', 'glossary'] as const;
 export type DocxDocumentPart = (typeof DOCX_DOCUMENT_PARTS)[number];
 export const DOCX_BATCHING_PARTS = DOCX_DOCUMENT_PARTS;
@@ -82,6 +84,7 @@ export interface Settings {
   auto_check_updates: boolean;
   temperature: number;
   enable_reasoning: boolean;
+  reasoning_effort: ReasoningEffort;
   provider_keys: Record<Provider, string | null>;
   docx: DocxSettings;
   font_size: FontSize;

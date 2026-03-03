@@ -459,6 +459,22 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Reasoning aktivieren',
     en: 'Enable reasoning',
   },
+  'settings.reasoning_effort': {
+    de: 'Reasoning-Intensität',
+    en: 'Reasoning effort',
+  },
+  'settings.reasoning_effort.low': {
+    de: 'Niedrig',
+    en: 'Low',
+  },
+  'settings.reasoning_effort.medium': {
+    de: 'Mittel',
+    en: 'Medium',
+  },
+  'settings.reasoning_effort.high': {
+    de: 'Hoch',
+    en: 'High',
+  },
   'settings.docx.batching': {
     de: 'Batching',
     en: 'Batching',

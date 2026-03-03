@@ -16,8 +16,10 @@ import {
   DOCX_COMPARE_MODES,
   DOCX_BATCHING_PARTS,
   DOCX_CORRECTION_SCOPE_PARTS,
+  REASONING_EFFORTS,
   DocxBatchingPart,
   DocxCorrectionScopePart,
+  ReasoningEffort,
 } from '../types';
 import { Language, t } from '../i18n';
 
@@ -1054,6 +1056,23 @@ export function SettingsModal({
                   onChange={() => setFormData({ ...formData, enable_reasoning: !formData.enable_reasoning })}
                   isDarkMode={isDarkMode}
                 />
+
+                {formData.enable_reasoning && (
+                  <FieldGroup label={t('settings.reasoning_effort', lang)} isDarkMode={isDarkMode}>
+                    <SelectField
+                      value={formData.reasoning_effort}
+                      onChange={(nextValue) => setFormData({ ...formData, reasoning_effort: nextValue as ReasoningEffort })}
+                      menuBoundaryRef={modalPanelRef}
+                      isDarkMode={isDarkMode}
+                    >
+                      {REASONING_EFFORTS.map((effort) => (
+                        <option key={effort} value={effort}>
+                          {t(`settings.reasoning_effort.${effort}`, lang)}
+                        </option>
+                      ))}
+                    </SelectField>
+                  </FieldGroup>
+                )}
 
                 {/* System Prompt (shared) */}
                 <FieldGroup label={t('settings.system_prompt', lang)} hint={t('settings.system_prompt.hint', lang)} isDarkMode={isDarkMode}>

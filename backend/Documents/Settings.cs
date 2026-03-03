@@ -7,7 +7,7 @@ public sealed class Settings
 {
     public const double MinTemperature = 0.0;
     public const double MaxTemperature = 2.0;
-    public const int DefaultChunkSize = 3_000;
+    public const int DefaultChunkSize = 7_500;
     public const int MinChunkSize = 500;
     public const int MaxChunkSize = 50_000;
     public const int MinBatchMaxChars = 500;
@@ -27,6 +27,7 @@ public sealed class Settings
     public string CompareMode { get; set; } = string.Empty;
     public double Temperature { get; set; }
     public bool EnableReasoning { get; set; }
+    public string ReasoningEffort { get; set; } = "low";
     public int ChunkSize { get; set; }
     public bool EnableBatching { get; set; }
     internal HashSet<ProcessorWorkItemKind> BatchingParts { get; set; } =
@@ -114,6 +115,7 @@ public sealed class Settings
             BatchPrompt = payload.BatchPrompt?.Trim() ?? string.Empty,
             Temperature = payload.Temperature,
             EnableReasoning = payload.EnableReasoning,
+            ReasoningEffort = ParseReasoningEffort(payload.ReasoningEffort),
             CompareMode = RequireString(docx.CompareMode, "docx.compare_mode"),
             ChunkSize = docx.ChunkSize ?? DefaultChunkSize,
             EnableBatching = docx.EnableBatching,
@@ -247,6 +249,22 @@ public sealed class Settings
 
         return result;
     }
+
+    private static string ParseReasoningEffort(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            throw InvalidSettings("missing or empty field 'reasoning_effort'");
+        }
+
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "low" => "low",
+            "medium" => "medium",
+            "high" => "high",
+            _ => throw InvalidSettings($"reasoning_effort contains unknown value '{raw}'")
+        };
+    }
 }
 
 internal sealed class FrontendSettingsPayload
@@ -277,6 +295,9 @@ internal sealed class FrontendSettingsPayload
 
     [JsonPropertyName("enable_reasoning")]
     public bool EnableReasoning { get; set; }
+
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; set; }
 
     [JsonPropertyName("docx")]
     public FrontendDocxSettingsPayload? Docx { get; set; }

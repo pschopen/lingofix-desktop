@@ -109,6 +109,7 @@ const KNOWN_PROVIDERS: [&str; 7] = [
     "mistral",
 ];
 const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
+const KNOWN_REASONING_EFFORTS: [&str; 3] = ["low", "medium", "high"];
 const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
 const MIN_TEMPERATURE: f64 = 0.0;
 const MAX_TEMPERATURE: f64 = 2.0;
@@ -130,7 +131,11 @@ const KNOWN_DOCX_PARTS: [&str; 6] = [
 ];
 
 fn default_docx_chunk_size() -> i32 {
-    3_000
+    7_500
+}
+
+fn default_reasoning_effort() -> String {
+    "low".to_string()
 }
 
 fn default_batching_parts() -> Vec<String> {
@@ -247,6 +252,8 @@ struct FrontendSettings {
     auto_check_updates: bool,
     temperature: f64,
     enable_reasoning: bool,
+    #[serde(default = "default_reasoning_effort")]
+    reasoning_effort: String,
     provider_keys: HashMap<String, Option<String>>,
     docx: DocxSettings,
     font_size: String,
@@ -288,6 +295,7 @@ impl FrontendSettings {
             auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
             enable_reasoning: false,
+            reasoning_effort: default_reasoning_effort(),
             provider_keys: empty_provider_keys(),
             docx: DocxSettings::default(),
             font_size: "default".into(),
@@ -836,6 +844,15 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
     {
         return Err(format!(
             "Invalid settings: docx.batching_parts contains unknown values. {reset_hint}"
+        ));
+    }
+
+    if !KNOWN_REASONING_EFFORTS
+        .iter()
+        .any(|effort| effort.eq_ignore_ascii_case(settings.reasoning_effort.trim()))
+    {
+        return Err(format!(
+            "Invalid settings: reasoning_effort is invalid. {reset_hint}"
         ));
     }
 
@@ -1480,7 +1497,7 @@ async fn send_openai_like_request(
     }
 
     if include_reasoning_effort {
-        body["reasoning_effort"] = json!("low");
+        body["reasoning_effort"] = json!(settings.reasoning_effort);
     }
 
     let mut req = client.post(url).json(&body);
@@ -1834,7 +1851,8 @@ async fn run_docx_processor(
             "batch_max_paragraphs": settings.docx.batch_max_paragraphs,
             "parallelization": settings.docx.enable_parallelization,
             "max_parallel_requests": settings.docx.max_parallel_requests,
-            "enable_reasoning": settings.enable_reasoning
+            "enable_reasoning": settings.enable_reasoning,
+            "reasoning_effort": &settings.reasoning_effort
         }),
     );
 

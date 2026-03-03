@@ -25,6 +25,7 @@ public sealed class LlmClient
     private readonly string _systemPromptOverride;
     private readonly double _temperature;
     private readonly bool _enableReasoning;
+    private readonly string _reasoningEffort;
     private readonly IRunLogger? _logger;
     private string _apiKey = string.Empty;
     private int _temperatureSupport = TemperatureSupportUnknown;
@@ -37,6 +38,7 @@ public sealed class LlmClient
         string systemPromptOverride,
         double temperature,
         bool enableReasoning,
+        string reasoningEffort,
         bool? temperatureSupportedHint,
         bool? reasoningEffortSupportedHint,
         IRunLogger? logger = null)
@@ -49,6 +51,7 @@ public sealed class LlmClient
         _systemPromptOverride = systemPromptOverride ?? string.Empty;
         _temperature = temperature;
         _enableReasoning = enableReasoning;
+        _reasoningEffort = string.IsNullOrWhiteSpace(reasoningEffort) ? "low" : reasoningEffort.Trim().ToLowerInvariant();
         _temperatureSupport = ToSupportState(temperatureSupportedHint);
         _reasoningSupport = ToSupportState(reasoningEffortSupportedHint);
         _logger = logger;
@@ -308,7 +311,7 @@ public sealed class LlmClient
                 Messages = request.Messages,
                 Stream = request.Stream,
                 Temperature = includeTemperature ? request.Temperature : null,
-                ReasoningEffort = includeReasoningEffort ? "low" : null
+                ReasoningEffort = includeReasoningEffort ? _reasoningEffort : null
             };
 
             LogRequestPayload(effectiveRequest, attempt);
