@@ -1942,8 +1942,10 @@ async fn run_docx_processor(
             if accept_existing_track_changes {
                 command.arg("--accept-existing-track-changes");
             }
-            if let Some(parent) = backend_bin.parent() {
-                command.current_dir(parent);
+            if std::env::var_os("FLATPAK_ID").is_none() {
+                if let Some(parent) = backend_bin.parent() {
+                    command.current_dir(parent);
+                }
             }
             (
                 command,
@@ -2308,8 +2310,10 @@ async fn inspect_docx_track_changes_via_backend(
             .arg("--input")
             .arg(file_path)
             .arg("--inspect-track-changes");
-        if let Some(parent) = backend_bin.parent() {
-            command.current_dir(parent);
+        if std::env::var_os("FLATPAK_ID").is_none() {
+            if let Some(parent) = backend_bin.parent() {
+                command.current_dir(parent);
+            }
         }
         (
             command,

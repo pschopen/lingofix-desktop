@@ -456,6 +456,7 @@ internal static class LibreOfficeUnoCompareRunner
         {
             psi.FileName = "flatpak-spawn";
             psi.ArgumentList.Add("--host");
+            psi.ArgumentList.Add("--directory=/");
             psi.ArgumentList.Add(ResolveFlatpakHostExecutable(executable));
             return psi;
         }
