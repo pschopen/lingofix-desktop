@@ -4,6 +4,7 @@
   "runtime-version": "48",
   "sdk": "org.gnome.Sdk",
   "command": "lingofix-desktop",
+  "appstream-compose": false,
   "finish-args": [
     "--share=network",
     "--socket=wayland",
