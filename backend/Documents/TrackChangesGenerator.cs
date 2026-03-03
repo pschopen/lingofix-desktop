@@ -10,6 +10,7 @@ public static class TrackChangesGenerator
     private static readonly TimeSpan ExternalCompareTimeout = TimeSpan.FromMinutes(20);
     private static readonly TimeSpan LibreOfficeProbeTimeout = TimeSpan.FromSeconds(15);
     private const string SOfficePathEnv = "LINGOFIX_SOFFICE_PATH";
+    private const string FlatpakIdEnv = "FLATPAK_ID";
     private const string WordprocessingNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     private static readonly HashSet<string> RemoveRevisionElements = new(StringComparer.Ordinal)
     {
@@ -1186,15 +1187,7 @@ public static class TrackChangesGenerator
                 workDir,
                 Path.GetFileNameWithoutExtension(inputPath) + normalizedTarget);
 
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = sofficePath,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
-            };
+            var psi = CreateLibreOfficeProcessStartInfo(sofficePath);
             psi.ArgumentList.Add("--headless");
             psi.ArgumentList.Add("--convert-to");
             psi.ArgumentList.Add(normalizedTarget.TrimStart('.'));
@@ -1714,15 +1707,7 @@ if ($null -ne $lastError) {
         {
             try
             {
-                var psi = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = candidate,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
-                };
+                var psi = CreateLibreOfficeProcessStartInfo(candidate);
                 psi.ArgumentList.Add("--version");
 
                 using var proc = System.Diagnostics.Process.Start(psi);
@@ -1845,12 +1830,70 @@ if ($null -ne $lastError) {
         }
         else
         {
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(FlatpakIdEnv)))
+            {
+                Add("/run/host/usr/bin/soffice");
+                Add("/run/host/usr/bin/libreoffice");
+                Add("/run/host/usr/local/bin/soffice");
+                Add("/run/host/usr/lib64/libreoffice/program/soffice");
+                Add("/run/host/usr/lib/libreoffice/program/soffice");
+            }
             Add("/usr/bin/soffice");
+            Add("/usr/bin/libreoffice");
             Add("/usr/local/bin/soffice");
             Add("soffice");
         }
 
         return yieldReturnList;
+    }
+
+    private static bool IsFlatpakSandbox()
+        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(FlatpakIdEnv));
+
+    private static string ResolveFlatpakHostExecutable(string executable)
+    {
+        if (!IsFlatpakSandbox())
+        {
+            return executable;
+        }
+
+        const string hostPrefix = "/run/host";
+        if (executable.StartsWith(hostPrefix, StringComparison.Ordinal))
+        {
+            var hostPath = executable[hostPrefix.Length..];
+            return string.IsNullOrWhiteSpace(hostPath) ? executable : hostPath;
+        }
+
+        return executable;
+    }
+
+    private static System.Diagnostics.ProcessStartInfo CreateLibreOfficeProcessStartInfo(string executable)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+        };
+
+        if (IsFlatpakSandbox())
+        {
+            psi.FileName = "flatpak-spawn";
+            psi.ArgumentList.Add("--host");
+            psi.ArgumentList.Add(ResolveFlatpakHostExecutable(executable));
+            return psi;
+        }
+
+        psi.FileName = executable;
+        var workingDirectory = Path.GetDirectoryName(executable);
+        if (!string.IsNullOrWhiteSpace(workingDirectory) && Directory.Exists(workingDirectory))
+        {
+            psi.WorkingDirectory = workingDirectory;
+        }
+
+        return psi;
     }
 
 }

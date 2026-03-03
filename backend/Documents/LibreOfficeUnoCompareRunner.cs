@@ -8,6 +8,7 @@ namespace Lingofix.Backend.Documents;
 internal static class LibreOfficeUnoCompareRunner
 {
     private const string LibreOfficePythonEnv = "LINGOFIX_LIBREOFFICE_PYTHON";
+    private const string FlatpakIdEnv = "FLATPAK_ID";
 
     public static void GenerateWithUno(
         string sofficePath,
@@ -25,7 +26,7 @@ internal static class LibreOfficeUnoCompareRunner
 
         var effectiveSofficePath = ResolveSofficePathForHeadlessLaunch(sofficePath);
         var pythonPath = ResolveLibreOfficePythonExecutable(effectiveSofficePath);
-        var scriptPath = ResolveCompareScriptPath();
+        var scriptPath = PrepareCompareScriptForExecution(ResolveCompareScriptPath());
 
         var workspace = Path.Combine(PathUtils.GetLingofixTempRoot(), "libreoffice-uno", Guid.NewGuid().ToString("N"));
         var userProfilePath = Path.Combine(workspace, "profile");
@@ -56,18 +57,7 @@ internal static class LibreOfficeUnoCompareRunner
         Process? sofficeProcess = null;
         try
         {
-            var sofficePsi = new ProcessStartInfo
-            {
-                FileName = effectiveSofficePath,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-            var sofficeWorkingDirectory = Path.GetDirectoryName(effectiveSofficePath);
-            if (!string.IsNullOrWhiteSpace(sofficeWorkingDirectory))
-            {
-                sofficePsi.WorkingDirectory = sofficeWorkingDirectory;
-            }
+            var sofficePsi = CreateHostAwareProcessStartInfo(effectiveSofficePath, redirectOutput: false);
             sofficePsi.ArgumentList.Add("--headless");
             sofficePsi.ArgumentList.Add("--invisible");
             sofficePsi.ArgumentList.Add("--norestore");
@@ -117,21 +107,7 @@ internal static class LibreOfficeUnoCompareRunner
             outputDir,
             Path.GetFileNameWithoutExtension(inputPath) + ".docx");
 
-        var psi = new ProcessStartInfo
-        {
-            FileName = sofficePath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden
-        };
-
-        var sofficeWorkingDirectory = Path.GetDirectoryName(sofficePath);
-        if (!string.IsNullOrWhiteSpace(sofficeWorkingDirectory))
-        {
-            psi.WorkingDirectory = sofficeWorkingDirectory;
-        }
+        var psi = CreateHostAwareProcessStartInfo(sofficePath, redirectOutput: true);
 
         psi.ArgumentList.Add("--headless");
         psi.ArgumentList.Add("--convert-to");
@@ -246,15 +222,7 @@ internal static class LibreOfficeUnoCompareRunner
         TimeSpan timeout,
         IReadOnlyList<string> args)
     {
-        var psi = new ProcessStartInfo
-        {
-            FileName = pythonPath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden
-        };
+        var psi = CreateHostAwareProcessStartInfo(pythonPath, redirectOutput: true);
 
         psi.ArgumentList.Add(scriptPath);
         foreach (var arg in args)
@@ -317,6 +285,23 @@ internal static class LibreOfficeUnoCompareRunner
             "libreoffice-compare.py not found in expected resource locations.");
     }
 
+    private static string PrepareCompareScriptForExecution(string scriptPath)
+    {
+        if (!IsFlatpakSandbox())
+        {
+            return scriptPath;
+        }
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "Lingofix", "flatpak-host-scripts");
+        Directory.CreateDirectory(tempDir);
+
+        var targetPath = Path.Combine(
+            tempDir,
+            $"libreoffice-compare-{Guid.NewGuid():N}.py");
+        File.Copy(scriptPath, targetPath, overwrite: true);
+        return targetPath;
+    }
+
     private static string ResolveLibreOfficePythonExecutable(string sofficePath)
     {
         var candidates = new List<string>();
@@ -367,6 +352,11 @@ internal static class LibreOfficeUnoCompareRunner
         }
         else
         {
+            if (IsFlatpakSandbox())
+            {
+                AddCandidate("/run/host/usr/lib64/libreoffice/program/python");
+                AddCandidate("/run/host/usr/lib/libreoffice/program/python");
+            }
             AddCandidate("/usr/lib/libreoffice/program/python");
             AddCandidate("/usr/lib64/libreoffice/program/python");
             AddCandidate("python3");
@@ -384,15 +374,7 @@ internal static class LibreOfficeUnoCompareRunner
 
             try
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = candidate,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
+                var psi = CreateHostAwareProcessStartInfo(candidate, redirectOutput: true);
                 psi.ArgumentList.Add("--version");
 
                 using var proc = Process.Start(psi);
@@ -437,6 +419,55 @@ internal static class LibreOfficeUnoCompareRunner
             "Could not locate a usable LibreOffice Python runtime (pyuno). " +
             $"Set {LibreOfficePythonEnv} to the LibreOffice python executable if needed.\n\n" +
             $"Details:\n{string.Join(Environment.NewLine, failures)}");
+    }
+
+    private static bool IsFlatpakSandbox()
+        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(FlatpakIdEnv));
+
+    private static string ResolveFlatpakHostExecutable(string executable)
+    {
+        if (!IsFlatpakSandbox())
+        {
+            return executable;
+        }
+
+        const string hostPrefix = "/run/host";
+        if (executable.StartsWith(hostPrefix, StringComparison.Ordinal))
+        {
+            var hostPath = executable[hostPrefix.Length..];
+            return string.IsNullOrWhiteSpace(hostPath) ? executable : hostPath;
+        }
+
+        return executable;
+    }
+
+    private static ProcessStartInfo CreateHostAwareProcessStartInfo(string executable, bool redirectOutput)
+    {
+        var psi = new ProcessStartInfo
+        {
+            RedirectStandardOutput = redirectOutput,
+            RedirectStandardError = redirectOutput,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+
+        if (IsFlatpakSandbox())
+        {
+            psi.FileName = "flatpak-spawn";
+            psi.ArgumentList.Add("--host");
+            psi.ArgumentList.Add(ResolveFlatpakHostExecutable(executable));
+            return psi;
+        }
+
+        psi.FileName = executable;
+        var workingDirectory = Path.GetDirectoryName(executable);
+        if (!string.IsNullOrWhiteSpace(workingDirectory) && Directory.Exists(workingDirectory))
+        {
+            psi.WorkingDirectory = workingDirectory;
+        }
+
+        return psi;
     }
 
     private static int ReserveFreePort()
