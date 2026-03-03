@@ -2519,14 +2519,59 @@ fn resolve_soffice_candidates() -> Vec<PathBuf> {
     } else {
         if std::env::var_os("FLATPAK_ID").is_some() {
             add_soffice_candidate(&mut candidates, PathBuf::from("/run/host/usr/bin/soffice"));
+            add_soffice_candidate(&mut candidates, PathBuf::from("/run/host/usr/bin/libreoffice"));
             add_soffice_candidate(&mut candidates, PathBuf::from("/run/host/usr/local/bin/soffice"));
+            add_soffice_candidate(
+                &mut candidates,
+                PathBuf::from("/run/host/usr/lib64/libreoffice/program/soffice"),
+            );
+            add_soffice_candidate(
+                &mut candidates,
+                PathBuf::from("/run/host/usr/lib/libreoffice/program/soffice"),
+            );
         }
         add_soffice_candidate(&mut candidates, PathBuf::from("/usr/bin/soffice"));
+        add_soffice_candidate(&mut candidates, PathBuf::from("/usr/bin/libreoffice"));
         add_soffice_candidate(&mut candidates, PathBuf::from("/usr/local/bin/soffice"));
         add_soffice_candidate(&mut candidates, PathBuf::from("soffice"));
     }
 
     candidates
+}
+
+fn in_flatpak_sandbox() -> bool {
+    std::env::var_os("FLATPAK_ID").is_some()
+}
+
+fn soffice_host_path(candidate: &Path) -> PathBuf {
+    if in_flatpak_sandbox() {
+        if let Ok(stripped) = candidate.strip_prefix("/run/host") {
+            return stripped.to_path_buf();
+        }
+    }
+    candidate.to_path_buf()
+}
+
+fn spawnable_soffice_command_async(candidate: &Path) -> Command {
+    if in_flatpak_sandbox() {
+        let host_candidate = soffice_host_path(candidate);
+        let mut command = Command::new("flatpak-spawn");
+        command.arg("--host").arg(host_candidate);
+        return command;
+    }
+
+    Command::new(candidate)
+}
+
+fn spawnable_soffice_command(candidate: &Path) -> std::process::Command {
+    if in_flatpak_sandbox() {
+        let host_candidate = soffice_host_path(candidate);
+        let mut command = std::process::Command::new("flatpak-spawn");
+        command.arg("--host").arg(host_candidate);
+        return command;
+    }
+
+    std::process::Command::new(candidate)
 }
 
 async fn convert_office_file_to(
@@ -2561,7 +2606,7 @@ async fn convert_office_file_to(
     let mut not_found_failures = 0usize;
     let mut failures = Vec::new();
     for candidate in candidates {
-        let mut cmd = Command::new(&candidate);
+        let mut cmd = spawnable_soffice_command_async(&candidate);
         cmd.arg("--headless")
             .arg("--convert-to")
             .arg(target_kind.extension())
@@ -2837,7 +2882,7 @@ fn check_libreoffice_compare_access() -> Result<WordCompareAccessStatus, String>
     let mut failures = Vec::new();
 
     for candidate in candidates {
-        let mut command = std::process::Command::new(&candidate);
+        let mut command = spawnable_soffice_command(&candidate);
         command.arg("--version");
 
         #[cfg(target_os = "windows")]

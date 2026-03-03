@@ -12,7 +12,8 @@
     "--socket=pulseaudio",
     "--device=dri",
     "--filesystem=host",
-    "--talk-name=org.freedesktop.FileManager1"
+    "--talk-name=org.freedesktop.FileManager1",
+    "--talk-name=org.freedesktop.Flatpak"
   ],
   "modules": [
     {
