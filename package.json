@@ -16,7 +16,7 @@
     "build:app:mac:x64": "npm run build:web && npm run prepare:backend:binaries:mac && cargo tauri build --target x86_64-apple-darwin --bundles app && node scripts/resign-macos-app.mjs --target x86_64-apple-darwin",
     "build:app:win": "npm run build:web && npm run prepare:backend:binaries:win && cargo tauri build --target x86_64-pc-windows-msvc --bundles nsis",
     "build:app:linux": "npm run build:app:linux:flatpak",
-    "build:app:linux:flatpak:prep": "npm run build:web && npm run prepare:backend:binaries:linux && cargo tauri build --target x86_64-unknown-linux-gnu --bundles none",
+    "build:app:linux:flatpak:prep": "npm run build:web && npm run prepare:backend:binaries:linux && cargo build --manifest-path tauri/Cargo.toml --target x86_64-unknown-linux-gnu --release",
     "build:app:linux:flatpak": "npm run build:app:linux:flatpak:prep && mkdir -p artifacts && flatpak-builder --user --force-clean --install-deps-from=flathub --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json && flatpak build-bundle flatpak-repo artifacts/Lingofix-Desktop-linux-x64.flatpak com.lingofix.desktop",
     "run": "npm run build",
     "publish:win": "npm run build:web && dotnet publish backend/Lingofix.Backend.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:SelfContained=true -o out/win-x64",
