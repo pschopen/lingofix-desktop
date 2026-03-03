@@ -30,6 +30,25 @@ type CachedRelease = {
   html_url: string;
 };
 
+type PendingReasoningUnsupported =
+  | { kind: 'text'; text: string }
+  | { kind: 'docx'; files: DocxFile[]; startIndex: number };
+
+const REASONING_UNSUPPORTED_ERROR_CODE = 'REASONING_UNSUPPORTED:';
+
+function extractReasoningUnsupportedDetail(raw: string): string | null {
+  const message = (raw ?? '').toString().trim();
+  const markerIndex = message.indexOf(REASONING_UNSUPPORTED_ERROR_CODE);
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  const detail = message
+    .slice(markerIndex + REASONING_UNSUPPORTED_ERROR_CODE.length)
+    .trim();
+  return detail || null;
+}
+
 function parseVersionParts(raw: string): number[] {
   const normalized = raw.trim().replace(/^v/i, '').split('-')[0];
   return normalized
@@ -87,6 +106,9 @@ function App() {
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [showOpenXmlConsent, setShowOpenXmlConsent] = useState(false);
   const [pendingDocxRunSettings, setPendingDocxRunSettings] = useState<Settings | null>(null);
+  const [showReasoningUnsupportedModal, setShowReasoningUnsupportedModal] = useState(false);
+  const [reasoningUnsupportedDetail, setReasoningUnsupportedDetail] = useState<string | null>(null);
+  const [pendingReasoningUnsupported, setPendingReasoningUnsupported] = useState<PendingReasoningUnsupported | null>(null);
   const {
     text,
     setText,
@@ -299,6 +321,26 @@ function App() {
     }
   }, []);
 
+  const openReasoningUnsupportedModal = useCallback((
+    pending: PendingReasoningUnsupported,
+    rawMessage: string,
+  ) => {
+    const detail = extractReasoningUnsupportedDetail(rawMessage);
+    if (!detail) {
+      return false;
+    }
+
+    setError(null);
+    setInfoMessage(null);
+    setIsStreaming(false);
+    setIsCorrecting(false);
+    setShowDiff(false);
+    setPendingReasoningUnsupported(pending);
+    setReasoningUnsupportedDetail(detail);
+    setShowReasoningUnsupportedModal(true);
+    return true;
+  }, [setError, setInfoMessage, setIsCorrecting, setIsStreaming, setShowDiff]);
+
   useEffect(() => {
     loadSettings();
     
@@ -463,21 +505,30 @@ function App() {
     });
   }, [lang]);
 
-  const runDocxQueue = useCallback(async (files: DocxFile[], settingsForRun: Settings) => {
+  const runDocxQueue = useCallback(async (
+    files: DocxFile[],
+    settingsForRun: Settings,
+    options?: { startIndex?: number; resetState?: boolean },
+  ) => {
     if (files.length === 0) {
       return;
     }
+
+    const startIndex = Math.max(0, options?.startIndex ?? 0);
+    const shouldResetState = options?.resetState ?? true;
 
     setPendingDocxRunSettings(null);
     cancelPendingDocxStartRef.current = false;
     setIsCorrecting(true);
     setError(null);
     setInfoMessage(null);
-    setDocxResults([]);
-    setDocxWarning(null);
-    setDocxLogs([]);
+    if (shouldResetState) {
+      setDocxResults([]);
+      setDocxWarning(null);
+      setDocxLogs([]);
+    }
 
-    for (let index = 0; index < files.length; index += 1) {
+    for (let index = startIndex; index < files.length; index += 1) {
       if (cancelPendingDocxStartRef.current) {
         break;
       }
@@ -494,6 +545,12 @@ function App() {
         }
         console.error('DOCX correction failed:', error);
         const message = String(error);
+        if (openReasoningUnsupportedModal(
+          { kind: 'docx', files, startIndex: index },
+          message,
+        )) {
+          break;
+        }
         setError(message);
         appendDocxLog('error', message);
       }
@@ -503,7 +560,7 @@ function App() {
     setIsCorrecting(false);
     setDocxProgress(null);
     setActiveDocxFileIndex(0);
-  }, [appendDocxLog, lang, runSingleDocxWithPrechecks, setActiveDocxFileIndex, setDocxProgress, setDocxResults, setDocxWarning, setError, setInfoMessage, setIsCorrecting, setDocxLogs]);
+  }, [appendDocxLog, lang, openReasoningUnsupportedModal, runSingleDocxWithPrechecks, setActiveDocxFileIndex, setDocxProgress, setDocxResults, setDocxWarning, setError, setInfoMessage, setIsCorrecting, setDocxLogs]);
 
   const handleCorrect = useCallback(async () => {
     if (!settings) {
@@ -530,8 +587,12 @@ function App() {
       });
     } catch (error) {
       console.error('Correction failed:', error);
+      const message = String(error);
+      if (openReasoningUnsupportedModal({ kind: 'text', text }, message)) {
+        return;
+      }
       setInfoMessage(null);
-      setError(String(error));
+      setError(message);
       setIsCorrecting(false);
       setIsStreaming(false);
       setShowDiff(false);
@@ -544,6 +605,7 @@ function App() {
     setInfoMessage,
     setIsStreaming,
     setShowDiff,
+    openReasoningUnsupportedModal,
     settings,
     text,
   ]);
@@ -561,6 +623,57 @@ function App() {
     setPendingDocxRunSettings(null);
     setInfoMessage(t('docx.openxml.accept_existing.cancelled', lang));
   }, [lang]);
+
+  const handleReasoningUnsupportedCancel = useCallback(() => {
+    setShowReasoningUnsupportedModal(false);
+    setPendingReasoningUnsupported(null);
+    setReasoningUnsupportedDetail(null);
+    setInfoMessage(t('reasoning.unsupported.cancelled', lang));
+  }, [lang]);
+
+  const handleReasoningUnsupportedContinue = useCallback(async () => {
+    if (!settings || !pendingReasoningUnsupported) {
+      setShowReasoningUnsupportedModal(false);
+      setPendingReasoningUnsupported(null);
+      setReasoningUnsupportedDetail(null);
+      return;
+    }
+
+    const updatedSettings: Settings = {
+      ...settings,
+      enable_reasoning: false,
+    };
+
+    try {
+      await invoke('save_settings', { settings: updatedSettings });
+      setSettings(updatedSettings);
+      setShowReasoningUnsupportedModal(false);
+      setReasoningUnsupportedDetail(null);
+      const pending = pendingReasoningUnsupported;
+      setPendingReasoningUnsupported(null);
+      setInfoMessage(t('reasoning.unsupported.disabled', lang));
+      setError(null);
+
+      if (pending.kind === 'text') {
+        await invoke('correct_text_streaming', {
+          text: pending.text,
+          settings: updatedSettings,
+        });
+        return;
+      }
+
+      await runDocxQueue(pending.files, updatedSettings, {
+        startIndex: pending.startIndex,
+        resetState: false,
+      });
+    } catch (error) {
+      console.error('Failed to continue without reasoning:', error);
+      setShowReasoningUnsupportedModal(false);
+      setPendingReasoningUnsupported(null);
+      setReasoningUnsupportedDetail(null);
+      setError(String(error));
+    }
+  }, [lang, pendingReasoningUnsupported, runDocxQueue, settings, setError]);
 
   const handleNew = () => {
     clearAll();
@@ -1106,6 +1219,55 @@ function App() {
                 className="btn-primary !text-base"
               >
                 {t('docx.openxml.accept_existing.continue', lang)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReasoningUnsupportedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
+          <div className={`card w-full max-w-xl mx-4 animate-scale-in ${
+            isDarkMode ? '!bg-surface-800 !border-surface-700' : ''
+          }`}>
+            <div className="flex items-start gap-4 p-6">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                isDarkMode ? 'bg-amber-900/30' : 'bg-amber-50'
+              }`}>
+                <AlertTriangle className={`w-5 h-5 ${isDarkMode ? 'text-amber-300' : 'text-amber-600'}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
+                  {t('reasoning.unsupported.title', lang)}
+                </h3>
+                <p className={`mt-2 text-sm whitespace-pre-wrap leading-relaxed ${
+                  isDarkMode ? 'text-surface-300' : 'text-surface-600'
+                }`}>
+                  {t('reasoning.unsupported.message', lang)}
+                </p>
+                {reasoningUnsupportedDetail && (
+                  <p className={`mt-2 text-xs whitespace-pre-wrap break-words ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
+                    {reasoningUnsupportedDetail}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className={`px-6 py-4 border-t rounded-b-2xl flex justify-end gap-2 ${
+              isDarkMode
+                ? 'bg-surface-900/50 border-surface-700'
+                : 'bg-surface-50 border-surface-100'
+            }`}>
+              <button
+                onClick={handleReasoningUnsupportedCancel}
+                className="btn-secondary !text-base"
+              >
+                {t('reasoning.unsupported.cancel', lang)}
+              </button>
+              <button
+                onClick={handleReasoningUnsupportedContinue}
+                className="btn-primary !text-base"
+              >
+                {t('reasoning.unsupported.continue', lang)}
               </button>
             </div>
           </div>

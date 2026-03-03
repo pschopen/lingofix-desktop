@@ -15,7 +15,11 @@ import {
   SETTINGS_LIMITS,
   DOCX_COMPARE_MODES,
   DOCX_BATCHING_PARTS,
+  DOCX_CORRECTION_SCOPE_PARTS,
+  REASONING_EFFORTS,
   DocxBatchingPart,
+  DocxCorrectionScopePart,
+  ReasoningEffort,
 } from '../types';
 import { Language, t } from '../i18n';
 
@@ -185,6 +189,24 @@ export function SettingsModal({
     }
 
     handleDocxSettingChange('batching_parts', next);
+  };
+
+  const handleCorrectionScopePartToggle = (part: DocxCorrectionScopePart) => {
+    if (!formData) {
+      return;
+    }
+
+    const current = formData.docx.correction_scope_parts ?? [];
+    const hasPart = current.includes(part);
+    const next = hasPart
+      ? current.filter((item) => item !== part)
+      : [...current, part];
+
+    if (next.length === 0) {
+      return;
+    }
+
+    handleDocxSettingChange('correction_scope_parts', next);
   };
 
   const handleModelDropdownFocus = () => {
@@ -825,6 +847,24 @@ export function SettingsModal({
                   </SelectField>
                 </FieldGroup>
 
+                <FieldGroup label={t('settings.docx.correction_scope_parts', lang)} isDarkMode={isDarkMode}>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {DOCX_CORRECTION_SCOPE_PARTS.map((part) => (
+                      <label
+                        key={part}
+                        className={`inline-flex items-center gap-1.5 text-sm rounded-md px-1.5 py-0.5 ${isDarkMode ? 'text-surface-200' : 'text-surface-700'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={(formData.docx.correction_scope_parts ?? []).includes(part)}
+                          onChange={() => handleCorrectionScopePartToggle(part)}
+                        />
+                        <span>{t(`settings.docx.batching_parts.${part}`, lang)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </FieldGroup>
+
                 {formData.docx.compare_mode === 'openxml' && (
                   <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-amber-800/60 bg-amber-950/30' : 'border-amber-200 bg-amber-50'}`}>
                     <p className={`text-sm ${isDarkMode ? 'text-amber-200' : 'text-amber-800'}`}>
@@ -1009,6 +1049,32 @@ export function SettingsModal({
                     className="w-full mt-1"
                   />
                 </FieldGroup>
+
+                <ToggleRow
+                  label={t('settings.enable_reasoning', lang)}
+                  checked={formData.enable_reasoning}
+                  onChange={() => setFormData({ ...formData, enable_reasoning: !formData.enable_reasoning })}
+                  isDarkMode={isDarkMode}
+                />
+
+                {formData.enable_reasoning && (
+                  <div className="ml-6">
+                    <FieldGroup label={t('settings.reasoning_effort', lang)} isDarkMode={isDarkMode}>
+                      <SelectField
+                        value={formData.reasoning_effort}
+                        onChange={(nextValue) => setFormData({ ...formData, reasoning_effort: nextValue as ReasoningEffort })}
+                        menuBoundaryRef={modalPanelRef}
+                        isDarkMode={isDarkMode}
+                      >
+                        {REASONING_EFFORTS.map((effort) => (
+                          <option key={effort} value={effort}>
+                            {t(`settings.reasoning_effort.${effort}`, lang)}
+                          </option>
+                        ))}
+                      </SelectField>
+                    </FieldGroup>
+                  </div>
+                )}
 
                 {/* System Prompt (shared) */}
                 <FieldGroup label={t('settings.system_prompt', lang)} hint={t('settings.system_prompt.hint', lang)} isDarkMode={isDarkMode}>

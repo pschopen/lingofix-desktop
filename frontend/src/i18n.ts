@@ -455,6 +455,50 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Temperatur',
     en: 'Temperature',
   },
+  'settings.enable_reasoning': {
+    de: 'Reasoning aktivieren',
+    en: 'Enable reasoning',
+  },
+  'settings.reasoning_effort': {
+    de: 'Reasoning-Intensität',
+    en: 'Reasoning effort',
+  },
+  'settings.reasoning_effort.low': {
+    de: 'Niedrig',
+    en: 'Low',
+  },
+  'settings.reasoning_effort.medium': {
+    de: 'Mittel',
+    en: 'Medium',
+  },
+  'settings.reasoning_effort.high': {
+    de: 'Hoch',
+    en: 'High',
+  },
+  'reasoning.unsupported.title': {
+    de: 'Reasoning wird nicht unterstuetzt',
+    en: 'Reasoning is not supported',
+  },
+  'reasoning.unsupported.message': {
+    de: 'Das ausgewaehlte Modell unterstuetzt keinen reasoning_effort-Parameter. Du kannst dauerhaft ohne Reasoning fortfahren oder abbrechen.',
+    en: 'The selected model does not support the reasoning_effort parameter. You can continue permanently without reasoning or cancel.',
+  },
+  'reasoning.unsupported.continue': {
+    de: 'Ohne Reasoning fortfahren',
+    en: 'Continue without reasoning',
+  },
+  'reasoning.unsupported.cancel': {
+    de: 'Abbrechen',
+    en: 'Cancel',
+  },
+  'reasoning.unsupported.disabled': {
+    de: 'Reasoning wurde dauerhaft deaktiviert.',
+    en: 'Reasoning has been disabled permanently.',
+  },
+  'reasoning.unsupported.cancelled': {
+    de: 'Korrektur abgebrochen.',
+    en: 'Correction cancelled.',
+  },
   'settings.docx.batching': {
     de: 'Batching',
     en: 'Batching',
@@ -474,6 +518,10 @@ const translations: Record<string, Record<Language, string>> = {
   'settings.docx.batching_parts': {
     de: 'Batching anwenden auf',
     en: 'Apply batching to',
+  },
+  'settings.docx.correction_scope_parts': {
+    de: 'Korrekturumfang',
+    en: 'Correction scope',
   },
   'settings.docx.batching_parts.main': {
     de: 'Haupttext',

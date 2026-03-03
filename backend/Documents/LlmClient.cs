@@ -9,6 +9,7 @@ namespace Lingofix.Backend.Documents;
 
 public sealed class LlmClient
 {
+    private const string ReasoningUnsupportedErrorCode = "REASONING_UNSUPPORTED";
     private const int TemperatureSupportUnknown = 0;
     private const int TemperatureSupportSupported = 1;
     private const int TemperatureSupportUnsupported = 2;
@@ -24,6 +25,8 @@ public sealed class LlmClient
     private readonly string _prompt;
     private readonly string _systemPromptOverride;
     private readonly double _temperature;
+    private readonly bool _enableReasoning;
+    private readonly string _reasoningEffort;
     private readonly IRunLogger? _logger;
     private string _apiKey = string.Empty;
     private int _temperatureSupport = TemperatureSupportUnknown;
@@ -35,6 +38,8 @@ public sealed class LlmClient
         string prompt,
         string systemPromptOverride,
         double temperature,
+        bool enableReasoning,
+        string reasoningEffort,
         bool? temperatureSupportedHint,
         bool? reasoningEffortSupportedHint,
         IRunLogger? logger = null)
@@ -46,6 +51,8 @@ public sealed class LlmClient
         _prompt = prompt;
         _systemPromptOverride = systemPromptOverride ?? string.Empty;
         _temperature = temperature;
+        _enableReasoning = enableReasoning;
+        _reasoningEffort = string.IsNullOrWhiteSpace(reasoningEffort) ? "low" : reasoningEffort.Trim().ToLowerInvariant();
         _temperatureSupport = ToSupportState(temperatureSupportedHint);
         _reasoningSupport = ToSupportState(reasoningEffortSupportedHint);
         _logger = logger;
@@ -293,7 +300,7 @@ public sealed class LlmClient
     {
         maxAttempts = Math.Max(1, maxAttempts);
         var includeTemperature = request.Temperature.HasValue && Volatile.Read(ref _temperatureSupport) != TemperatureSupportUnsupported;
-        var includeReasoningEffort = !_isOllama && Volatile.Read(ref _reasoningSupport) != ReasoningSupportUnsupported;
+        var includeReasoningEffort = _enableReasoning && !_isOllama && Volatile.Read(ref _reasoningSupport) != ReasoningSupportUnsupported;
 
         var allowTemperatureFallbackRetry = allowTemperatureFallback && includeTemperature;
         var allowReasoningFallbackRetry = allowReasoningFallback && includeReasoningEffort;
@@ -305,7 +312,7 @@ public sealed class LlmClient
                 Messages = request.Messages,
                 Stream = request.Stream,
                 Temperature = includeTemperature ? request.Temperature : null,
-                ReasoningEffort = includeReasoningEffort ? "none" : null
+                ReasoningEffort = includeReasoningEffort ? _reasoningEffort : null
             };
 
             LogRequestPayload(effectiveRequest, attempt);
@@ -376,11 +383,18 @@ public sealed class LlmClient
 
             if (allowReasoningFallbackRetry && IsReasoningOrThinkingError(responseBody))
             {
+                Volatile.Write(ref _reasoningSupport, ReasoningSupportUnsupported);
+                EmitCapabilityLog("reasoning_effort", false);
+
+                if (_enableReasoning)
+                {
+                    throw new InvalidOperationException(
+                        $"{ReasoningUnsupportedErrorCode}: reasoning_effort is not supported by this model/provider. {responseBody}");
+                }
+
                 _logger?.Info("Note: reasoning_effort not accepted by the model. Retrying without reasoning_effort.");
                 includeReasoningEffort = false;
                 allowReasoningFallbackRetry = false;
-                Volatile.Write(ref _reasoningSupport, ReasoningSupportUnsupported);
-                EmitCapabilityLog("reasoning_effort", false);
                 attempt = 0;
                 continue;
             }

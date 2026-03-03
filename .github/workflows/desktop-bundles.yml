@@ -172,7 +172,7 @@ jobs:
 
   linux-x64:
     name: Linux x64 Flatpak Bundle
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout
@@ -205,26 +205,88 @@ jobs:
             librsvg2-dev \
             patchelf \
             flatpak \
-            flatpak-builder
+            flatpak-builder \
+            xvfb
 
       - name: Configure Flatpak runtime
         run: |
-          flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tauri -> target
 
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version ^2 --locked
-
       - name: Build Linux x64 Flatpak inputs
         run: npm run build:app:linux:flatpak:prep
 
+      - name: Verify frontend dist assets
+        run: |
+          test -f frontend/dist/index.html
+          if grep -q '/src/main.tsx' frontend/dist/index.html; then
+            echo "frontend/dist/index.html still references dev entrypoint"
+            exit 1
+          fi
+          if grep -q 'http://localhost' frontend/dist/index.html; then
+            echo "frontend/dist/index.html still references localhost"
+            exit 1
+          fi
+
       - name: Build Linux x64 Flatpak bundle
         run: |
-          flatpak-builder --user --force-clean --install-deps-from=flathub --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json
+          flatpak-builder --user --force-clean --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json
           mkdir -p artifacts
           flatpak build-bundle flatpak-repo artifacts/Lingofix-Desktop-linux-x64.flatpak com.lingofix.desktop
+
+      - name: Smoke test Linux x64 Flatpak startup
+        run: |
+          flatpak install --user -y artifacts/Lingofix-Desktop-linux-x64.flatpak
+          CONFIG_HOME="$(flatpak run --command=sh com.lingofix.desktop -c 'printf "%s" "$XDG_CONFIG_HOME"')"
+          DEBUG_LOG_CANDIDATE_1="$CONFIG_HOME/com.lingofix.desktop/debug.log"
+          DEBUG_LOG_CANDIDATE_2="$CONFIG_HOME/debug.log"
+          rm -f "$DEBUG_LOG_CANDIDATE_1" "$DEBUG_LOG_CANDIDATE_2"
+
+          set +e
+          timeout 45s xvfb-run -a flatpak run com.lingofix.desktop > /tmp/lingofix-flatpak-smoke.log 2>&1
+          RUN_EXIT=$?
+          set -e
+
+          if [ "$RUN_EXIT" -ne 0 ] && [ "$RUN_EXIT" -ne 124 ]; then
+            cat /tmp/lingofix-flatpak-smoke.log
+            echo "Flatpak smoke test failed before timeout"
+            exit "$RUN_EXIT"
+          fi
+
+          DEBUG_LOG_PATH=""
+          if [ -f "$DEBUG_LOG_CANDIDATE_1" ]; then
+            DEBUG_LOG_PATH="$DEBUG_LOG_CANDIDATE_1"
+          elif [ -f "$DEBUG_LOG_CANDIDATE_2" ]; then
+            DEBUG_LOG_PATH="$DEBUG_LOG_CANDIDATE_2"
+          else
+            cat /tmp/lingofix-flatpak-smoke.log
+            echo "UI smoke test failed: debug log not found"
+            echo "Checked: $DEBUG_LOG_CANDIDATE_1"
+            echo "Checked: $DEBUG_LOG_CANDIDATE_2"
+            exit 1
+          fi
+
+          if ! grep -q '"event":"ui.setup"' "$DEBUG_LOG_PATH"; then
+            cat /tmp/lingofix-flatpak-smoke.log
+            cat "$DEBUG_LOG_PATH"
+            echo "UI smoke test failed: ui.setup event missing"
+            exit 1
+          fi
+
+          if ! grep -q '"event":"ui.page_loaded"' "$DEBUG_LOG_PATH"; then
+            cat /tmp/lingofix-flatpak-smoke.log
+            cat "$DEBUG_LOG_PATH"
+            echo "UI smoke test failed: ui.page_loaded event missing"
+            exit 1
+          fi
 
       - name: Upload Linux Flatpak artifact
         uses: actions/upload-artifact@v4

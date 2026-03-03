@@ -32,6 +32,7 @@ const ENCRYPTION_PREFIX: &str = "enc_v1:";
 const DEBUG_LOG_FILE_NAME: &str = "debug.log";
 const DEBUG_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 const DEBUG_LOG_ROTATIONS: usize = 3;
+const REASONING_UNSUPPORTED_ERROR_CODE: &str = "REASONING_UNSUPPORTED";
 #[cfg(target_os = "macos")]
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
@@ -109,6 +110,7 @@ const KNOWN_PROVIDERS: [&str; 7] = [
     "mistral",
 ];
 const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
+const KNOWN_REASONING_EFFORTS: [&str; 3] = ["low", "medium", "high"];
 const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
 const MIN_TEMPERATURE: f64 = 0.0;
 const MAX_TEMPERATURE: f64 = 2.0;
@@ -120,7 +122,7 @@ const MIN_BATCH_MAX_PARAGRAPHS: i32 = 1;
 const MAX_BATCH_MAX_PARAGRAPHS: i32 = 100;
 const MIN_MAX_PARALLEL_REQUESTS: i32 = 1;
 const MAX_MAX_PARALLEL_REQUESTS: i32 = 16;
-const KNOWN_BATCHING_PARTS: [&str; 6] = [
+const KNOWN_DOCX_PARTS: [&str; 6] = [
     "main",
     "footnotes",
     "endnotes",
@@ -130,11 +132,22 @@ const KNOWN_BATCHING_PARTS: [&str; 6] = [
 ];
 
 fn default_docx_chunk_size() -> i32 {
-    3_000
+    7_500
+}
+
+fn default_reasoning_effort() -> String {
+    "low".to_string()
 }
 
 fn default_batching_parts() -> Vec<String> {
-    KNOWN_BATCHING_PARTS
+    KNOWN_DOCX_PARTS
+        .iter()
+        .map(|part| (*part).to_string())
+        .collect()
+}
+
+fn default_correction_scope_parts() -> Vec<String> {
+    KNOWN_DOCX_PARTS
         .iter()
         .map(|part| (*part).to_string())
         .collect()
@@ -193,6 +206,7 @@ struct DocxSettings {
     enable_batching: bool,
     #[serde(default = "default_batching_parts")]
     batching_parts: Vec<String>,
+    correction_scope_parts: Vec<String>,
     batch_max_chars: i32,
     batch_max_paragraphs: i32,
     enable_cache: bool,
@@ -207,6 +221,7 @@ impl Default for DocxSettings {
             chunk_size: default_docx_chunk_size(),
             enable_batching: true,
             batching_parts: default_batching_parts(),
+            correction_scope_parts: default_correction_scope_parts(),
             batch_max_chars: 7_500,
             batch_max_paragraphs: 10,
             enable_cache: true,
@@ -237,6 +252,9 @@ struct FrontendSettings {
     batch_prompt: String,
     auto_check_updates: bool,
     temperature: f64,
+    enable_reasoning: bool,
+    #[serde(default = "default_reasoning_effort")]
+    reasoning_effort: String,
     provider_keys: HashMap<String, Option<String>>,
     docx: DocxSettings,
     font_size: String,
@@ -277,6 +295,8 @@ impl FrontendSettings {
             batch_prompt: default_batch_prompt(normalized_locale),
             auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
+            enable_reasoning: false,
+            reasoning_effort: default_reasoning_effort(),
             provider_keys: empty_provider_keys(),
             docx: DocxSettings::default(),
             font_size: "default".into(),
@@ -821,10 +841,36 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         .docx
         .batching_parts
         .iter()
-        .all(|part| KNOWN_BATCHING_PARTS.iter().any(|known| known.eq_ignore_ascii_case(part.trim())))
+        .all(|part| KNOWN_DOCX_PARTS.iter().any(|known| known.eq_ignore_ascii_case(part.trim())))
     {
         return Err(format!(
             "Invalid settings: docx.batching_parts contains unknown values. {reset_hint}"
+        ));
+    }
+
+    if !KNOWN_REASONING_EFFORTS
+        .iter()
+        .any(|effort| effort.eq_ignore_ascii_case(settings.reasoning_effort.trim()))
+    {
+        return Err(format!(
+            "Invalid settings: reasoning_effort is invalid. {reset_hint}"
+        ));
+    }
+
+    if settings.docx.correction_scope_parts.is_empty() {
+        return Err(format!(
+            "Invalid settings: docx.correction_scope_parts is empty. {reset_hint}"
+        ));
+    }
+
+    if !settings
+        .docx
+        .correction_scope_parts
+        .iter()
+        .all(|part| KNOWN_DOCX_PARTS.iter().any(|known| known.eq_ignore_ascii_case(part.trim())))
+    {
+        return Err(format!(
+            "Invalid settings: docx.correction_scope_parts contains unknown values. {reset_hint}"
         ));
     }
 
@@ -1245,8 +1291,10 @@ async fn stream_openai_like(
         cache.get(&cache_key).copied().unwrap_or(true)
     };
     let mut include_reasoning_effort = {
-        let cache = capability_state.reasoning_effort_support.lock().await;
-        cache.get(&cache_key).copied().unwrap_or(true)
+        settings.enable_reasoning && {
+            let cache = capability_state.reasoning_effort_support.lock().await;
+            cache.get(&cache_key).copied().unwrap_or(true)
+        }
     };
 
     let resp = loop {
@@ -1327,6 +1375,17 @@ async fn stream_openai_like(
             && include_reasoning_effort
             && is_reasoning_or_thinking_error(&detail)
         {
+            let mut cache = capability_state.reasoning_effort_support.lock().await;
+            cache.insert(cache_key.clone(), false);
+
+            if settings.enable_reasoning {
+                return Err(anyhow!(
+                    "{}: reasoning_effort is not supported by this model/provider. {}",
+                    REASONING_UNSUPPORTED_ERROR_CODE,
+                    detail
+                ));
+            }
+
             include_reasoning_effort = false;
             write_debug_event(
                 app,
@@ -1338,8 +1397,6 @@ async fn stream_openai_like(
                     "elapsed_ms": request_started_at.elapsed().as_millis()
                 }),
             );
-            let mut cache = capability_state.reasoning_effort_support.lock().await;
-            cache.insert(cache_key.clone(), false);
             continue;
         }
 
@@ -1450,7 +1507,7 @@ async fn send_openai_like_request(
     }
 
     if include_reasoning_effort {
-        body["reasoning_effort"] = json!("none");
+        body["reasoning_effort"] = json!(settings.reasoning_effort);
     }
 
     let mut req = client.post(url).json(&body);
@@ -1799,10 +1856,13 @@ async fn run_docx_processor(
             "compare_mode": settings.docx.compare_mode.as_str(),
             "chunk_size": settings.docx.chunk_size,
             "batching": settings.docx.enable_batching,
+            "correction_scope_parts": &settings.docx.correction_scope_parts,
             "batch_max_chars": settings.docx.batch_max_chars,
             "batch_max_paragraphs": settings.docx.batch_max_paragraphs,
             "parallelization": settings.docx.enable_parallelization,
-            "max_parallel_requests": settings.docx.max_parallel_requests
+            "max_parallel_requests": settings.docx.max_parallel_requests,
+            "enable_reasoning": settings.enable_reasoning,
+            "reasoning_effort": &settings.reasoning_effort
         }),
     );
 
@@ -3177,9 +3237,27 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let _ = app;
+            let app_handle = app.handle().clone();
             clear_temp_lingofix_dir();
+            write_debug_event(
+                &app_handle,
+                "ui.setup",
+                json!({
+                    "window_labels": app
+                        .webview_windows()
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                }),
+            );
             Ok(())
+        })
+        .on_page_load(|window, _payload| {
+            write_debug_event(
+                &window.app_handle(),
+                "ui.page_loaded",
+                json!({ "window_label": window.label() }),
+            );
         })
         .manage(CancellationState::default())
         .manage(ModelCapabilityState::default())

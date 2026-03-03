@@ -7,7 +7,7 @@ public sealed class Settings
 {
     public const double MinTemperature = 0.0;
     public const double MaxTemperature = 2.0;
-    public const int DefaultChunkSize = 3_000;
+    public const int DefaultChunkSize = 7_500;
     public const int MinChunkSize = 500;
     public const int MaxChunkSize = 50_000;
     public const int MinBatchMaxChars = 500;
@@ -26,9 +26,20 @@ public sealed class Settings
     public string BatchPrompt { get; set; } = string.Empty;
     public string CompareMode { get; set; } = string.Empty;
     public double Temperature { get; set; }
+    public bool EnableReasoning { get; set; }
+    public string ReasoningEffort { get; set; } = "low";
     public int ChunkSize { get; set; }
     public bool EnableBatching { get; set; }
     internal HashSet<ProcessorWorkItemKind> BatchingParts { get; set; } =
+    [
+        ProcessorWorkItemKind.Main,
+        ProcessorWorkItemKind.Footnotes,
+        ProcessorWorkItemKind.Endnotes,
+        ProcessorWorkItemKind.Headers,
+        ProcessorWorkItemKind.Footers,
+        ProcessorWorkItemKind.Glossary
+    ];
+    internal HashSet<ProcessorWorkItemKind> CorrectionScopeParts { get; set; } =
     [
         ProcessorWorkItemKind.Main,
         ProcessorWorkItemKind.Footnotes,
@@ -91,6 +102,7 @@ public sealed class Settings
 
         var docx = payload.Docx ?? throw InvalidSettings("docx settings are missing");
         var batchingParts = ParseBatchingParts(docx.BatchingParts);
+        var correctionScopeParts = ParseCorrectionScopeParts(docx.CorrectionScopeParts);
 
         var normalized = new Settings
         {
@@ -102,10 +114,13 @@ public sealed class Settings
             SystemPrompt = RequireString(payload.SystemPrompt, "system_prompt"),
             BatchPrompt = payload.BatchPrompt?.Trim() ?? string.Empty,
             Temperature = payload.Temperature,
+            EnableReasoning = payload.EnableReasoning,
+            ReasoningEffort = ParseReasoningEffort(payload.ReasoningEffort),
             CompareMode = RequireString(docx.CompareMode, "docx.compare_mode"),
             ChunkSize = docx.ChunkSize ?? DefaultChunkSize,
             EnableBatching = docx.EnableBatching,
             BatchingParts = batchingParts,
+            CorrectionScopeParts = correctionScopeParts,
             BatchMaxChars = docx.BatchMaxChars,
             BatchMaxParagraphs = docx.BatchMaxParagraphs,
             EnableCache = docx.EnableCache,
@@ -186,6 +201,70 @@ public sealed class Settings
 
         return result;
     }
+
+    private static HashSet<ProcessorWorkItemKind> ParseCorrectionScopeParts(List<string>? rawParts)
+    {
+        if (rawParts is null || rawParts.Count == 0)
+        {
+            throw InvalidSettings("missing or empty field 'docx.correction_scope_parts'");
+        }
+
+        var result = new HashSet<ProcessorWorkItemKind>();
+        foreach (var raw in rawParts)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                throw InvalidSettings("docx.correction_scope_parts contains empty values");
+            }
+
+            switch (raw.Trim().ToLowerInvariant())
+            {
+                case "main":
+                    result.Add(ProcessorWorkItemKind.Main);
+                    break;
+                case "footnotes":
+                    result.Add(ProcessorWorkItemKind.Footnotes);
+                    break;
+                case "endnotes":
+                    result.Add(ProcessorWorkItemKind.Endnotes);
+                    break;
+                case "headers":
+                    result.Add(ProcessorWorkItemKind.Headers);
+                    break;
+                case "footers":
+                    result.Add(ProcessorWorkItemKind.Footers);
+                    break;
+                case "glossary":
+                    result.Add(ProcessorWorkItemKind.Glossary);
+                    break;
+                default:
+                    throw InvalidSettings($"docx.correction_scope_parts contains unknown value '{raw}'");
+            }
+        }
+
+        if (result.Count == 0)
+        {
+            throw InvalidSettings("missing or empty field 'docx.correction_scope_parts'");
+        }
+
+        return result;
+    }
+
+    private static string ParseReasoningEffort(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            throw InvalidSettings("missing or empty field 'reasoning_effort'");
+        }
+
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "low" => "low",
+            "medium" => "medium",
+            "high" => "high",
+            _ => throw InvalidSettings($"reasoning_effort contains unknown value '{raw}'")
+        };
+    }
 }
 
 internal sealed class FrontendSettingsPayload
@@ -213,6 +292,12 @@ internal sealed class FrontendSettingsPayload
 
     [JsonPropertyName("temperature")]
     public double Temperature { get; set; }
+
+    [JsonPropertyName("enable_reasoning")]
+    public bool EnableReasoning { get; set; }
+
+    [JsonPropertyName("reasoning_effort")]
+    public string? ReasoningEffort { get; set; }
 
     [JsonPropertyName("docx")]
     public FrontendDocxSettingsPayload? Docx { get; set; }
@@ -249,6 +334,9 @@ internal sealed class FrontendDocxSettingsPayload
 
     [JsonPropertyName("batching_parts")]
     public List<string>? BatchingParts { get; set; }
+
+    [JsonPropertyName("correction_scope_parts")]
+    public List<string>? CorrectionScopeParts { get; set; }
 
     [JsonPropertyName("enable_cache")]
     public bool EnableCache { get; set; }

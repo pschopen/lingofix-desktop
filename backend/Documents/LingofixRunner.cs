@@ -90,6 +90,8 @@ public static class LingofixRunner
             settings.Prompt,
             settings.SystemPrompt,
             settings.Temperature,
+            settings.EnableReasoning,
+            settings.ReasoningEffort,
             settings.TemperatureSupportedHint,
             settings.ReasoningEffortSupportedHint,
             logger);
@@ -126,9 +128,23 @@ public static class LingofixRunner
             {
                 coverage = DocxPartScanner.Scan(doc);
 
-                foreach (var item in coverage.WorkItems)
+                var scopedWorkItems = coverage.WorkItems
+                    .Where(item => settings.CorrectionScopeParts.Contains(item.Kind))
+                    .ToList();
+
+                if (scopedWorkItems.Count == 0)
+                {
+                    throw new InvalidOperationException("DOCX correction scope contains no enabled document parts.");
+                }
+
+                foreach (var item in scopedWorkItems)
                 {
                     logger.Info($"{item.Label}: {item.Paragraphs.Count} paragraphs");
+                }
+
+                if (scopedWorkItems.Count < coverage.WorkItems.Count)
+                {
+                    logger.Info($"Correction scope active: {scopedWorkItems.Count}/{coverage.WorkItems.Count} parts enabled.");
                 }
 
                 if (coverage.CommentCount > 0)
@@ -176,24 +192,25 @@ public static class LingofixRunner
                     logger.Info($"Safe field types detected: {safeSummary}");
                 }
 
-                logger.Info($"Total: {coverage.TotalParagraphs} paragraphs in {coverage.WorkItems.Count} document parts");
+                var scopedParagraphTotal = scopedWorkItems.Sum(item => item.Paragraphs.Count);
+                logger.Info($"Total: {scopedParagraphTotal} paragraphs in {scopedWorkItems.Count} document parts");
 
                 var currentProgress = 0;
-                for (var i = 0; i < coverage.WorkItems.Count; i++)
+                for (var i = 0; i < scopedWorkItems.Count; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var item = coverage.WorkItems[i];
+                    var item = scopedWorkItems[i];
                     var partNumber = i + 1;
 
                     if (completedLabels.Contains(item.Label))
                     {
                         currentProgress += item.Weight;
-                        logger.Info($"[{partNumber}/{coverage.WorkItems.Count}] {item.Label} already completed in checkpoint. Skipping.");
+                        logger.Info($"[{partNumber}/{scopedWorkItems.Count}] {item.Label} already completed in checkpoint. Skipping.");
                         continue;
                     }
 
-                    logger.Info($"[{partNumber}/{coverage.WorkItems.Count}] Processing {item.Label}...");
-                    logger.Progress(currentProgress, $"{item.Label} ({partNumber}/{coverage.WorkItems.Count})");
+                    logger.Info($"[{partNumber}/{scopedWorkItems.Count}] Processing {item.Label}...");
+                    logger.Progress(currentProgress, $"{item.Label} ({partNumber}/{scopedWorkItems.Count})");
 
                     var partProgressStart = currentProgress;
                     var partWeight = item.Weight;
@@ -212,6 +229,8 @@ public static class LingofixRunner
                             BatchPrompt = settings.BatchPrompt,
                             CompareMode = settings.CompareMode,
                             Temperature = settings.Temperature,
+                            EnableReasoning = settings.EnableReasoning,
+                            ReasoningEffort = settings.ReasoningEffort,
                             ChunkSize = settings.ChunkSize,
                             EnableBatching = settings.BatchingParts.Contains(item.Kind),
                             BatchingParts = settings.BatchingParts,
@@ -247,11 +266,18 @@ public static class LingofixRunner
                     completedLabels.Add(item.Label);
                     completedBatchesByLabel.Remove(item.Label);
                     ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, completedBatchesByLabel);
-                    logger.Info($"[{partNumber}/{coverage.WorkItems.Count}] {item.Label} completed");
+                    logger.Info($"[{partNumber}/{scopedWorkItems.Count}] {item.Label} completed");
                 }
 
-                logger.Progress(80, "Processing embedded chart/smartart text...");
-                await EmbeddedTextProcessor.ProcessAsync(doc, llmClient, logger, cancellationToken);
+                if (settings.CorrectionScopeParts.Contains(ProcessorWorkItemKind.Main))
+                {
+                    logger.Progress(80, "Processing embedded chart/smartart text...");
+                    await EmbeddedTextProcessor.ProcessAsync(doc, llmClient, logger, cancellationToken);
+                }
+                else
+                {
+                    logger.Info("Embedded chart/smartart processing skipped (scope excludes main document).");
+                }
 
                 doc.Save();
             }
