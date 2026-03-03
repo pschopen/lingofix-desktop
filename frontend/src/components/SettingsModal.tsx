@@ -1058,7 +1058,7 @@ export function SettingsModal({
                 />
 
                 {formData.enable_reasoning && (
-                  <div className="ml-6">
+                  <div className="pl-4 border-l-2 border-accent-100">
                     <FieldGroup label={t('settings.reasoning_effort', lang)} isDarkMode={isDarkMode}>
                       <SelectField
                         value={formData.reasoning_effort}
