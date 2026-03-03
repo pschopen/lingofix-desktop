@@ -96,6 +96,7 @@ internal static class LibreOfficeUnoCompareRunner
         finally
         {
             TryStopProcess(sofficeProcess);
+            CleanupLingeringFlatpakSofficeProcesses(userProfilePath);
         }
     }
 
@@ -384,7 +385,8 @@ internal static class LibreOfficeUnoCompareRunner
             try
             {
                 var psi = CreateHostAwareProcessStartInfo(candidate, redirectOutput: true);
-                psi.ArgumentList.Add("--version");
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add("import uno; print('ok')");
 
                 using var proc = Process.Start(psi);
                 if (proc is null)
@@ -478,6 +480,47 @@ internal static class LibreOfficeUnoCompareRunner
         }
 
         return psi;
+    }
+
+    private static void CleanupLingeringFlatpakSofficeProcesses(string userProfilePath)
+    {
+        if (!IsFlatpakSandbox())
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(userProfilePath))
+        {
+            return;
+        }
+
+        var marker = Path.GetFileName(Path.GetDirectoryName(userProfilePath) ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(marker))
+        {
+            return;
+        }
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "flatpak-spawn",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            psi.ArgumentList.Add("--host");
+            psi.ArgumentList.Add("--directory=/");
+            psi.ArgumentList.Add("pkill");
+            psi.ArgumentList.Add("-f");
+            psi.ArgumentList.Add($"libreoffice-uno/{marker}");
+
+            using var proc = Process.Start(psi);
+            proc?.WaitForExit(3000);
+        }
+        catch
+        {
+        }
     }
 
     private static int ReserveFreePort()

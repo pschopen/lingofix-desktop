@@ -77,6 +77,16 @@ fn default_batch_prompt(locale: &str) -> String {
 }
 
 fn lingofix_temp_root() -> PathBuf {
+    if std::env::var_os("FLATPAK_ID").is_some() {
+        if let Some(cache_home) = std::env::var_os("XDG_CACHE_HOME") {
+            return PathBuf::from(cache_home).join("Lingofix");
+        }
+
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(".cache").join("Lingofix");
+        }
+    }
+
     std::env::temp_dir().join("Lingofix")
 }
 
@@ -2560,7 +2570,10 @@ fn spawnable_soffice_command_async(candidate: &Path) -> Command {
     if in_flatpak_sandbox() {
         let host_candidate = soffice_host_path(candidate);
         let mut command = Command::new("flatpak-spawn");
-        command.arg("--host").arg(host_candidate);
+        command
+            .arg("--host")
+            .arg("--directory=/")
+            .arg(host_candidate);
         return command;
     }
 
@@ -2571,7 +2584,10 @@ fn spawnable_soffice_command(candidate: &Path) -> std::process::Command {
     if in_flatpak_sandbox() {
         let host_candidate = soffice_host_path(candidate);
         let mut command = std::process::Command::new("flatpak-spawn");
-        command.arg("--host").arg(host_candidate);
+        command
+            .arg("--host")
+            .arg("--directory=/")
+            .arg(host_candidate);
         return command;
     }
 

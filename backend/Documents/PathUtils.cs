@@ -8,10 +8,31 @@ public static class PathUtils
     {
         var fromEnv = Environment.GetEnvironmentVariable(TempDirectoryEnv)?.Trim();
         var root = string.IsNullOrWhiteSpace(fromEnv)
-            ? Path.Combine(Path.GetTempPath(), "Lingofix")
+            ? GetDefaultTempRoot()
             : Path.GetFullPath(fromEnv);
         Directory.CreateDirectory(root);
         return root;
+    }
+
+    private static string GetDefaultTempRoot()
+    {
+        var inFlatpak = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FLATPAK_ID"));
+        if (inFlatpak)
+        {
+            var cacheHome = Environment.GetEnvironmentVariable("XDG_CACHE_HOME")?.Trim();
+            if (!string.IsNullOrWhiteSpace(cacheHome))
+            {
+                return Path.Combine(Path.GetFullPath(cacheHome), "Lingofix");
+            }
+
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(home))
+            {
+                return Path.Combine(home, ".cache", "Lingofix");
+            }
+        }
+
+        return Path.Combine(Path.GetTempPath(), "Lingofix");
     }
 
     public static string BuildWordCompareWorkspace(string inputPath)
