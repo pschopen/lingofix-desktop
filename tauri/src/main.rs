@@ -200,7 +200,6 @@ struct DocxSettings {
     enable_batching: bool,
     #[serde(default = "default_batching_parts")]
     batching_parts: Vec<String>,
-    #[serde(default = "default_correction_scope_parts")]
     correction_scope_parts: Vec<String>,
     batch_max_chars: i32,
     batch_max_paragraphs: i32,
@@ -247,6 +246,7 @@ struct FrontendSettings {
     batch_prompt: String,
     auto_check_updates: bool,
     temperature: f64,
+    enable_reasoning: bool,
     provider_keys: HashMap<String, Option<String>>,
     docx: DocxSettings,
     font_size: String,
@@ -287,6 +287,7 @@ impl FrontendSettings {
             batch_prompt: default_batch_prompt(normalized_locale),
             auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
+            enable_reasoning: false,
             provider_keys: empty_provider_keys(),
             docx: DocxSettings::default(),
             font_size: "default".into(),
@@ -1272,8 +1273,10 @@ async fn stream_openai_like(
         cache.get(&cache_key).copied().unwrap_or(true)
     };
     let mut include_reasoning_effort = {
-        let cache = capability_state.reasoning_effort_support.lock().await;
-        cache.get(&cache_key).copied().unwrap_or(true)
+        settings.enable_reasoning && {
+            let cache = capability_state.reasoning_effort_support.lock().await;
+            cache.get(&cache_key).copied().unwrap_or(true)
+        }
     };
 
     let resp = loop {
@@ -1477,7 +1480,7 @@ async fn send_openai_like_request(
     }
 
     if include_reasoning_effort {
-        body["reasoning_effort"] = json!("none");
+        body["reasoning_effort"] = json!("low");
     }
 
     let mut req = client.post(url).json(&body);
@@ -1830,7 +1833,8 @@ async fn run_docx_processor(
             "batch_max_chars": settings.docx.batch_max_chars,
             "batch_max_paragraphs": settings.docx.batch_max_paragraphs,
             "parallelization": settings.docx.enable_parallelization,
-            "max_parallel_requests": settings.docx.max_parallel_requests
+            "max_parallel_requests": settings.docx.max_parallel_requests,
+            "enable_reasoning": settings.enable_reasoning
         }),
     );
 

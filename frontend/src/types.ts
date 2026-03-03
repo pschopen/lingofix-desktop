@@ -81,6 +81,7 @@ export interface Settings {
   batch_prompt: string;
   auto_check_updates: boolean;
   temperature: number;
+  enable_reasoning: boolean;
   provider_keys: Record<Provider, string | null>;
   docx: DocxSettings;
   font_size: FontSize;

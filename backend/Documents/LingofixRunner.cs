@@ -90,6 +90,7 @@ public static class LingofixRunner
             settings.Prompt,
             settings.SystemPrompt,
             settings.Temperature,
+            settings.EnableReasoning,
             settings.TemperatureSupportedHint,
             settings.ReasoningEffortSupportedHint,
             logger);
@@ -227,6 +228,7 @@ public static class LingofixRunner
                             BatchPrompt = settings.BatchPrompt,
                             CompareMode = settings.CompareMode,
                             Temperature = settings.Temperature,
+                            EnableReasoning = settings.EnableReasoning,
                             ChunkSize = settings.ChunkSize,
                             EnableBatching = settings.BatchingParts.Contains(item.Kind),
                             BatchingParts = settings.BatchingParts,

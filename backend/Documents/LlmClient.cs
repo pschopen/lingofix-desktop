@@ -24,6 +24,7 @@ public sealed class LlmClient
     private readonly string _prompt;
     private readonly string _systemPromptOverride;
     private readonly double _temperature;
+    private readonly bool _enableReasoning;
     private readonly IRunLogger? _logger;
     private string _apiKey = string.Empty;
     private int _temperatureSupport = TemperatureSupportUnknown;
@@ -35,6 +36,7 @@ public sealed class LlmClient
         string prompt,
         string systemPromptOverride,
         double temperature,
+        bool enableReasoning,
         bool? temperatureSupportedHint,
         bool? reasoningEffortSupportedHint,
         IRunLogger? logger = null)
@@ -46,6 +48,7 @@ public sealed class LlmClient
         _prompt = prompt;
         _systemPromptOverride = systemPromptOverride ?? string.Empty;
         _temperature = temperature;
+        _enableReasoning = enableReasoning;
         _temperatureSupport = ToSupportState(temperatureSupportedHint);
         _reasoningSupport = ToSupportState(reasoningEffortSupportedHint);
         _logger = logger;
@@ -293,7 +296,7 @@ public sealed class LlmClient
     {
         maxAttempts = Math.Max(1, maxAttempts);
         var includeTemperature = request.Temperature.HasValue && Volatile.Read(ref _temperatureSupport) != TemperatureSupportUnsupported;
-        var includeReasoningEffort = !_isOllama && Volatile.Read(ref _reasoningSupport) != ReasoningSupportUnsupported;
+        var includeReasoningEffort = _enableReasoning && !_isOllama && Volatile.Read(ref _reasoningSupport) != ReasoningSupportUnsupported;
 
         var allowTemperatureFallbackRetry = allowTemperatureFallback && includeTemperature;
         var allowReasoningFallbackRetry = allowReasoningFallback && includeReasoningEffort;
@@ -305,7 +308,7 @@ public sealed class LlmClient
                 Messages = request.Messages,
                 Stream = request.Stream,
                 Temperature = includeTemperature ? request.Temperature : null,
-                ReasoningEffort = includeReasoningEffort ? "none" : null
+                ReasoningEffort = includeReasoningEffort ? "low" : null
             };
 
             LogRequestPayload(effectiveRequest, attempt);

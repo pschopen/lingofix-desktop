@@ -1048,6 +1048,13 @@ export function SettingsModal({
                   />
                 </FieldGroup>
 
+                <ToggleRow
+                  label={t('settings.enable_reasoning', lang)}
+                  checked={formData.enable_reasoning}
+                  onChange={() => setFormData({ ...formData, enable_reasoning: !formData.enable_reasoning })}
+                  isDarkMode={isDarkMode}
+                />
+
                 {/* System Prompt (shared) */}
                 <FieldGroup label={t('settings.system_prompt', lang)} hint={t('settings.system_prompt.hint', lang)} isDarkMode={isDarkMode}>
                   <textarea

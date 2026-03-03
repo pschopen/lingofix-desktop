@@ -26,6 +26,7 @@ public sealed class Settings
     public string BatchPrompt { get; set; } = string.Empty;
     public string CompareMode { get; set; } = string.Empty;
     public double Temperature { get; set; }
+    public bool EnableReasoning { get; set; }
     public int ChunkSize { get; set; }
     public bool EnableBatching { get; set; }
     internal HashSet<ProcessorWorkItemKind> BatchingParts { get; set; } =
@@ -112,6 +113,7 @@ public sealed class Settings
             SystemPrompt = RequireString(payload.SystemPrompt, "system_prompt"),
             BatchPrompt = payload.BatchPrompt?.Trim() ?? string.Empty,
             Temperature = payload.Temperature,
+            EnableReasoning = payload.EnableReasoning,
             CompareMode = RequireString(docx.CompareMode, "docx.compare_mode"),
             ChunkSize = docx.ChunkSize ?? DefaultChunkSize,
             EnableBatching = docx.EnableBatching,
@@ -202,15 +204,7 @@ public sealed class Settings
     {
         if (rawParts is null || rawParts.Count == 0)
         {
-            return
-            [
-                ProcessorWorkItemKind.Main,
-                ProcessorWorkItemKind.Footnotes,
-                ProcessorWorkItemKind.Endnotes,
-                ProcessorWorkItemKind.Headers,
-                ProcessorWorkItemKind.Footers,
-                ProcessorWorkItemKind.Glossary
-            ];
+            throw InvalidSettings("missing or empty field 'docx.correction_scope_parts'");
         }
 
         var result = new HashSet<ProcessorWorkItemKind>();
@@ -280,6 +274,9 @@ internal sealed class FrontendSettingsPayload
 
     [JsonPropertyName("temperature")]
     public double Temperature { get; set; }
+
+    [JsonPropertyName("enable_reasoning")]
+    public bool EnableReasoning { get; set; }
 
     [JsonPropertyName("docx")]
     public FrontendDocxSettingsPayload? Docx { get; set; }

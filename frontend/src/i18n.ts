@@ -455,6 +455,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Temperatur',
     en: 'Temperature',
   },
+  'settings.enable_reasoning': {
+    de: 'Reasoning aktivieren',
+    en: 'Enable reasoning',
+  },
   'settings.docx.batching': {
     de: 'Batching',
     en: 'Batching',
