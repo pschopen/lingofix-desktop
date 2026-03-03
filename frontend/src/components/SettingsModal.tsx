@@ -1058,20 +1058,22 @@ export function SettingsModal({
                 />
 
                 {formData.enable_reasoning && (
-                  <FieldGroup label={t('settings.reasoning_effort', lang)} isDarkMode={isDarkMode}>
-                    <SelectField
-                      value={formData.reasoning_effort}
-                      onChange={(nextValue) => setFormData({ ...formData, reasoning_effort: nextValue as ReasoningEffort })}
-                      menuBoundaryRef={modalPanelRef}
-                      isDarkMode={isDarkMode}
-                    >
-                      {REASONING_EFFORTS.map((effort) => (
-                        <option key={effort} value={effort}>
-                          {t(`settings.reasoning_effort.${effort}`, lang)}
-                        </option>
-                      ))}
-                    </SelectField>
-                  </FieldGroup>
+                  <div className="ml-6">
+                    <FieldGroup label={t('settings.reasoning_effort', lang)} isDarkMode={isDarkMode}>
+                      <SelectField
+                        value={formData.reasoning_effort}
+                        onChange={(nextValue) => setFormData({ ...formData, reasoning_effort: nextValue as ReasoningEffort })}
+                        menuBoundaryRef={modalPanelRef}
+                        isDarkMode={isDarkMode}
+                      >
+                        {REASONING_EFFORTS.map((effort) => (
+                          <option key={effort} value={effort}>
+                            {t(`settings.reasoning_effort.${effort}`, lang)}
+                          </option>
+                        ))}
+                      </SelectField>
+                    </FieldGroup>
+                  </div>
                 )}
 
                 {/* System Prompt (shared) */}

@@ -32,6 +32,7 @@ const ENCRYPTION_PREFIX: &str = "enc_v1:";
 const DEBUG_LOG_FILE_NAME: &str = "debug.log";
 const DEBUG_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 const DEBUG_LOG_ROTATIONS: usize = 3;
+const REASONING_UNSUPPORTED_ERROR_CODE: &str = "REASONING_UNSUPPORTED";
 #[cfg(target_os = "macos")]
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
@@ -1374,6 +1375,17 @@ async fn stream_openai_like(
             && include_reasoning_effort
             && is_reasoning_or_thinking_error(&detail)
         {
+            let mut cache = capability_state.reasoning_effort_support.lock().await;
+            cache.insert(cache_key.clone(), false);
+
+            if settings.enable_reasoning {
+                return Err(anyhow!(
+                    "{}: reasoning_effort is not supported by this model/provider. {}",
+                    REASONING_UNSUPPORTED_ERROR_CODE,
+                    detail
+                ));
+            }
+
             include_reasoning_effort = false;
             write_debug_event(
                 app,
@@ -1385,8 +1397,6 @@ async fn stream_openai_like(
                     "elapsed_ms": request_started_at.elapsed().as_millis()
                 }),
             );
-            let mut cache = capability_state.reasoning_effort_support.lock().await;
-            cache.insert(cache_key.clone(), false);
             continue;
         }
 

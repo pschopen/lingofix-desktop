@@ -9,6 +9,7 @@ namespace Lingofix.Backend.Documents;
 
 public sealed class LlmClient
 {
+    private const string ReasoningUnsupportedErrorCode = "REASONING_UNSUPPORTED";
     private const int TemperatureSupportUnknown = 0;
     private const int TemperatureSupportSupported = 1;
     private const int TemperatureSupportUnsupported = 2;
@@ -382,11 +383,18 @@ public sealed class LlmClient
 
             if (allowReasoningFallbackRetry && IsReasoningOrThinkingError(responseBody))
             {
+                Volatile.Write(ref _reasoningSupport, ReasoningSupportUnsupported);
+                EmitCapabilityLog("reasoning_effort", false);
+
+                if (_enableReasoning)
+                {
+                    throw new InvalidOperationException(
+                        $"{ReasoningUnsupportedErrorCode}: reasoning_effort is not supported by this model/provider. {responseBody}");
+                }
+
                 _logger?.Info("Note: reasoning_effort not accepted by the model. Retrying without reasoning_effort.");
                 includeReasoningEffort = false;
                 allowReasoningFallbackRetry = false;
-                Volatile.Write(ref _reasoningSupport, ReasoningSupportUnsupported);
-                EmitCapabilityLog("reasoning_effort", false);
                 attempt = 0;
                 continue;
             }

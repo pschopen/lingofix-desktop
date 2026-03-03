@@ -475,6 +475,30 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Hoch',
     en: 'High',
   },
+  'reasoning.unsupported.title': {
+    de: 'Reasoning wird nicht unterstuetzt',
+    en: 'Reasoning is not supported',
+  },
+  'reasoning.unsupported.message': {
+    de: 'Das ausgewaehlte Modell unterstuetzt keinen reasoning_effort-Parameter. Du kannst dauerhaft ohne Reasoning fortfahren oder abbrechen.',
+    en: 'The selected model does not support the reasoning_effort parameter. You can continue permanently without reasoning or cancel.',
+  },
+  'reasoning.unsupported.continue': {
+    de: 'Ohne Reasoning fortfahren',
+    en: 'Continue without reasoning',
+  },
+  'reasoning.unsupported.cancel': {
+    de: 'Abbrechen',
+    en: 'Cancel',
+  },
+  'reasoning.unsupported.disabled': {
+    de: 'Reasoning wurde dauerhaft deaktiviert.',
+    en: 'Reasoning has been disabled permanently.',
+  },
+  'reasoning.unsupported.cancelled': {
+    de: 'Korrektur abgebrochen.',
+    en: 'Correction cancelled.',
+  },
   'settings.docx.batching': {
     de: 'Batching',
     en: 'Batching',
