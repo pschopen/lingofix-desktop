@@ -27,4 +27,5 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 
 [features]
-default = []
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
