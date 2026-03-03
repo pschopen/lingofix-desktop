@@ -120,7 +120,7 @@ const MIN_BATCH_MAX_PARAGRAPHS: i32 = 1;
 const MAX_BATCH_MAX_PARAGRAPHS: i32 = 100;
 const MIN_MAX_PARALLEL_REQUESTS: i32 = 1;
 const MAX_MAX_PARALLEL_REQUESTS: i32 = 16;
-const KNOWN_BATCHING_PARTS: [&str; 6] = [
+const KNOWN_DOCX_PARTS: [&str; 6] = [
     "main",
     "footnotes",
     "endnotes",
@@ -134,7 +134,14 @@ fn default_docx_chunk_size() -> i32 {
 }
 
 fn default_batching_parts() -> Vec<String> {
-    KNOWN_BATCHING_PARTS
+    KNOWN_DOCX_PARTS
+        .iter()
+        .map(|part| (*part).to_string())
+        .collect()
+}
+
+fn default_correction_scope_parts() -> Vec<String> {
+    KNOWN_DOCX_PARTS
         .iter()
         .map(|part| (*part).to_string())
         .collect()
@@ -193,6 +200,8 @@ struct DocxSettings {
     enable_batching: bool,
     #[serde(default = "default_batching_parts")]
     batching_parts: Vec<String>,
+    #[serde(default = "default_correction_scope_parts")]
+    correction_scope_parts: Vec<String>,
     batch_max_chars: i32,
     batch_max_paragraphs: i32,
     enable_cache: bool,
@@ -207,6 +216,7 @@ impl Default for DocxSettings {
             chunk_size: default_docx_chunk_size(),
             enable_batching: true,
             batching_parts: default_batching_parts(),
+            correction_scope_parts: default_correction_scope_parts(),
             batch_max_chars: 7_500,
             batch_max_paragraphs: 10,
             enable_cache: true,
@@ -821,10 +831,27 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         .docx
         .batching_parts
         .iter()
-        .all(|part| KNOWN_BATCHING_PARTS.iter().any(|known| known.eq_ignore_ascii_case(part.trim())))
+        .all(|part| KNOWN_DOCX_PARTS.iter().any(|known| known.eq_ignore_ascii_case(part.trim())))
     {
         return Err(format!(
             "Invalid settings: docx.batching_parts contains unknown values. {reset_hint}"
+        ));
+    }
+
+    if settings.docx.correction_scope_parts.is_empty() {
+        return Err(format!(
+            "Invalid settings: docx.correction_scope_parts is empty. {reset_hint}"
+        ));
+    }
+
+    if !settings
+        .docx
+        .correction_scope_parts
+        .iter()
+        .all(|part| KNOWN_DOCX_PARTS.iter().any(|known| known.eq_ignore_ascii_case(part.trim())))
+    {
+        return Err(format!(
+            "Invalid settings: docx.correction_scope_parts contains unknown values. {reset_hint}"
         ));
     }
 
@@ -1799,6 +1826,7 @@ async fn run_docx_processor(
             "compare_mode": settings.docx.compare_mode.as_str(),
             "chunk_size": settings.docx.chunk_size,
             "batching": settings.docx.enable_batching,
+            "correction_scope_parts": &settings.docx.correction_scope_parts,
             "batch_max_chars": settings.docx.batch_max_chars,
             "batch_max_paragraphs": settings.docx.batch_max_paragraphs,
             "parallelization": settings.docx.enable_parallelization,

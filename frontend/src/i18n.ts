@@ -475,6 +475,10 @@ const translations: Record<string, Record<Language, string>> = {
     de: 'Batching anwenden auf',
     en: 'Apply batching to',
   },
+  'settings.docx.correction_scope_parts': {
+    de: 'Korrekturumfang',
+    en: 'Correction scope',
+  },
   'settings.docx.batching_parts.main': {
     de: 'Haupttext',
     en: 'Main text',

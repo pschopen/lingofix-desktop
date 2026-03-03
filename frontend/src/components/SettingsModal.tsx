@@ -15,7 +15,9 @@ import {
   SETTINGS_LIMITS,
   DOCX_COMPARE_MODES,
   DOCX_BATCHING_PARTS,
+  DOCX_CORRECTION_SCOPE_PARTS,
   DocxBatchingPart,
+  DocxCorrectionScopePart,
 } from '../types';
 import { Language, t } from '../i18n';
 
@@ -185,6 +187,24 @@ export function SettingsModal({
     }
 
     handleDocxSettingChange('batching_parts', next);
+  };
+
+  const handleCorrectionScopePartToggle = (part: DocxCorrectionScopePart) => {
+    if (!formData) {
+      return;
+    }
+
+    const current = formData.docx.correction_scope_parts ?? [];
+    const hasPart = current.includes(part);
+    const next = hasPart
+      ? current.filter((item) => item !== part)
+      : [...current, part];
+
+    if (next.length === 0) {
+      return;
+    }
+
+    handleDocxSettingChange('correction_scope_parts', next);
   };
 
   const handleModelDropdownFocus = () => {
@@ -823,6 +843,24 @@ export function SettingsModal({
                       </option>
                     ))}
                   </SelectField>
+                </FieldGroup>
+
+                <FieldGroup label={t('settings.docx.correction_scope_parts', lang)} isDarkMode={isDarkMode}>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {DOCX_CORRECTION_SCOPE_PARTS.map((part) => (
+                      <label
+                        key={part}
+                        className={`inline-flex items-center gap-1.5 text-sm rounded-md px-1.5 py-0.5 ${isDarkMode ? 'text-surface-200' : 'text-surface-700'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={(formData.docx.correction_scope_parts ?? []).includes(part)}
+                          onChange={() => handleCorrectionScopePartToggle(part)}
+                        />
+                        <span>{t(`settings.docx.batching_parts.${part}`, lang)}</span>
+                      </label>
+                    ))}
+                  </div>
                 </FieldGroup>
 
                 {formData.docx.compare_mode === 'openxml' && (

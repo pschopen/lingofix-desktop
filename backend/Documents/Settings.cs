@@ -37,6 +37,15 @@ public sealed class Settings
         ProcessorWorkItemKind.Footers,
         ProcessorWorkItemKind.Glossary
     ];
+    internal HashSet<ProcessorWorkItemKind> CorrectionScopeParts { get; set; } =
+    [
+        ProcessorWorkItemKind.Main,
+        ProcessorWorkItemKind.Footnotes,
+        ProcessorWorkItemKind.Endnotes,
+        ProcessorWorkItemKind.Headers,
+        ProcessorWorkItemKind.Footers,
+        ProcessorWorkItemKind.Glossary
+    ];
     public int BatchMaxChars { get; set; }
     public int BatchMaxParagraphs { get; set; }
     public bool EnableCache { get; set; }
@@ -91,6 +100,7 @@ public sealed class Settings
 
         var docx = payload.Docx ?? throw InvalidSettings("docx settings are missing");
         var batchingParts = ParseBatchingParts(docx.BatchingParts);
+        var correctionScopeParts = ParseCorrectionScopeParts(docx.CorrectionScopeParts);
 
         var normalized = new Settings
         {
@@ -106,6 +116,7 @@ public sealed class Settings
             ChunkSize = docx.ChunkSize ?? DefaultChunkSize,
             EnableBatching = docx.EnableBatching,
             BatchingParts = batchingParts,
+            CorrectionScopeParts = correctionScopeParts,
             BatchMaxChars = docx.BatchMaxChars,
             BatchMaxParagraphs = docx.BatchMaxParagraphs,
             EnableCache = docx.EnableCache,
@@ -186,6 +197,62 @@ public sealed class Settings
 
         return result;
     }
+
+    private static HashSet<ProcessorWorkItemKind> ParseCorrectionScopeParts(List<string>? rawParts)
+    {
+        if (rawParts is null || rawParts.Count == 0)
+        {
+            return
+            [
+                ProcessorWorkItemKind.Main,
+                ProcessorWorkItemKind.Footnotes,
+                ProcessorWorkItemKind.Endnotes,
+                ProcessorWorkItemKind.Headers,
+                ProcessorWorkItemKind.Footers,
+                ProcessorWorkItemKind.Glossary
+            ];
+        }
+
+        var result = new HashSet<ProcessorWorkItemKind>();
+        foreach (var raw in rawParts)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                throw InvalidSettings("docx.correction_scope_parts contains empty values");
+            }
+
+            switch (raw.Trim().ToLowerInvariant())
+            {
+                case "main":
+                    result.Add(ProcessorWorkItemKind.Main);
+                    break;
+                case "footnotes":
+                    result.Add(ProcessorWorkItemKind.Footnotes);
+                    break;
+                case "endnotes":
+                    result.Add(ProcessorWorkItemKind.Endnotes);
+                    break;
+                case "headers":
+                    result.Add(ProcessorWorkItemKind.Headers);
+                    break;
+                case "footers":
+                    result.Add(ProcessorWorkItemKind.Footers);
+                    break;
+                case "glossary":
+                    result.Add(ProcessorWorkItemKind.Glossary);
+                    break;
+                default:
+                    throw InvalidSettings($"docx.correction_scope_parts contains unknown value '{raw}'");
+            }
+        }
+
+        if (result.Count == 0)
+        {
+            throw InvalidSettings("missing or empty field 'docx.correction_scope_parts'");
+        }
+
+        return result;
+    }
 }
 
 internal sealed class FrontendSettingsPayload
@@ -249,6 +316,9 @@ internal sealed class FrontendDocxSettingsPayload
 
     [JsonPropertyName("batching_parts")]
     public List<string>? BatchingParts { get; set; }
+
+    [JsonPropertyName("correction_scope_parts")]
+    public List<string>? CorrectionScopeParts { get; set; }
 
     [JsonPropertyName("enable_cache")]
     public bool EnableCache { get; set; }
