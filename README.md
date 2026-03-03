@@ -74,6 +74,8 @@ GitHub Actions workflow `Desktop Bundles` builds distributable artifacts for:
 - Windows x64 (NSIS `.exe` installer)
 - Linux x64 (Flatpak bundle)
 
+The Linux jobs run a headless Flatpak smoke test (`xvfb-run flatpak run ...`) and validate UI startup via `ui.setup` and `ui.page_loaded` debug-log events.
+
 You can run it manually from the Actions tab via `workflow_dispatch`.
 
 ### GitHub Releases

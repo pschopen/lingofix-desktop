@@ -3189,9 +3189,27 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let _ = app;
+            let app_handle = app.handle().clone();
             clear_temp_lingofix_dir();
+            write_debug_event(
+                &app_handle,
+                "ui.setup",
+                json!({
+                    "window_labels": app
+                        .webview_windows()
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                }),
+            );
             Ok(())
+        })
+        .on_page_load(|window, _payload| {
+            write_debug_event(
+                &window.app_handle(),
+                "ui.page_loaded",
+                json!({ "window_label": window.label() }),
+            );
         })
         .manage(CancellationState::default())
         .manage(ModelCapabilityState::default())
