@@ -257,12 +257,15 @@ jobs:
       - name: Configure Flatpak runtime
         run: |
           flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: tauri -> target
+          shared-key: linux-ubuntu-22.04-flatpak
+
+      - name: Clean Linux Rust target before prep build
+        run: cargo clean --manifest-path tauri/Cargo.toml
 
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
@@ -284,7 +287,7 @@ jobs:
 
       - name: Build Linux x64 Flatpak bundle
         run: |
-          flatpak-builder --user --force-clean --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json
+          flatpak-builder --user --force-clean --install-deps-from=flathub --repo=flatpak-repo flatpak-build flatpak/com.lingofix.desktop.json
           mkdir -p artifacts
           flatpak build-bundle flatpak-repo "artifacts/Lingofix-Desktop-${{ github.ref_name }}-linux-x64.flatpak" com.lingofix.desktop
 
@@ -297,7 +300,7 @@ jobs:
           rm -f "$DEBUG_LOG_CANDIDATE_1" "$DEBUG_LOG_CANDIDATE_2"
 
           set +e
-          timeout 45s xvfb-run -a flatpak run com.lingofix.desktop > /tmp/lingofix-flatpak-smoke.log 2>&1
+          timeout 60s xvfb-run -a flatpak run com.lingofix.desktop > /tmp/lingofix-flatpak-smoke.log 2>&1
           RUN_EXIT=$?
           set -e
 
