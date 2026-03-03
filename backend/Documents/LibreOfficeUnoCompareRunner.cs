@@ -292,7 +292,16 @@ internal static class LibreOfficeUnoCompareRunner
             return scriptPath;
         }
 
-        var tempDir = Path.Combine(Path.GetTempPath(), "Lingofix", "flatpak-host-scripts");
+        var cacheRoot = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
+        if (string.IsNullOrWhiteSpace(cacheRoot))
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            cacheRoot = string.IsNullOrWhiteSpace(home)
+                ? Path.GetTempPath()
+                : Path.Combine(home, ".cache");
+        }
+
+        var tempDir = Path.Combine(cacheRoot, "Lingofix", "flatpak-host-scripts");
         Directory.CreateDirectory(tempDir);
 
         var targetPath = Path.Combine(
