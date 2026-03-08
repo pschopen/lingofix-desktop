@@ -110,6 +110,147 @@ fn default_auto_check_updates() -> bool {
     true
 }
 
+fn is_word_installed() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        return false;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let common_paths = [
+            "C:/Program Files/Microsoft Office/root/Office16/WINWORD.EXE",
+            "C:/Program Files (x86)/Microsoft Office/root/Office16/WINWORD.EXE",
+            "C:/Program Files/Microsoft Office/Office16/WINWORD.EXE",
+            "C:/Program Files (x86)/Microsoft Office/Office16/WINWORD.EXE",
+            "C:/Program Files/Microsoft Office/root/Office15/WINWORD.EXE",
+            "C:/Program Files (x86)/Microsoft Office/root/Office15/WINWORD.EXE",
+        ];
+
+        if common_paths.iter().any(|path| Path::new(path).is_file()) {
+            return true;
+        }
+
+        let mut where_command = std::process::Command::new("where.exe");
+        where_command
+            .arg("WINWORD.EXE")
+            .creation_flags(CREATE_NO_WINDOW);
+
+        if let Ok(output) = where_command.output() {
+            if output.status.success()
+                && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+            {
+                return true;
+            }
+        }
+
+        let script = "$paths = @(\
+            'HKLM:SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WINWORD.EXE',\
+            'HKLM:SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\WINWORD.EXE'\
+        );\
+        foreach ($path in $paths) {\
+            try {\
+                $item = Get-ItemProperty -Path $path -ErrorAction Stop;\
+                if ($item.'(default)' -and (Test-Path $item.'(default)')) {\
+                    Write-Output $item.'(default)';\
+                    exit 0;\
+                }\
+            } catch { }\
+        }\
+        exit 1";
+
+        let mut registry_command = std::process::Command::new("powershell.exe");
+        registry_command
+            .arg("-NoProfile")
+            .arg("-Command")
+            .arg(script)
+            .creation_flags(CREATE_NO_WINDOW);
+
+        return registry_command
+            .output()
+            .map(|output| {
+                output.status.success()
+                    && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+            })
+            .unwrap_or(false);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let common_paths = [
+            "/Applications/Microsoft Word.app",
+            "/Applications/Microsoft Office/Microsoft Word.app",
+        ];
+
+        if common_paths.iter().any(|path| Path::new(path).is_dir()) {
+            return true;
+        }
+
+        if let Some(home) = std::env::var_os("HOME") {
+            let user_app = PathBuf::from(home)
+                .join("Applications")
+                .join("Microsoft Word.app");
+            if user_app.is_dir() {
+                return true;
+            }
+        }
+
+        if let Ok(output) = std::process::Command::new("mdfind")
+            .arg("kMDItemCFBundleIdentifier == 'com.microsoft.Word'")
+            .output()
+        {
+            if output.status.success()
+                && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        false
+    }
+}
+
+fn is_libreoffice_installed() -> bool {
+    for candidate in resolve_soffice_candidates() {
+        let mut command = spawnable_soffice_command(&candidate);
+        command.arg("--version");
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        if let Ok(output) = command.output() {
+            if output.status.success() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn detect_default_compare_mode() -> String {
+    if is_word_installed() {
+        "word-native".to_string()
+    } else if is_libreoffice_installed() {
+        "libreoffice-uno".to_string()
+    } else {
+        "openxml".to_string()
+    }
+}
+
 const KNOWN_PROVIDERS: [&str; 7] = [
     "openai",
     "ollama",
@@ -293,6 +434,8 @@ impl FrontendSettings {
     fn default_for_locale(locale: &str) -> Self {
         let normalized_locale = normalize_locale(locale);
         let default_preset = default_custom_prompt_preset(normalized_locale);
+        let mut docx = DocxSettings::default();
+        docx.compare_mode = detect_default_compare_mode();
         Self {
             provider: "openai".into(),
             api_url: "https://api.openai.com/v1".into(),
@@ -308,7 +451,7 @@ impl FrontendSettings {
             enable_reasoning: false,
             reasoning_effort: default_reasoning_effort(),
             provider_keys: empty_provider_keys(),
-            docx: DocxSettings::default(),
+            docx,
             font_size: "default".into(),
         }
     }

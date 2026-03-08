@@ -1,133 +1,291 @@
 # Lingofix
 
-Lingofix is a desktop text and DOCX correction tool with a React frontend, a Tauri host, and a .NET backend for DOCX processing.
+Lingofix is a desktop app for correcting text, DOCX files, and ODT files with AI.
 
-## Project Structure
+It is built for people who want fast proofreading help without using a browser-based editor. You can paste plain text, load one or more documents, review the result, and save corrected output on your computer.
 
+## What Lingofix Does
+
+- Corrects plain text with AI
+- Processes `.docx` and `.odt` files
+- Supports tracked-change style workflows for office documents
+- Lets you choose between multiple AI providers
+- Runs as a desktop app for macOS, Windows, and Linux
+- Offers an English and German interface
+
+## Who It Is For
+
+Lingofix is useful if you want to:
+
+- proofread drafts, emails, reports, or academic text
+- improve spelling and grammar while keeping your writing style
+- correct Word or OpenDocument files without copying everything into a web form
+- use your own AI provider and model
+
+## How It Works
+
+### Plain text
+
+1. Open Lingofix.
+2. Open `Settings`.
+3. Choose your provider, enter your API key if required, and select a model.
+4. Paste your text into the editor.
+5. Click `Correct`.
+6. Review the highlighted differences and either apply or reject the changes.
+
+### DOCX or ODT documents
+
+1. Open Lingofix.
+2. Configure your provider and model in `Settings`.
+3. Drag a `.docx` or `.odt` file into the app, or choose a file manually.
+4. Click `Correct`.
+5. Wait for processing to finish.
+6. Open the generated output file from the result banner.
+
+Depending on your compare mode, Lingofix can generate a corrected file with tracked changes or fall back to a corrected output file without generated change markup.
+
+## Download and Installation
+
+Download the latest release from GitHub:
+
+- Releases page: `https://github.com/pschopen/lingofix-desktop/releases`
+
+### macOS
+
+Choose the correct file for your Mac:
+
+- Apple Silicon (M1, M2, M3, M4): `Lingofix-Desktop-vX.Y.Z-macos-arm64.zip`
+- Intel Mac: `Lingofix-Desktop-vX.Y.Z-macos-x64.zip`
+
+Install steps:
+
+1. Download the `.zip` file from the latest release.
+2. Unzip it.
+3. Drag `Lingofix Desktop.app` into `Applications`.
+4. Start the app.
+
+### Windows
+
+Download:
+
+- `Lingofix-Desktop-vX.Y.Z-windows-x64.exe`
+
+Install steps:
+
+1. Download the installer.
+2. Run the `.exe` file.
+3. Follow the installation wizard.
+
+### Linux
+
+Download:
+
+- `Lingofix-Desktop-vX.Y.Z-linux-x64.flatpak`
+
+Install with Flatpak:
+
+```bash
+flatpak install --user ./Lingofix-Desktop-vX.Y.Z-linux-x64.flatpak
+flatpak run com.lingofix.desktop
 ```
-lingofix-cs/
+
+## macOS: Open an App From an Unidentified Developer
+
+If macOS blocks Lingofix because it is not signed by a verified Apple developer, use these steps:
+
+1. Move the app to `Applications`.
+2. Double-click the app once.
+3. macOS will show a warning and refuse to open it.
+4. Open `System Settings` > `Privacy & Security`.
+5. Scroll to the security section near the bottom.
+6. Find the message about `Lingofix Desktop.app` being blocked.
+7. Click `Open Anyway`.
+8. Open the app again.
+9. Confirm by clicking `Open` in the dialog.
+
+If `Open Anyway` does not appear immediately, try this fallback:
+
+1. In `Applications`, right-click `Lingofix Desktop.app`.
+2. Choose `Open`.
+3. Confirm with `Open`.
+
+After that, macOS should allow future launches normally.
+
+## First-Time Setup
+
+Before Lingofix can correct text, you usually need to configure an AI provider.
+
+1. Open `Settings`.
+2. Select a provider.
+3. Enter the API URL only if your provider requires a custom one.
+4. Enter your API key if needed.
+5. Click `Load models`.
+6. Pick a model.
+7. Save the settings.
+
+### Provider notes
+
+- `OpenAI`, `OpenRouter`, `Hugging Face`, `Google AI Studio`, and `Mistral` usually require an API key.
+- `Ollama` is for local use and usually works without an API key if Ollama is running on your computer.
+- `Custom` is for OpenAI-compatible or other custom endpoints.
+
+## Working With Plain Text
+
+Lingofix can correct pasted text directly in the editor.
+
+- Type or paste your text into the main editor
+- Press `Correct`
+- Wait for the corrected result
+- Review the differences
+- Use `Apply` to keep the correction or `Reject` to discard it
+
+The app is designed to keep the output focused on the corrected text instead of long explanations.
+
+## Working With DOCX and ODT Files
+
+You can drop office documents into the app or select them with the file picker.
+
+Typical workflow:
+
+- add one or more `.docx` or `.odt` files
+- start correction
+- review progress and log messages
+- open the corrected result from the result banner
+
+### Compare modes
+
+Lingofix includes different compare modes for document correction.
+
+#### OpenXML (built-in)
+
+- Built into the app
+- Works without Microsoft Word or LibreOffice
+- Best for self-contained workflows
+- Can change layout or formatting in some cases
+- Not recommended for ODT files
+
+#### Word (native)
+
+- Recommended for `.docx` files when Microsoft Word is available
+- Requires Microsoft Word
+- On macOS, you may need to grant automation permissions the first time
+
+#### LibreOffice UNO (native)
+
+- Useful when working with LibreOffice or `.odt` files
+- Requires LibreOffice and the `soffice` command to be available
+
+## Updates
+
+Lingofix can check GitHub Releases for updates.
+
+- automatic update checks can run at startup and then once per day
+- you can also trigger a manual update check from `Settings`
+- download links open the official release page for this repository
+
+## Troubleshooting
+
+### The app cannot connect to my model
+
+Check the following:
+
+- provider is selected correctly
+- API key is valid
+- API URL is correct
+- the selected model is available for that provider
+- your local service is running if you use Ollama
+
+### A DOCX or ODT run does not produce tracked changes
+
+That can happen if:
+
+- the selected compare mode is not ideal for the document
+- Word or LibreOffice is not available
+- the app falls back to a corrected file without generated track changes
+
+For best results:
+
+- use `Word` mode for `.docx` when Microsoft Word is installed
+- use `LibreOffice UNO` for `.odt` when LibreOffice is installed
+
+### The app behaves strangely after a broken configuration
+
+Open `Settings` > `Advanced` and use `Reset app`.
+
+You can also open:
+
+- the temp folder
+- `settings.json`
+- `debug.log`
+
+directly from the advanced settings section.
+
+## Privacy and Credentials
+
+Lingofix sends text or document content to the AI provider you configure.
+
+Please make sure you understand the privacy and data-handling rules of your chosen provider before processing sensitive material.
+
+## For Developers
+
+### Project structure
+
+```text
+lingofix-desktop/
   Lingofix.slnx         .NET solution
-  frontend/             React + Vite web UI
-  backend/              .NET DOCX processor and compare engine
-  tauri/                Tauri desktop host (Rust)
+  frontend/             React + Vite UI
+  backend/              .NET document processing backend
+  tauri/                Tauri desktop host
 ```
 
-## Features
-
-- Text correction with streaming output
-- DOCX correction with progress updates
-- Diff view and track-changes workflow
-- Multiple providers (OpenAI-compatible, Ollama, OpenRouter, Hugging Face, Google, Mistral)
-- English/German UI
-
-## Prerequisites
+### Prerequisites
 
 - Node.js 18+
 - .NET SDK 10+
+- Rust toolchain
 
-## Development
+### Setup
 
 ```bash
 npm run setup
 npm run build
 ```
 
-## Build
+### Build targets
 
-Windows (self-contained single-file backend build):
+- macOS universal workflow helper: `npm run build:app:mac`
+- macOS ARM64: `npm run build:app:mac:arm64`
+- macOS x64: `npm run build:app:mac:x64`
+- Windows x64 installer: `npm run build:app:win`
+- Linux Flatpak: `npm run build:app:linux:flatpak`
 
-```bash
-npm run publish:win
-```
-
-Further targets:
-
-- macOS ARM64: `npm run publish:osx-arm64`
-- macOS x64: `npm run publish:osx-x64`
-- Linux x64: `npm run publish:linux-x64`
-
-### Desktop App Bundles (self-contained backend included)
-
-These commands publish the .NET backend as self-contained binaries and bundle them into the Tauri app, so no separate .NET runtime is required on target machines.
-
-- macOS app bundle (includes ARM64 + x64 backend binaries): `npm run build:app:mac`
-- macOS ARM64 app bundle target: `npm run build:app:mac:arm64`
-- macOS x64 app bundle target: `npm run build:app:mac:x64`
-- Windows installer build (includes win-x64 backend binary): `npm run build:app:win`
-- Linux Flatpak prep build (includes linux-x64 backend binary): `npm run build:app:linux:flatpak:prep`
-- Linux Flatpak bundle build: `npm run build:app:linux:flatpak`
-
-For local Flatpak bundle builds, install `flatpak` and `flatpak-builder` first and add Flathub as a remote.
-`flatpak-builder` installs required runtimes/SDK extensions automatically during the build.
-
-The Linux Flatpak build bundles artifacts produced by `npm run build:app:linux:flatpak:prep`.
-
-You can also prepare backend binaries directly:
+### Backend binaries only
 
 ```bash
 npm run prepare:backend:binaries
 ```
 
-### CI Build Pipeline
+### Release process
 
-GitHub Actions workflow `Desktop Bundles` builds distributable artifacts for:
+GitHub Actions publishes release assets when you push a version tag matching `v*`.
 
-- macOS ARM64 (`.app` zipped)
-- macOS x64 (`.app` zipped)
-- Windows x64 (NSIS `.exe` installer)
-- Linux x64 (Flatpak bundle)
+Version source of truth:
 
-The Linux jobs run a headless Flatpak smoke test (`xvfb-run flatpak run ...`) and validate UI startup via `ui.setup` and `ui.page_loaded` debug-log events.
-
-You can run it manually from the Actions tab via `workflow_dispatch`.
-
-### GitHub Releases
-
-Release assets are published automatically by the `Release` workflow when you push a version tag matching `v*`.
-
-Version source of truth: `tauri/Cargo.toml` (`[package].version`).
-
-Release tags must match that version exactly (`vX.Y.Z` for `X.Y.Z` in `tauri/Cargo.toml`).
+- `tauri/Cargo.toml`
 
 Example:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
-This creates a GitHub Release with:
+This produces release assets such as:
 
-- `Lingofix-Desktop-v0.2.0-macos-arm64.zip`
-- `Lingofix-Desktop-v0.2.0-macos-x64.zip`
-- `Lingofix-Desktop-v0.2.0-windows-x64.exe`
-- `Lingofix-Desktop-v0.2.0-linux-x64.flatpak`
-
-### Linux Installation (Flatpak)
-
-Install from a downloaded release asset:
-
-```bash
-flatpak install --user ./Lingofix-Desktop-v0.2.0-linux-x64.flatpak
-flatpak run com.lingofix.desktop
-```
-
-Release notes are generated automatically from GitHub.
-
-## macOS Startup
-
-If macOS blocks the app (unidentified developer):
-
-1. Open **System Settings** > **Privacy & Security**.
-2. Click **Allow Anyway** next to the blocked app message.
-3. Open the app again and confirm with **Open**.
-
-The app should now launch normally.
-
-```bash
-npm run build:app:mac
-open "tauri/target/release/bundle/macos/Lingofix Desktop.app"
-```
+- `Lingofix-Desktop-v0.1.0-macos-arm64.zip`
+- `Lingofix-Desktop-v0.1.0-macos-x64.zip`
+- `Lingofix-Desktop-v0.1.0-windows-x64.exe`
+- `Lingofix-Desktop-v0.1.0-linux-x64.flatpak`
 
 ## License
 

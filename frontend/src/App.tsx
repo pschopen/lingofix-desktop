@@ -12,8 +12,8 @@ const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_CHECK_STORAGE_KEY = 'lingofix.last_update_check_at';
 const UPDATE_CHECK_ETAG_STORAGE_KEY = 'lingofix.update_check_etag';
 const UPDATE_CHECK_RELEASE_STORAGE_KEY = 'lingofix.update_check_release';
-const GITHUB_LATEST_RELEASE_API = 'https://api.github.com/repos/pschopen/Lingofix/releases/latest';
-const GITHUB_RELEASES_PAGE = 'https://github.com/pschopen/Lingofix/releases';
+const GITHUB_LATEST_RELEASE_API = 'https://api.github.com/repos/pschopen/lingofix-desktop/releases/latest';
+const GITHUB_RELEASES_PAGE = 'https://github.com/pschopen/lingofix-desktop/releases';
 
 type UpdateNotice = {
   version: string;
