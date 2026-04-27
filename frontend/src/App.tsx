@@ -4,7 +4,7 @@ import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, 
 import { TextEditor } from './components/TextEditor';
 import { SettingsModal } from './components/SettingsModal';
 import { Settings, FontSize, FONT_SIZE_PX, DocxFile } from './types';
-import { t, detectLanguage } from './i18n';
+import { Language, t, detectLanguage } from './i18n';
 import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
 
@@ -102,7 +102,7 @@ function saveCachedRelease(release: CachedRelease): void {
 }
 
 function App() {
-  const [lang] = useState(detectLanguage());
+  const [lang, setLang] = useState(detectLanguage());
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [showOpenXmlConsent, setShowOpenXmlConsent] = useState(false);
   const [pendingDocxRunSettings, setPendingDocxRunSettings] = useState<Settings | null>(null);
@@ -171,6 +171,7 @@ function App() {
     try {
       const loaded = await invoke<Settings>('load_settings', { locale: lang });
       setSettings(loaded);
+      setLang(loaded.ui_language);
     } catch (error) {
       console.error('Failed to load settings:', error);
       setSettings(null);
@@ -710,6 +711,7 @@ function App() {
     try {
       await invoke('save_settings', { settings: newSettings });
       setSettings(newSettings);
+      setLang(newSettings.ui_language);
       setIsSettingsOpen(false);
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -717,9 +719,19 @@ function App() {
     }
   };
 
+  const handleCloseSettings = () => {
+    setLang(settings?.ui_language ?? detectLanguage());
+    setIsSettingsOpen(false);
+  };
+
+  const handlePreviewUiLanguageChange = (language: Language) => {
+    setLang(language);
+  };
+
   const handleResetSettings = useCallback(async (): Promise<Settings> => {
     const reset = await invoke<Settings>('reset_settings', { locale: lang });
     setSettings(reset);
+    setLang(reset.ui_language);
     setError(null);
     setInfoMessage(t('settings.app_reset.success', lang));
     return reset;
@@ -1171,9 +1183,10 @@ function App() {
       {/* === Settings Modal === */}
       <SettingsModal
         isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={handleCloseSettings}
         settings={settings}
         onSave={handleSaveSettings}
+        onPreviewUiLanguageChange={handlePreviewUiLanguageChange}
         onResetSettings={handleResetSettings}
         onCheckUpdates={handleManualUpdateCheck}
         lang={lang}

@@ -1,3 +1,5 @@
+import type { Language } from './i18n';
+
 export const PROVIDERS = ['openai', 'ollama', 'openrouter', 'huggingface', 'google', 'custom', 'mistral'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
@@ -45,6 +47,10 @@ export interface DocxSettings {
   max_parallel_requests: number;
 }
 
+export interface EditorSettings {
+  chunk_size: number;
+}
+
 export const FONT_SIZES = ['small', 'default', 'large', 'xl', 'xxl'] as const;
 export type FontSize = (typeof FONT_SIZES)[number];
 
@@ -79,13 +85,17 @@ export interface Settings {
   custom_prompt: string;
   custom_prompt_presets: CustomPromptPreset[];
   active_custom_prompt_preset_id: string;
+  active_custom_prompt_preset_ids: Partial<Record<Language, string>>;
   system_prompt: string;
   batch_prompt: string;
+  ui_language: Language;
+  correction_language: Language;
   auto_check_updates: boolean;
   temperature: number;
   enable_reasoning: boolean;
   reasoning_effort: ReasoningEffort;
   provider_keys: Record<Provider, string | null>;
+  editor: EditorSettings;
   docx: DocxSettings;
   font_size: FontSize;
 }

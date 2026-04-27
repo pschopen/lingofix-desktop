@@ -7,6 +7,7 @@ import {
   CustomPromptPreset,
   Provider,
   DocxSettings,
+  EditorSettings,
   FontSize,
   FONT_SIZES,
   PROVIDERS,
@@ -21,20 +22,34 @@ import {
   DocxCorrectionScopePart,
   ReasoningEffort,
 } from '../types';
-import { Language, t } from '../i18n';
+import {
+  EU_LANGUAGE_CODES,
+  LANGUAGE_LABELS,
+  Language,
+  defaultCustomPrompt,
+  defaultSystemPrompt,
+  normalizeLanguage,
+  t,
+} from '../i18n';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   settings: Settings | null;
   onSave: (settings: Settings) => void;
+  onPreviewUiLanguageChange: (language: Language) => void;
   onResetSettings: () => Promise<Settings>;
   onCheckUpdates: () => Promise<{ status: 'update-available' | 'up-to-date' | 'error'; message: string }>;
   lang: Language;
   isDarkMode?: boolean;
 }
 
-type TabType = 'general' | 'docx' | 'advanced';
+type TabType = 'general' | 'editor' | 'docx' | 'advanced';
+const LEGACY_DEFAULT_PROMPTS = [
+  'Correct the following text while maintaining the style and tone.',
+  'Korrigiere den folgenden Text nach den Duden-Regeln. Korrigiere nur Fehler, alles andere lässt Du unverändert!',
+  'Korrigiere den folgenden Text nach den offiziellen Regeln. Korrigiere nur Fehler, alles andere lässt Du unverändert!',
+];
 
 interface CompareAccessStatus {
   ok: boolean;
@@ -49,6 +64,7 @@ export function SettingsModal({
   onClose,
   settings,
   onSave,
+  onPreviewUiLanguageChange,
   onResetSettings,
   onCheckUpdates,
   lang,
@@ -173,6 +189,20 @@ export function SettingsModal({
     });
   };
 
+  const handleEditorSettingChange = <K extends keyof EditorSettings>(key: K, value: EditorSettings[K]) => {
+    if (!formData) {
+      return;
+    }
+
+    setFormData({
+      ...formData,
+      editor: {
+        ...formData.editor,
+        [key]: value,
+      },
+    });
+  };
+
   const handleBatchingPartToggle = (part: DocxBatchingPart) => {
     if (!formData) {
       return;
@@ -244,8 +274,85 @@ export function SettingsModal({
     return `preset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   };
 
+  const createDefaultPreset = (language: Language): CustomPromptPreset => ({
+    id: `default-${language}`,
+    name: language === 'de' ? 'Standard' : 'Default',
+    value: defaultCustomPrompt(language),
+    locale: language,
+  });
+
+  const normalizeDefaultPreset = (preset: CustomPromptPreset, language: Language): CustomPromptPreset => {
+    const defaultValue = defaultCustomPrompt(language);
+    const isDefaultPreset = preset.id === `default-${language}`;
+    const isLegacyDefaultValue = LEGACY_DEFAULT_PROMPTS.includes(preset.value.trim());
+    if (!isDefaultPreset && !isLegacyDefaultValue) {
+      return preset;
+    }
+
+    return {
+      ...preset,
+      id: isDefaultPreset ? preset.id : `default-${language}`,
+      name: language === 'de' ? 'Standard' : 'Default',
+      value: defaultValue,
+      locale: language,
+    };
+  };
+
+  const presetsForLanguage = (current: Settings, language = current.correction_language): CustomPromptPreset[] => {
+    return current.custom_prompt_presets.filter((preset) => normalizeLanguage(preset.locale) === language);
+  };
+
+  const ensureLanguagePreset = (current: Settings, language: Language): Settings => {
+    let normalizedPresets = current.custom_prompt_presets.map((preset) =>
+      normalizeLanguage(preset.locale) === language ? normalizeDefaultPreset(preset, language) : preset,
+    );
+    const defaultPreset = createDefaultPreset(language);
+    normalizedPresets = normalizedPresets.filter(
+      (preset) => !(preset.id === defaultPreset.id && normalizeLanguage(preset.locale) === language),
+    );
+    normalizedPresets = [...normalizedPresets, defaultPreset];
+    const nextPresetIds = {
+      ...current.active_custom_prompt_preset_ids,
+      [language]: defaultPreset.id,
+    };
+
+    return {
+      ...current,
+      correction_language: language,
+      custom_prompt_presets: normalizedPresets,
+      active_custom_prompt_preset_id: defaultPreset.id,
+      active_custom_prompt_preset_ids: nextPresetIds,
+      custom_prompt: defaultPreset.value,
+      system_prompt: defaultSystemPrompt(language),
+    };
+  };
+
   const getActivePreset = (current: Settings): CustomPromptPreset | undefined => {
-    return current.custom_prompt_presets.find((preset) => preset.id === current.active_custom_prompt_preset_id);
+    const language = current.correction_language;
+    const activeId = current.active_custom_prompt_preset_ids?.[language] ?? current.active_custom_prompt_preset_id;
+    return presetsForLanguage(current).find((preset) => preset.id === activeId)
+      ?? presetsForLanguage(current)[0];
+  };
+
+  const handleCorrectionLanguageChange = (language: Language) => {
+    if (!formData) {
+      return;
+    }
+
+    setPresetMessage('');
+    setFormData(ensureLanguagePreset(formData, language));
+  };
+
+  const handleUiLanguageChange = (language: Language) => {
+    if (!formData) {
+      return;
+    }
+
+    onPreviewUiLanguageChange(language);
+    setFormData({
+      ...formData,
+      ui_language: language,
+    });
   };
 
   const handleSelectCustomPromptPreset = (presetId: string) => {
@@ -262,6 +369,10 @@ export function SettingsModal({
     setFormData({
       ...formData,
       active_custom_prompt_preset_id: selected.id,
+      active_custom_prompt_preset_ids: {
+        ...formData.active_custom_prompt_preset_ids,
+        [formData.correction_language]: selected.id,
+      },
       custom_prompt: selected.value,
     });
   };
@@ -297,6 +408,10 @@ export function SettingsModal({
       ...formData,
       custom_prompt_presets: [...formData.custom_prompt_presets, duplicated],
       active_custom_prompt_preset_id: duplicated.id,
+      active_custom_prompt_preset_ids: {
+        ...formData.active_custom_prompt_preset_ids,
+        [formData.correction_language]: duplicated.id,
+      },
       custom_prompt: duplicated.value,
     });
   };
@@ -321,7 +436,8 @@ export function SettingsModal({
       return;
     }
 
-    if (formData.custom_prompt_presets.length <= 1) {
+    const languagePresets = presetsForLanguage(formData);
+    if (languagePresets.length <= 1) {
       setPresetMessage(t('settings.prompt_presets.keep_one', lang));
       return;
     }
@@ -353,17 +469,23 @@ export function SettingsModal({
       }
 
       const remaining = formData.custom_prompt_presets.filter((preset) => preset.id !== active.id);
-      const nextActive = remaining[0];
+      const nextActive = remaining.find((preset) => normalizeLanguage(preset.locale) === formData.correction_language);
       if (!nextActive) {
         closePresetDialog();
         return;
       }
+
+      const nextPresetIds = {
+        ...formData.active_custom_prompt_preset_ids,
+        [formData.correction_language]: nextActive.id,
+      };
 
       setPresetMessage('');
       setFormData({
         ...formData,
         custom_prompt_presets: remaining,
         active_custom_prompt_preset_id: nextActive.id,
+        active_custom_prompt_preset_ids: nextPresetIds,
         custom_prompt: nextActive.value,
       });
       closePresetDialog();
@@ -377,12 +499,11 @@ export function SettingsModal({
     }
 
     if (presetDialogMode === 'new') {
-      const locale = lang === 'de' ? 'de' : 'en';
       const newPreset: CustomPromptPreset = {
         id: createPresetId(),
         name: trimmedName,
         value: formData.custom_prompt,
-        locale,
+        locale: formData.correction_language,
       };
 
       setPresetMessage('');
@@ -390,6 +511,10 @@ export function SettingsModal({
         ...formData,
         custom_prompt_presets: [...formData.custom_prompt_presets, newPreset],
         active_custom_prompt_preset_id: newPreset.id,
+        active_custom_prompt_preset_ids: {
+          ...formData.active_custom_prompt_preset_ids,
+          [formData.correction_language]: newPreset.id,
+        },
       });
       closePresetDialog();
       return;
@@ -622,6 +747,7 @@ export function SettingsModal({
 
   const isOllama = formData.provider === 'ollama';
   const isCustom = formData.provider === 'custom';
+  const visiblePromptPresets = presetsForLanguage(formData);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
@@ -640,7 +766,7 @@ export function SettingsModal({
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 px-6 pt-3 pb-0">
+        <div className="flex flex-wrap gap-1 px-6 pt-3 pb-0">
           <button
             onClick={() => setActiveTab('general')}
             className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
@@ -650,6 +776,16 @@ export function SettingsModal({
             }`}
           >
             {t('settings.tab.general', lang)}
+          </button>
+          <button
+            onClick={() => setActiveTab('editor')}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+              activeTab === 'editor'
+                ? (isDarkMode ? 'bg-accent-900/40 text-accent-300 shadow-premium' : 'bg-accent-50 text-accent-700 shadow-premium')
+                : (isDarkMode ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-700' : 'text-surface-600 hover:text-surface-700 hover:bg-surface-50')
+            }`}
+          >
+            {t('settings.tab.editor', lang)}
           </button>
           <button
             onClick={() => setActiveTab('docx')}
@@ -678,6 +814,21 @@ export function SettingsModal({
           <div className="p-6 space-y-5">
             {activeTab === 'general' ? (
               <>
+                <FieldGroup label={t('settings.correction_language', lang)} isDarkMode={isDarkMode}>
+                  <SelectField
+                    value={formData.correction_language}
+                    onChange={(nextValue) => handleCorrectionLanguageChange(nextValue as Language)}
+                    menuBoundaryRef={modalPanelRef}
+                    isDarkMode={isDarkMode}
+                  >
+                    {EU_LANGUAGE_CODES.map((language) => (
+                      <option key={language} value={language}>
+                        {LANGUAGE_LABELS[language]}
+                      </option>
+                    ))}
+                  </SelectField>
+                </FieldGroup>
+
                 {/* Custom Prompt Presets */}
                 <FieldGroup label={t('settings.prompt_presets', lang)} isDarkMode={isDarkMode}>
                   <div className={`rounded-xl border p-3 space-y-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/50' : 'border-surface-200 bg-surface-50/80'}`}>
@@ -723,7 +874,7 @@ export function SettingsModal({
                         menuBoundaryRef={modalPanelRef}
                         isDarkMode={isDarkMode}
                       >
-                        {formData.custom_prompt_presets.map((preset) => (
+                        {visiblePromptPresets.map((preset) => (
                           <option key={preset.id} value={preset.id} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
                             {preset.name}
                           </option>
@@ -824,6 +975,20 @@ export function SettingsModal({
                   </SelectField>
                 </FieldGroup>
 
+              </>
+            ) : activeTab === 'editor' ? (
+              <>
+                <FieldGroup label={`${t('settings.editor.chunk_size', lang)}: ${formData.editor.chunk_size}`} isDarkMode={isDarkMode}>
+                  <input
+                    type="range"
+                    min={SETTINGS_LIMITS.chunkSize.min}
+                    max={SETTINGS_LIMITS.chunkSize.max}
+                    step={SETTINGS_LIMITS.chunkSize.step}
+                    value={formData.editor.chunk_size}
+                    onChange={(e) => handleEditorSettingChange('chunk_size', Number(e.target.value))}
+                    className="w-full mt-1"
+                  />
+                </FieldGroup>
               </>
             ) : activeTab === 'docx' ? (
               <>
@@ -1021,6 +1186,21 @@ export function SettingsModal({
               </>
             ) : (
               <>
+                <FieldGroup label={t('settings.ui_language', lang)} isDarkMode={isDarkMode}>
+                  <SelectField
+                    value={formData.ui_language}
+                    onChange={(nextValue) => handleUiLanguageChange(nextValue as Language)}
+                    menuBoundaryRef={modalPanelRef}
+                    isDarkMode={isDarkMode}
+                  >
+                    {EU_LANGUAGE_CODES.map((language) => (
+                      <option key={language} value={language}>
+                        {LANGUAGE_LABELS[language]}
+                      </option>
+                    ))}
+                  </SelectField>
+                </FieldGroup>
+
                 {/* Font Size */}
                 <FieldGroup label={t('settings.font_size', lang)} isDarkMode={isDarkMode}>
                   <SelectField
@@ -1076,7 +1256,6 @@ export function SettingsModal({
                   </div>
                 )}
 
-                {/* System Prompt (shared) */}
                 <FieldGroup label={t('settings.system_prompt', lang)} hint={t('settings.system_prompt.hint', lang)} isDarkMode={isDarkMode}>
                   <textarea
                     value={formData.system_prompt}

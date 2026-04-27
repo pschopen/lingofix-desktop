@@ -37,8 +37,6 @@ const REASONING_UNSUPPORTED_ERROR_CODE: &str = "REASONING_UNSUPPORTED";
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
 
-const DEFAULT_CUSTOM_PROMPT_EN: &str =
-    "Correct the following text while maintaining the style and tone.";
 const DEFAULT_CUSTOM_PROMPT_DE: &str = "Korrigiere den folgenden Text nach den Duden-Regeln. Korrigiere nur Fehler, alles andere lässt Du unverändert!";
 const DEFAULT_SYSTEM_PROMPT_EN: &str =
     "Important: Respond with the corrected text only. No explanations, no notes, no extra sentences.";
@@ -48,32 +46,96 @@ const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_EN: &str = "Default";
 const DEFAULT_CUSTOM_PROMPT_PRESET_NAME_DE: &str = "Standard";
 
 fn normalize_locale(locale: &str) -> &'static str {
-    if locale.trim().to_ascii_lowercase().starts_with("de") {
-        "de"
-    } else {
-        "en"
-    }
+    normalize_language(locale)
+}
+
+fn normalize_language(locale: &str) -> &'static str {
+    let lower = locale.trim().to_ascii_lowercase();
+    let base = lower.split(['-', '_']).next().unwrap_or("en");
+    KNOWN_LANGUAGES
+        .iter()
+        .copied()
+        .find(|known| *known == base)
+        .unwrap_or("en")
 }
 
 fn default_custom_prompt(locale: &str) -> String {
-    if normalize_locale(locale) == "de" {
-        DEFAULT_CUSTOM_PROMPT_DE.to_string()
-    } else {
-        DEFAULT_CUSTOM_PROMPT_EN.to_string()
+    match normalize_locale(locale) {
+        "bg" => "Поправи следния текст според официалните правила. Поправи само грешките; остави всичко останало непроменено.",
+        "cs" => "Oprav následující text podle oficiálních pravidel. Oprav pouze chyby; vše ostatní ponech beze změny.",
+        "da" => "Ret følgende tekst efter de officielle regler. Ret kun fejl; lad alt andet være uændret.",
+        "de" => DEFAULT_CUSTOM_PROMPT_DE,
+        "el" => "Διόρθωσε το ακόλουθο κείμενο σύμφωνα με τους επίσημους κανόνες. Διόρθωσε μόνο τα λάθη· άφησε όλα τα άλλα αμετάβλητα.",
+        "en" => "Correct the following text according to the official rules. Correct only mistakes; leave everything else unchanged!",
+        "es" => "Corrige el siguiente texto según las reglas oficiales. Corrige solo los errores; deja todo lo demás sin cambios.",
+        "et" => "Paranda järgmine tekst ametlike reeglite järgi. Paranda ainult vead; jäta kõik muu muutmata.",
+        "fi" => "Korjaa seuraava teksti virallisten sääntöjen mukaisesti. Korjaa vain virheet; jätä kaikki muu ennalleen.",
+        "fr" => "Corrige le texte suivant selon les règles officielles. Corrige uniquement les erreurs ; laisse tout le reste inchangé !",
+        "ga" => "Ceartaigh an téacs seo a leanas de réir na rialacha oifigiúla. Ná ceartaigh ach botúin; fág gach rud eile gan athrú.",
+        "hr" => "Ispravi sljedeći tekst prema službenim pravilima. Ispravi samo pogreške; sve ostalo ostavi nepromijenjeno.",
+        "hu" => "Javítsd ki az alábbi szöveget a hivatalos szabályok szerint. Csak a hibákat javítsd; minden mást hagyj változatlanul.",
+        "it" => "Correggi il testo seguente secondo le regole ufficiali. Correggi solo gli errori; lascia tutto il resto invariato.",
+        "lt" => "Pataisyk šį tekstą pagal oficialias taisykles. Taisyk tik klaidas; visa kita palik nepakeista.",
+        "lv" => "Izlabo šo tekstu saskaņā ar oficiālajiem noteikumiem. Izlabo tikai kļūdas; visu pārējo atstāj nemainītu.",
+        "mt" => "Ikkoreġi t-test li ġej skont ir-regoli uffiċjali. Ikkoreġi biss l-iżbalji; ħalli kull ħaġa oħra kif inhi.",
+        "nl" => "Corrigeer de volgende tekst volgens de officiële regels. Corrigeer alleen fouten; laat al het andere ongewijzigd.",
+        "pl" => "Popraw poniższy tekst zgodnie z oficjalnymi zasadami. Popraw tylko błędy; wszystko inne pozostaw bez zmian.",
+        "pt" => "Corrige o texto seguinte de acordo com as regras oficiais. Corrige apenas os erros; deixa tudo o resto inalterado.",
+        "ro" => "Corectează textul următor conform regulilor oficiale. Corectează doar greșelile; lasă orice altceva neschimbat.",
+        "sk" => "Oprav nasledujúci text podľa oficiálnych pravidiel. Oprav iba chyby; všetko ostatné ponechaj bez zmeny.",
+        "sl" => "Popravi naslednje besedilo v skladu z uradnimi pravili. Popravi samo napake; vse drugo pusti nespremenjeno.",
+        "sv" => "Korrigera följande text enligt de officiella reglerna. Korrigera endast fel; lämna allt annat oförändrat.",
+        _ => "Correct the following text according to the official rules. Correct only mistakes; leave everything else unchanged!",
     }
+    .to_string()
 }
 
 fn default_system_prompt(locale: &str) -> String {
-    if normalize_locale(locale) == "de" {
-        DEFAULT_SYSTEM_PROMPT_DE.to_string()
-    } else {
-        DEFAULT_SYSTEM_PROMPT_EN.to_string()
+    match normalize_locale(locale) {
+        "bg" => "Важно: Отговаряй само с поправения текст. Без обяснения, без бележки, без допълнителни изречения.",
+        "cs" => "Důležité: Odpověz pouze opraveným textem. Bez vysvětlení, bez poznámek, bez dalších vět.",
+        "da" => "Vigtigt: Svar kun med den rettede tekst. Ingen forklaringer, ingen noter, ingen ekstra sætninger.",
+        "de" => DEFAULT_SYSTEM_PROMPT_DE,
+        "el" => "Σημαντικό: Απάντησε μόνο με το διορθωμένο κείμενο. Χωρίς εξηγήσεις, χωρίς σημειώσεις, χωρίς πρόσθετες προτάσεις.",
+        "en" => DEFAULT_SYSTEM_PROMPT_EN,
+        "es" => "Importante: Responde solo con el texto corregido. Sin explicaciones, sin notas, sin frases adicionales.",
+        "et" => "Tähtis: Vasta ainult parandatud tekstiga. Ei selgitusi, ei märkusi ega lisalauseid.",
+        "fi" => "Tärkeää: Vastaa vain korjatulla tekstillä. Ei selityksiä, ei huomautuksia, ei ylimääräisiä lauseita.",
+        "fr" => "Important : réponds uniquement avec le texte corrigé. Pas d’explications, pas de notes, pas de phrases supplémentaires.",
+        "ga" => "Tábhachtach: Ná freagair ach leis an téacs ceartaithe. Gan mhínithe, gan nótaí, gan abairtí breise.",
+        "hr" => "Važno: Odgovori samo ispravljenim tekstom. Bez objašnjenja, bez bilješki, bez dodatnih rečenica.",
+        "hu" => "Fontos: Csak a javított szöveggel válaszolj. Nincs magyarázat, nincs megjegyzés, nincs további mondat.",
+        "it" => "Importante: rispondi solo con il testo corretto. Nessuna spiegazione, nessuna nota, nessuna frase aggiuntiva.",
+        "lt" => "Svarbu: Atsakyk tik pataisytu tekstu. Be paaiškinimų, be pastabų, be papildomų sakinių.",
+        "lv" => "Svarīgi: Atbildi tikai ar izlaboto tekstu. Bez paskaidrojumiem, bez piezīmēm, bez papildu teikumiem.",
+        "mt" => "Importanti: Wieġeb biss bit-test ikkoreġut. L-ebda spjegazzjoni, l-ebda nota, l-ebda sentenza żejda.",
+        "nl" => "Belangrijk: antwoord alleen met de gecorrigeerde tekst. Geen uitleg, geen notities, geen extra zinnen.",
+        "pl" => "Ważne: Odpowiedz wyłącznie poprawionym tekstem. Bez wyjaśnień, bez notatek, bez dodatkowych zdań.",
+        "pt" => "Importante: responde apenas com o texto corrigido. Sem explicações, sem notas, sem frases adicionais.",
+        "ro" => "Important: Răspunde doar cu textul corectat. Fără explicații, fără note, fără propoziții suplimentare.",
+        "sk" => "Dôležité: Odpovedz iba opraveným textom. Bez vysvetlení, bez poznámok, bez ďalších viet.",
+        "sl" => "Pomembno: Odgovori samo s popravljenim besedilom. Brez razlag, brez opomb, brez dodatnih stavkov.",
+        "sv" => "Viktigt: Svara endast med den korrigerade texten. Inga förklaringar, inga anteckningar, inga extra meningar.",
+        _ => DEFAULT_SYSTEM_PROMPT_EN,
     }
+    .to_string()
 }
 
 fn default_batch_prompt(locale: &str) -> String {
     let _ = locale;
     String::new()
+}
+
+fn is_default_or_legacy_prompt(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed == "Correct the following text while maintaining the style and tone."
+        || trimmed == DEFAULT_CUSTOM_PROMPT_DE
+        || trimmed == "Korrigiere den folgenden Text nach den offiziellen Regeln. Korrigiere nur Fehler, alles andere lässt Du unverändert!"
+}
+
+fn is_default_or_legacy_system_prompt(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed == DEFAULT_SYSTEM_PROMPT_DE || trimmed == DEFAULT_SYSTEM_PROMPT_EN
 }
 
 fn lingofix_temp_root() -> PathBuf {
@@ -99,7 +161,7 @@ fn default_custom_prompt_preset(locale: &str) -> CustomPromptPreset {
     };
 
     CustomPromptPreset {
-        id: "default".to_string(),
+        id: format!("default-{normalized_locale}"),
         name: name.to_string(),
         value: default_custom_prompt(normalized_locale),
         locale: normalized_locale.to_string(),
@@ -263,10 +325,16 @@ const KNOWN_PROVIDERS: [&str; 7] = [
 const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
 const KNOWN_REASONING_EFFORTS: [&str; 3] = ["low", "medium", "high"];
 const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
+const KNOWN_LANGUAGES: [&str; 24] = [
+    "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "ga", "hr",
+    "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "sk", "sl", "sv",
+];
 const MIN_TEMPERATURE: f64 = 0.0;
 const MAX_TEMPERATURE: f64 = 2.0;
 const MIN_DOCX_CHUNK_SIZE: i32 = 500;
 const MAX_DOCX_CHUNK_SIZE: i32 = 50_000;
+const MIN_EDITOR_CHUNK_SIZE: i32 = MIN_DOCX_CHUNK_SIZE;
+const MAX_EDITOR_CHUNK_SIZE: i32 = MAX_DOCX_CHUNK_SIZE;
 const MIN_BATCH_MAX_CHARS: i32 = 500;
 const MAX_BATCH_MAX_CHARS: i32 = 50_000;
 const MIN_BATCH_MAX_PARAGRAPHS: i32 = 1;
@@ -286,8 +354,16 @@ fn default_docx_chunk_size() -> i32 {
     7_500
 }
 
+fn default_editor_chunk_size() -> i32 {
+    7_500
+}
+
 fn default_reasoning_effort() -> String {
     "low".to_string()
+}
+
+fn empty_string() -> String {
+    String::new()
 }
 
 fn default_batching_parts() -> Vec<String> {
@@ -343,6 +419,11 @@ struct CancellationState {
     docx: Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
 }
 
+enum CorrectionChunkOutcome {
+    Complete(String),
+    Cancelled(String),
+}
+
 #[derive(Default)]
 struct ModelCapabilityState {
     temperature_support: Mutex<HashMap<String, bool>>,
@@ -383,6 +464,20 @@ impl Default for DocxSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct EditorSettings {
+    #[serde(default = "default_editor_chunk_size")]
+    chunk_size: i32,
+}
+
+impl Default for EditorSettings {
+    fn default() -> Self {
+        Self {
+            chunk_size: default_editor_chunk_size(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CustomPromptPreset {
     id: String,
     name: String,
@@ -399,14 +494,22 @@ struct FrontendSettings {
     custom_prompt: String,
     custom_prompt_presets: Vec<CustomPromptPreset>,
     active_custom_prompt_preset_id: String,
+    #[serde(default)]
+    active_custom_prompt_preset_ids: HashMap<String, String>,
     system_prompt: String,
     batch_prompt: String,
+    #[serde(default = "empty_string")]
+    ui_language: String,
+    #[serde(default = "empty_string")]
+    correction_language: String,
     auto_check_updates: bool,
     temperature: f64,
     enable_reasoning: bool,
     #[serde(default = "default_reasoning_effort")]
     reasoning_effort: String,
     provider_keys: HashMap<String, Option<String>>,
+    #[serde(default)]
+    editor: EditorSettings,
     docx: DocxSettings,
     font_size: String,
 }
@@ -436,6 +539,8 @@ impl FrontendSettings {
         let default_preset = default_custom_prompt_preset(normalized_locale);
         let mut docx = DocxSettings::default();
         docx.compare_mode = detect_default_compare_mode();
+        let mut active_custom_prompt_preset_ids = HashMap::new();
+        active_custom_prompt_preset_ids.insert(normalized_locale.to_string(), default_preset.id.clone());
         Self {
             provider: "openai".into(),
             api_url: "https://api.openai.com/v1".into(),
@@ -444,13 +549,17 @@ impl FrontendSettings {
             custom_prompt: default_preset.value.clone(),
             custom_prompt_presets: vec![default_preset.clone()],
             active_custom_prompt_preset_id: default_preset.id,
+            active_custom_prompt_preset_ids,
             system_prompt: default_system_prompt(normalized_locale),
             batch_prompt: default_batch_prompt(normalized_locale),
+            ui_language: normalized_locale.to_string(),
+            correction_language: normalized_locale.to_string(),
             auto_check_updates: default_auto_check_updates(),
             temperature: 0.0,
             enable_reasoning: false,
             reasoning_effort: default_reasoning_effort(),
             provider_keys: empty_provider_keys(),
+            editor: EditorSettings::default(),
             docx,
             font_size: "default".into(),
         }
@@ -812,6 +921,7 @@ async fn load_settings(app: AppHandle, locale: Option<String>) -> Result<Fronten
 
     let mut settings = decrypt_settings_secrets(raw_settings);
     settings.provider = canonical_provider(&settings.provider)?;
+    normalize_language_settings(&mut settings, locale);
     sync_custom_prompt_with_active_preset(&mut settings)?;
     validate_settings(&settings)?;
 
@@ -868,6 +978,20 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         ));
     }
 
+    if normalize_language(&settings.ui_language) != settings.ui_language.trim().to_ascii_lowercase() {
+        return Err(format!(
+            "Invalid settings: ui_language is invalid. {reset_hint}"
+        ));
+    }
+
+    if normalize_language(&settings.correction_language)
+        != settings.correction_language.trim().to_ascii_lowercase()
+    {
+        return Err(format!(
+            "Invalid settings: correction_language is invalid. {reset_hint}"
+        ));
+    }
+
     if settings.active_custom_prompt_preset_id.trim().is_empty() {
         return Err(format!(
             "Invalid settings: active_custom_prompt_preset_id is missing. {reset_hint}"
@@ -897,7 +1021,7 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
                 "Invalid settings: custom prompt preset value is missing. {reset_hint}"
             ));
         }
-        if normalize_locale(&preset.locale) != preset.locale.trim().to_ascii_lowercase() {
+        if normalize_language(&preset.locale) != preset.locale.trim().to_ascii_lowercase() {
             return Err(format!(
                 "Invalid settings: custom prompt preset locale is invalid. {reset_hint}"
             ));
@@ -976,6 +1100,14 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         ));
     }
 
+    if settings.editor.chunk_size < MIN_EDITOR_CHUNK_SIZE
+        || settings.editor.chunk_size > MAX_EDITOR_CHUNK_SIZE
+    {
+        return Err(format!(
+            "Invalid settings: editor.chunk_size is out of range. {reset_hint}"
+        ));
+    }
+
     if settings.docx.batch_max_paragraphs < MIN_BATCH_MAX_PARAGRAPHS
         || settings.docx.batch_max_paragraphs > MAX_BATCH_MAX_PARAGRAPHS
     {
@@ -1039,23 +1171,101 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
 }
 
 fn sync_custom_prompt_with_active_preset(settings: &mut FrontendSettings) -> Result<(), String> {
-    let active_id = settings.active_custom_prompt_preset_id.trim();
+    let correction_language = normalize_language(&settings.correction_language).to_string();
+    settings.correction_language = correction_language.clone();
+    for preset in &mut settings.custom_prompt_presets {
+        if normalize_language(&preset.locale) == correction_language {
+            let is_default_id = preset.id.eq_ignore_ascii_case(&format!("default-{correction_language}"));
+            if is_default_id || is_default_or_legacy_prompt(&preset.value) {
+                preset.id = format!("default-{correction_language}");
+                preset.name = if correction_language == "de" { "Standard" } else { "Default" }.to_string();
+                preset.value = default_custom_prompt(&correction_language);
+                preset.locale = correction_language.clone();
+            }
+        }
+    }
+    let active_id_for_language = settings
+        .active_custom_prompt_preset_ids
+        .get(&correction_language)
+        .cloned()
+        .unwrap_or_else(|| settings.active_custom_prompt_preset_id.clone());
+    let active_id = active_id_for_language.trim();
     if active_id.is_empty() {
         return Err("Invalid settings: active custom prompt preset id is missing. Open Settings > Advanced and use 'Reset app'.".to_string());
     }
 
-    let Some(active_preset) = settings
+    let active_index = settings
         .custom_prompt_presets
-        .iter_mut()
-        .find(|preset| preset.id.eq_ignore_ascii_case(active_id))
-    else {
-        return Err("Invalid settings: active custom prompt preset does not exist. Open Settings > Advanced and use 'Reset app'.".to_string());
+        .iter()
+        .position(|preset| {
+            preset.id.eq_ignore_ascii_case(active_id)
+                && normalize_language(&preset.locale) == correction_language
+        })
+        .or_else(|| {
+            settings
+                .custom_prompt_presets
+                .iter()
+                .position(|preset| {
+                    preset.id.eq_ignore_ascii_case(&format!("default-{correction_language}"))
+                        && normalize_language(&preset.locale) == correction_language
+                })
+        })
+        .or_else(|| {
+            settings
+                .custom_prompt_presets
+                .iter()
+                .position(|preset| normalize_language(&preset.locale) == correction_language)
+        });
+
+    let active_index = if let Some(index) = active_index {
+        index
+    } else {
+        settings
+            .custom_prompt_presets
+            .push(default_custom_prompt_preset(&correction_language));
+        settings.custom_prompt_presets.len() - 1
     };
 
-    active_preset.locale = normalize_locale(&active_preset.locale).to_string();
+    let active_preset = &mut settings.custom_prompt_presets[active_index];
+    active_preset.locale = correction_language.clone();
     settings.active_custom_prompt_preset_id = active_preset.id.trim().to_string();
+    settings
+        .active_custom_prompt_preset_ids
+        .insert(correction_language, settings.active_custom_prompt_preset_id.clone());
     settings.custom_prompt = active_preset.value.trim().to_string();
+    if settings.system_prompt.trim().is_empty()
+        || is_default_or_legacy_system_prompt(&settings.system_prompt)
+    {
+        settings.system_prompt = default_system_prompt(&settings.correction_language);
+    }
     Ok(())
+}
+
+fn normalize_language_settings(settings: &mut FrontendSettings, detected_locale: &str) {
+    let detected = normalize_language(detected_locale).to_string();
+    settings.ui_language = if settings.ui_language.trim().is_empty() {
+        detected.clone()
+    } else {
+        normalize_language(&settings.ui_language).to_string()
+    };
+    settings.correction_language = if settings.correction_language.trim().is_empty() {
+        detected
+    } else {
+        normalize_language(&settings.correction_language).to_string()
+    };
+
+    for preset in &mut settings.custom_prompt_presets {
+        preset.locale = normalize_language(&preset.locale).to_string();
+    }
+
+    if settings.active_custom_prompt_preset_ids.is_empty()
+        && !settings.active_custom_prompt_preset_id.trim().is_empty()
+    {
+        settings.active_custom_prompt_preset_ids.insert(
+            settings.correction_language.clone(),
+            settings.active_custom_prompt_preset_id.clone(),
+        );
+    }
 }
 
 fn empty_provider_keys() -> HashMap<String, Option<String>> {
@@ -1079,6 +1289,7 @@ async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(),
     let normalized_provider = canonical_provider(&settings.provider)?;
     let mut normalized_settings = settings;
     normalized_settings.provider = normalized_provider.clone();
+    normalize_language_settings(&mut normalized_settings, "en");
     sync_custom_prompt_with_active_preset(&mut normalized_settings)?;
     if let Some(active) = normalized_settings
         .api_key
@@ -1256,39 +1467,44 @@ async fn correct_text_streaming(
     }
 
     let _ = app.emit("correction_started", json!(null));
-    let result = if effective_settings.provider.eq_ignore_ascii_case("ollama") {
-        stream_ollama(&app, &cancel_flag, &text, &effective_settings).await
-    } else {
-        stream_openai_like(
-            &app,
-            &cancel_flag,
-            &text,
-            &effective_settings,
-            capability_state.inner(),
-        )
-        .await
-    };
+    let chunk_size = effective_settings
+        .editor
+        .chunk_size
+        .clamp(MIN_EDITOR_CHUNK_SIZE, MAX_EDITOR_CHUNK_SIZE) as usize;
+    let chunks = split_text_into_chunks(&text, chunk_size);
+    let result = stream_text_chunks(
+        &app,
+        &cancel_flag,
+        &text,
+        &chunks,
+        &effective_settings,
+        capability_state.inner(),
+    )
+    .await;
 
     {
         let mut guard = state.text.lock().await;
         *guard = None;
     }
 
-    if let Err(err) = result {
-        let message = err.to_string();
-        write_debug_event(
-            &app,
-            "editor.correction.error",
-            json!({
-                "provider": effective_settings.provider.as_str(),
-                "model": effective_settings.model.as_str(),
-                "duration_ms": started_at.elapsed().as_millis(),
-                "error": truncate_debug_message(&message, 1200)
-            }),
-        );
-        let _ = app.emit("correction_error", message.clone());
-        return Err(message);
-    }
+    let final_text = match result {
+        Ok(CorrectionChunkOutcome::Complete(value) | CorrectionChunkOutcome::Cancelled(value)) => value,
+        Err(err) => {
+            let message = err.to_string();
+            write_debug_event(
+                &app,
+                "editor.correction.error",
+                json!({
+                    "provider": effective_settings.provider.as_str(),
+                    "model": effective_settings.model.as_str(),
+                    "duration_ms": started_at.elapsed().as_millis(),
+                    "error": truncate_debug_message(&message, 1200)
+                }),
+            );
+            let _ = app.emit("correction_error", message.clone());
+            return Err(message);
+        }
+    };
 
     write_debug_event(
         &app,
@@ -1296,19 +1512,70 @@ async fn correct_text_streaming(
         json!({
             "provider": effective_settings.provider.as_str(),
             "model": effective_settings.model.as_str(),
+            "chunks": chunks.len(),
             "duration_ms": started_at.elapsed().as_millis()
         }),
     );
 
+    let _ = app.emit("correction_complete", final_text);
     Ok(())
 }
 
-async fn stream_ollama(
+async fn stream_text_chunks(
+    app: &AppHandle,
+    cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
+    original_text: &str,
+    chunks: &[String],
+    settings: &FrontendSettings,
+    capability_state: &ModelCapabilityState,
+) -> anyhow::Result<CorrectionChunkOutcome> {
+    if chunks.is_empty() {
+        return Ok(CorrectionChunkOutcome::Complete(String::new()));
+    }
+
+    let mut corrected = String::new();
+    for chunk in chunks {
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            let payload = if corrected.trim().is_empty() {
+                original_text.to_string()
+            } else {
+                corrected
+            };
+            return Ok(CorrectionChunkOutcome::Cancelled(payload));
+        }
+
+        let outcome = if settings.provider.eq_ignore_ascii_case("ollama") {
+            stream_ollama_chunk(app, cancel_flag, chunk, settings, &corrected).await?
+        } else {
+            stream_openai_like_chunk(
+                app,
+                cancel_flag,
+                chunk,
+                settings,
+                capability_state,
+                &corrected,
+            )
+            .await?
+        };
+
+        match outcome {
+            CorrectionChunkOutcome::Complete(value) => corrected.push_str(&value),
+            CorrectionChunkOutcome::Cancelled(value) => {
+                return Ok(CorrectionChunkOutcome::Cancelled(value));
+            }
+        }
+    }
+
+    Ok(CorrectionChunkOutcome::Complete(corrected))
+}
+
+async fn stream_ollama_chunk(
     app: &AppHandle,
     cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
     text: &str,
     settings: &FrontendSettings,
-) -> anyhow::Result<()> {
+    completed_prefix: &str,
+) -> anyhow::Result<CorrectionChunkOutcome> {
     let client = reqwest::Client::new();
     let url = format!("{}/api/chat", settings.api_url.trim_end_matches('/'));
     let request_started_at = std::time::Instant::now();
@@ -1350,8 +1617,17 @@ async fn stream_ollama(
 
     while let Some(chunk) = stream.next().await {
         if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = app.emit("correction_complete", all.clone());
-            return Ok(());
+            let partial = remove_markdown(&all);
+            let payload = if partial.trim().is_empty() {
+                if completed_prefix.trim().is_empty() {
+                    text.to_string()
+                } else {
+                    completed_prefix.to_string()
+                }
+            } else {
+                format!("{completed_prefix}{partial}")
+            };
+            return Ok(CorrectionChunkOutcome::Cancelled(payload));
         }
 
         let chunk = chunk?;
@@ -1372,7 +1648,8 @@ async fn stream_ollama(
                         first_token_ms = Some(request_started_at.elapsed().as_millis());
                     }
                     all.push_str(content);
-                    let _ = app.emit("correction_chunk", remove_markdown(&all));
+                    let partial = remove_markdown(&all);
+                    let _ = app.emit("correction_chunk", format!("{completed_prefix}{partial}"));
                 }
                 if value.get("done").and_then(|d| d.as_bool()).unwrap_or(false) {
                     let final_text = remove_markdown(&all);
@@ -1390,8 +1667,7 @@ async fn stream_ollama(
                             "elapsed_ms": request_started_at.elapsed().as_millis()
                         }),
                     );
-                    let _ = app.emit("correction_complete", final_text);
-                    return Ok(());
+                    return Ok(CorrectionChunkOutcome::Complete(final_text));
                 }
             }
         }
@@ -1414,17 +1690,17 @@ async fn stream_ollama(
         }),
     );
 
-    let _ = app.emit("correction_complete", final_text);
-    Ok(())
+    Ok(CorrectionChunkOutcome::Complete(final_text))
 }
 
-async fn stream_openai_like(
+async fn stream_openai_like_chunk(
     app: &AppHandle,
     cancel_flag: &Arc<std::sync::atomic::AtomicBool>,
     text: &str,
     settings: &FrontendSettings,
     capability_state: &ModelCapabilityState,
-) -> anyhow::Result<()> {
+    completed_prefix: &str,
+) -> anyhow::Result<CorrectionChunkOutcome> {
     let client = reqwest::Client::new();
     let url = format!(
         "{}/chat/completions",
@@ -1468,8 +1744,12 @@ async fn stream_openai_like(
                 }
                 _ = sleep(Duration::from_millis(120)) => {
                     if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        let _ = app.emit("correction_complete", text.to_string());
-                        return Ok(());
+                        let payload = if completed_prefix.trim().is_empty() {
+                            text.to_string()
+                        } else {
+                            completed_prefix.to_string()
+                        };
+                        return Ok(CorrectionChunkOutcome::Cancelled(payload));
                     }
                 }
             }
@@ -1565,9 +1845,16 @@ async fn stream_openai_like(
             _ = sleep(Duration::from_millis(120)) => {
                 if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
                     let partial = remove_markdown(&all);
-                    let payload = if partial.trim().is_empty() { text.to_string() } else { partial };
-                    let _ = app.emit("correction_complete", payload);
-                    return Ok(());
+                    let payload = if partial.trim().is_empty() {
+                        if completed_prefix.trim().is_empty() {
+                            text.to_string()
+                        } else {
+                            completed_prefix.to_string()
+                        }
+                    } else {
+                        format!("{completed_prefix}{partial}")
+                    };
+                    return Ok(CorrectionChunkOutcome::Cancelled(payload));
                 }
             }
             maybe_chunk = stream.next() => {
@@ -1600,8 +1887,7 @@ async fn stream_openai_like(
                                 "elapsed_ms": request_started_at.elapsed().as_millis()
                             }),
                         );
-                        let _ = app.emit("correction_complete", final_text);
-                        return Ok(());
+                        return Ok(CorrectionChunkOutcome::Complete(final_text));
                     }
 
                     if let Ok(value) = serde_json::from_str::<Value>(data) {
@@ -1611,7 +1897,8 @@ async fn stream_openai_like(
                                     first_token_ms = Some(request_started_at.elapsed().as_millis());
                                 }
                                 all.push_str(&content);
-                                let _ = app.emit("correction_chunk", remove_markdown(&all));
+                                let partial = remove_markdown(&all);
+                                let _ = app.emit("correction_chunk", format!("{completed_prefix}{partial}"));
                             }
                         }
                     }
@@ -1637,8 +1924,7 @@ async fn stream_openai_like(
         }),
     );
 
-    let _ = app.emit("correction_complete", final_text);
-    Ok(())
+    Ok(CorrectionChunkOutcome::Complete(final_text))
 }
 
 async fn send_openai_like_request(
@@ -3311,6 +3597,61 @@ fn remove_markdown(text: &str) -> String {
         .replace_all(&result, "\n\n")
         .to_string();
     result.trim().to_string()
+}
+
+fn split_text_into_chunks(text: &str, max_chars: usize) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    let max_chars = max_chars.max(1);
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+
+    while start < chars.len() {
+        let remaining = chars.len() - start;
+        if remaining <= max_chars {
+            let start_byte = chars[start].0;
+            chunks.push(text[start_byte..].to_string());
+            break;
+        }
+
+        let end = start + max_chars;
+        let mut split_at = find_text_chunk_split_point(&chars, start, end);
+        if split_at <= start {
+            split_at = end;
+        }
+
+        let start_byte = chars[start].0;
+        let end_byte = if split_at >= chars.len() {
+            text.len()
+        } else {
+            chars[split_at].0
+        };
+        chunks.push(text[start_byte..end_byte].to_string());
+        start = split_at;
+    }
+
+    chunks
+}
+
+fn find_text_chunk_split_point(chars: &[(usize, char)], start: usize, end: usize) -> usize {
+    let limit = end.min(chars.len());
+    for i in (start + 1..limit).rev() {
+        let ch = chars[i].1;
+        if ch == '.' || ch == '!' || ch == '?' || ch == '\n' || ch == '\r' {
+            return i + 1;
+        }
+    }
+
+    for i in (start + 1..limit).rev() {
+        if chars[i].1.is_whitespace() {
+            return i + 1;
+        }
+    }
+
+    end
 }
 
 fn build_output_path(
