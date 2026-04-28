@@ -4,6 +4,12 @@ Lingofix is a desktop app for correcting text, DOCX files, and ODT files with AI
 
 It is built for people who want fast proofreading help without using a browser-based editor. You can paste plain text, load one or more documents, review the result, and save corrected output on your computer.
 
+<p>
+  <a href="https://github.com/pschopen/lingofix-desktop/releases">
+    <img src="https://img.shields.io/badge/Download_latest_release-GitHub_Releases-2ea44f?style=for-the-badge&logo=github" alt="Download latest Lingofix release from GitHub Releases">
+  </a>
+</p>
+
 ## What Lingofix Does
 
 - Corrects plain text with AI
@@ -48,7 +54,7 @@ Depending on your compare mode, Lingofix can generate a corrected file with trac
 
 Download the latest release from GitHub:
 
-- Releases page: `https://github.com/pschopen/lingofix-desktop/releases`
+- [Download latest release](https://github.com/pschopen/lingofix-desktop/releases)
 
 ### macOS
 

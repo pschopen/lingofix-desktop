@@ -17,17 +17,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -63,7 +63,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "tauri/target/aarch64-apple-darwin/release/bundle/macos/Lingofix Desktop.app" "artifacts/Lingofix-Desktop-macos-arm64.zip"
 
       - name: Upload macOS ARM64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Lingofix-Desktop-macos-arm64
           path: artifacts/Lingofix-Desktop-macos-arm64.zip
@@ -74,17 +74,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -120,7 +120,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "tauri/target/x86_64-apple-darwin/release/bundle/macos/Lingofix Desktop.app" "artifacts/Lingofix-Desktop-macos-x64.zip"
 
       - name: Upload macOS x64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Lingofix-Desktop-macos-x64
           path: artifacts/Lingofix-Desktop-macos-x64.zip
@@ -131,17 +131,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -165,7 +165,7 @@ jobs:
         run: npm run build:app:win
 
       - name: Upload Windows installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Lingofix-Desktop-windows-x64
           path: tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
@@ -176,17 +176,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -292,7 +292,7 @@ jobs:
           fi
 
       - name: Upload Linux Flatpak artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Lingofix-Desktop-linux-x64
           path: artifacts/Lingofix-Desktop-linux-x64.flatpak

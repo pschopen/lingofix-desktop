@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Verify release tag matches tauri/Cargo.toml version
         shell: bash
@@ -50,17 +50,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -96,7 +96,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "tauri/target/aarch64-apple-darwin/release/bundle/macos/Lingofix Desktop.app" "artifacts/Lingofix-Desktop-${{ github.ref_name }}-macos-arm64.zip"
 
       - name: Upload macOS ARM64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-macos-arm64
           path: artifacts/Lingofix-Desktop-${{ github.ref_name }}-macos-arm64.zip
@@ -108,17 +108,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -154,7 +154,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "tauri/target/x86_64-apple-darwin/release/bundle/macos/Lingofix Desktop.app" "artifacts/Lingofix-Desktop-${{ github.ref_name }}-macos-x64.zip"
 
       - name: Upload macOS x64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-macos-x64
           path: artifacts/Lingofix-Desktop-${{ github.ref_name }}-macos-x64.zip
@@ -166,17 +166,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -210,7 +210,7 @@ jobs:
           Copy-Item $installer.FullName "artifacts/Lingofix-Desktop-${{ github.ref_name }}-windows-x64.exe"
 
       - name: Upload Windows x64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows-x64
           path: artifacts/Lingofix-Desktop-${{ github.ref_name }}-windows-x64.exe
@@ -222,17 +222,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -338,7 +338,7 @@ jobs:
           fi
 
       - name: Upload Linux x64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-linux-x64
           path: artifacts/Lingofix-Desktop-${{ github.ref_name }}-linux-x64.flatpak
@@ -354,7 +354,7 @@ jobs:
 
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
