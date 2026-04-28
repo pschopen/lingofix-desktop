@@ -102,7 +102,8 @@ function saveCachedRelease(release: CachedRelease): void {
 }
 
 function App() {
-  const [lang, setLang] = useState(detectLanguage());
+  const initialLanguageRef = useRef<Language>(detectLanguage());
+  const [lang, setLang] = useState(initialLanguageRef.current);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [showOpenXmlConsent, setShowOpenXmlConsent] = useState(false);
   const [pendingDocxRunSettings, setPendingDocxRunSettings] = useState<Settings | null>(null);
@@ -168,16 +169,17 @@ function App() {
   }, [text]);
 
   const loadSettings = useCallback(async () => {
+    const initialLanguage = initialLanguageRef.current;
     try {
-      const loaded = await invoke<Settings>('load_settings', { locale: lang });
+      const loaded = await invoke<Settings>('load_settings', { locale: initialLanguage });
       setSettings(loaded);
       setLang(loaded.ui_language);
     } catch (error) {
       console.error('Failed to load settings:', error);
       setSettings(null);
-      setError(t('error.load_settings_reset', lang));
+      setError(t('error.load_settings_reset', initialLanguage));
     }
-  }, [lang, setError]);
+  }, [setError]);
 
   const runUpdateCheck = useCallback(async ({ manual = false, force = false }: { manual?: boolean; force?: boolean } = {}): Promise<UpdateCheckResult> => {
     if (!settings) {
@@ -344,7 +346,9 @@ function App() {
 
   useEffect(() => {
     loadSettings();
-    
+  }, [loadSettings]);
+
+  useEffect(() => {
     const unlistenStarted = listen('correction_started', () => {
       setError(null);
       setInfoMessage(null);
@@ -434,7 +438,6 @@ function App() {
   }, [
     appendDocxLog,
     lang,
-    loadSettings,
     setCorrectedText,
     setDocxProgress,
     setDocxResults,
