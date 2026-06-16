@@ -34,20 +34,16 @@ jobs:
           PY
           )
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          NORMALIZED_TAG_VERSION=$(python3 - "$TAG_VERSION" <<'PY'
-          import sys
-          parts = sys.argv[1].split('.')
-          if len(parts) == 2:
-              parts.append('0')
-          print('.'.join(parts))
-          PY
-          )
+
+          if ! [[ "${TAG_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} is not a valid 3-part semver tag (expected e.g. v0.2.0)."
+            exit 1
+          fi
 
           echo "Cargo version: ${CARGO_VERSION}"
           echo "Tag version:   ${TAG_VERSION}"
-          echo "Normalized tag version: ${NORMALIZED_TAG_VERSION}"
 
-          if [ "${CARGO_VERSION}" != "${NORMALIZED_TAG_VERSION}" ]; then
+          if [ "${CARGO_VERSION}" != "${TAG_VERSION}" ]; then
             echo "Release tag ${GITHUB_REF_NAME} does not match tauri/Cargo.toml version ${CARGO_VERSION}."
             exit 1
           fi

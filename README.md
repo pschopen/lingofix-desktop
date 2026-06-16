@@ -273,7 +273,7 @@ npm run prepare:backend:binaries
 
 ### Release process
 
-GitHub Actions publishes release assets when you push a version tag matching `v*`.
+GitHub Actions publishes release assets when you push a version tag matching `v*`. Tags must use 3-part semver (e.g. `v0.2.0`); 2-part tags such as `v0.2` are rejected by the `validate-version` CI job.
 
 Version source of truth:
 
