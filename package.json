@@ -1,7 +1,7 @@
 {
   "name": "lingofix-workspace",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "scripts": {
     "setup": "npm install --prefix frontend",
     "build:web": "npm run build --prefix frontend",
