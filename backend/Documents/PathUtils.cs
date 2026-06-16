@@ -35,18 +35,48 @@ public static class PathUtils
         return Path.Combine(Path.GetTempPath(), "Lingofix");
     }
 
+    private static string ComputeInputKey(string inputPath)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(inputPath));
+        return Convert.ToHexString(hash).ToLowerInvariant().Substring(0, 12);
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return "document";
+        }
+
+        var sanitized = name;
+        foreach (var c in Path.GetInvalidFileNameChars())
+        {
+            sanitized = sanitized.Replace(c, '_');
+        }
+
+        foreach (var c in new[] { ':', '*', '?', '"', '<', '>', '|' })
+        {
+            sanitized = sanitized.Replace(c, '_');
+        }
+
+        const int maxLength = 100;
+        return sanitized.Length > maxLength ? sanitized.Substring(0, maxLength) : sanitized;
+    }
+
     public static string BuildWordCompareWorkspace(string inputPath)
     {
-        var key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(inputPath)))
-            .ToLowerInvariant();
-        var workspace = Path.Combine(GetLingofixTempRoot(), "compare", key);
+        var workspace = Path.Combine(GetLingofixTempRoot(), "compare");
         Directory.CreateDirectory(workspace);
         return workspace;
     }
 
     public static string BuildWordCompareFilePath(string inputPath, string fileName)
     {
-        return Path.Combine(BuildWordCompareWorkspace(inputPath), fileName);
+        var key = ComputeInputKey(inputPath);
+        var stem = SanitizeFileName(Path.GetFileNameWithoutExtension(inputPath));
+        var role = Path.GetFileNameWithoutExtension(fileName);
+        var ext = Path.GetExtension(fileName);
+        return Path.Combine(BuildWordCompareWorkspace(inputPath), $"{key}_{stem}_{role}{ext}");
     }
 
     public static string NormalizeInputPath(string input)
