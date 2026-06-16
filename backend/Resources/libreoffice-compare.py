@@ -261,6 +261,11 @@ def run_compare(
         if change_filter_mode.strip().lower() == "text-only":
             _filter_to_text_only_redlines(document, frame, dispatcher)
 
+        try:
+            document.RecordChanges = False
+        except Exception:
+            pass
+
         filter_name = "writer8" if output_format.strip().lower() == "odt" else "MS Word 2007 XML"
 
         document.storeToURL(

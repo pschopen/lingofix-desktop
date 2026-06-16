@@ -81,8 +81,6 @@ public static class TrackChangesGenerator
         using var correctedDoc = WordprocessingDocument.Open(correctedPath, false);
         using var outputDoc = WordprocessingDocument.Open(outputPath, true);
 
-        EnsureTrackRevisions(outputDoc);
-
         var revId = GetNextRevisionId(outputDoc);
         var revDate = DateTime.UtcNow;
 
@@ -153,7 +151,7 @@ public static class TrackChangesGenerator
         outputDoc.Save();
     }
 
-    private static void EnsureTrackRevisions(WordprocessingDocument doc)
+    private static void RemoveTrackRevisionsSetting(WordprocessingDocument doc)
     {
         var main = doc.MainDocumentPart;
         if (main is null)
@@ -161,19 +159,24 @@ public static class TrackChangesGenerator
             return;
         }
 
-        var settingsPart = main.DocumentSettingsPart ?? main.AddNewPart<DocumentSettingsPart>();
-        if (settingsPart.Settings is null)
-        {
-            settingsPart.Settings = new DocumentFormat.OpenXml.Wordprocessing.Settings();
-        }
-
-        var settings = settingsPart.Settings!;
-        if (settings.Elements<TrackRevisions>().Any())
+        var settingsPart = main.DocumentSettingsPart;
+        if (settingsPart?.Settings is null)
         {
             return;
         }
 
-        settings.AppendChild(new TrackRevisions());
+        var settings = settingsPart.Settings;
+        var trackRevisions = settings.Elements<TrackRevisions>().ToList();
+        if (trackRevisions.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var tr in trackRevisions)
+        {
+            tr.Remove();
+        }
+
         settings.Save();
     }
 
@@ -1284,6 +1287,8 @@ public static class TrackChangesGenerator
                 RejectFormattingChangesInRoot(doc.MainDocumentPart.GlossaryDocumentPart.GlossaryDocument);
             }
         }
+
+        RemoveTrackRevisionsSetting(doc);
     }
 
     private static void RejectFormattingChangesInRoot(OpenXmlElement root)
@@ -1555,7 +1560,7 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             throw 'Word returned no comparison document.'
         }
 
-        $comp.TrackRevisions = $true
+        $comp.TrackRevisions = $false
         $comp.ShowRevisions = $true
         $comp.SaveAs($outp)
         $lastError = $null
