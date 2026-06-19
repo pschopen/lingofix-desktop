@@ -670,6 +670,10 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     de: 'Max. parallele Anfragen',
     en: 'Max parallel requests',
   },
+  'settings.docx.restore_non_breaking_spaces': {
+    de: 'Geschützte Leerzeichen erhalten',
+    en: 'Preserve non-breaking spaces',
+  },
 
   // Settings - Font size
   'settings.font_size': {

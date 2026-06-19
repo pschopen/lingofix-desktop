@@ -53,6 +53,7 @@ public sealed class Settings
     public bool EnableCache { get; set; }
     public bool EnableParallelization { get; set; }
     public int MaxParallelRequests { get; set; }
+    public bool RestoreNonBreakingSpaces { get; set; }
     public bool? TemperatureSupportedHint { get; set; }
     public bool? ReasoningEffortSupportedHint { get; set; }
 
@@ -126,6 +127,7 @@ public sealed class Settings
             EnableCache = docx.EnableCache,
             EnableParallelization = docx.EnableParallelization,
             MaxParallelRequests = docx.MaxParallelRequests,
+            RestoreNonBreakingSpaces = docx.RestoreNonBreakingSpaces,
             TemperatureSupportedHint = payload.LlmCapabilityHint?.TemperatureSupported,
             ReasoningEffortSupportedHint = payload.LlmCapabilityHint?.ReasoningEffortSupported
         };
@@ -346,4 +348,7 @@ internal sealed class FrontendDocxSettingsPayload
 
     [JsonPropertyName("max_parallel_requests")]
     public int MaxParallelRequests { get; set; }
+
+    [JsonPropertyName("restore_non_breaking_spaces")]
+    public bool RestoreNonBreakingSpaces { get; set; }
 }

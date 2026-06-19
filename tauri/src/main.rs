@@ -366,6 +366,10 @@ fn empty_string() -> String {
     String::new()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_batching_parts() -> Vec<String> {
     KNOWN_DOCX_PARTS
         .iter()
@@ -444,6 +448,8 @@ struct DocxSettings {
     enable_cache: bool,
     enable_parallelization: bool,
     max_parallel_requests: i32,
+    #[serde(default = "default_true")]
+    restore_non_breaking_spaces: bool,
 }
 
 impl Default for DocxSettings {
@@ -459,6 +465,7 @@ impl Default for DocxSettings {
             enable_cache: true,
             enable_parallelization: true,
             max_parallel_requests: 4,
+            restore_non_breaking_spaces: true,
         }
     }
 }

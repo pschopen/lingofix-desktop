@@ -1183,6 +1183,14 @@ export function SettingsModal({
                   </div>
                 )}
 
+                {/* Restore Non-Breaking Spaces */}
+                <ToggleRow
+                  label={t('settings.docx.restore_non_breaking_spaces', lang)}
+                  checked={formData.docx.restore_non_breaking_spaces}
+                  onChange={() => handleDocxSettingChange('restore_non_breaking_spaces', !formData.docx.restore_non_breaking_spaces)}
+                  isDarkMode={isDarkMode}
+                />
+
               </>
             ) : (
               <>

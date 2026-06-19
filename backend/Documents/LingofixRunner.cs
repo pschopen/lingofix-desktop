@@ -347,6 +347,18 @@ public static class LingofixRunner
                 logger.Info("Skipping comment-preserver in external compare mode.");
             }
 
+            if (settings.RestoreNonBreakingSpaces && trackCreated)
+            {
+                try
+                {
+                    NonBreakingSpaceRestorer.Restore(tempOutputPath, logger);
+                }
+                catch (Exception ex)
+                {
+                    logger.Warning($"Non-breaking space restoration skipped: {ex.Message}");
+                }
+            }
+
             try
             {
                 if (useNativeOdtLibreOfficeCompare)

@@ -45,6 +45,7 @@ export interface DocxSettings {
   enable_cache: boolean;
   enable_parallelization: boolean;
   max_parallel_requests: number;
+  restore_non_breaking_spaces: boolean;
 }
 
 export interface EditorSettings {
