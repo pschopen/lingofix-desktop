@@ -1469,10 +1469,12 @@ public static class TrackChangesGenerator
             );
         }
 
+        var workspaceFolder = PathUtils.BuildWordCompareWorkspace(originalPath);
+
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "osascript",
-            ArgumentList = { scriptPath, originalPath, correctedPath, outputPath, author, strictTextChangesOnly ? "strict" : "default" },
+            ArgumentList = { scriptPath, originalPath, correctedPath, outputPath, author, strictTextChangesOnly ? "strict" : "default", workspaceFolder },
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
