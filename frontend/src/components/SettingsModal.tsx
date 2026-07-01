@@ -22,7 +22,6 @@ import {
   DocxBatchingPart,
   DocxCorrectionScopePart,
   ReasoningEffort,
-  CitationNormalizationMode,
 } from '../types';
 import {
   EU_LANGUAGE_CODES,
@@ -897,26 +896,6 @@ export function SettingsModal({
                   </div>
                 </FieldGroup>
 
-                {/* Citation Normalization */}
-                <FieldGroup
-                  label={t('settings.citation_normalization', lang)}
-                  hint={t('settings.citation_normalization.hint', lang)}
-                  isDarkMode={isDarkMode}
-                >
-                  <SelectField
-                    value={formData.citation_normalization}
-                    onChange={(nextValue) => setFormData({ ...formData, citation_normalization: nextValue as CitationNormalizationMode })}
-                    menuBoundaryRef={modalPanelRef}
-                    isDarkMode={isDarkMode}
-                  >
-                    {CITATION_NORMALIZATION_MODES.map((mode) => (
-                      <option key={mode} value={mode} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
-                        {t(`settings.citation_normalization.${mode}`, lang)}
-                      </option>
-                    ))}
-                  </SelectField>
-                </FieldGroup>
-
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {/* Provider Selection */}
                   <div className="md:col-span-1">
@@ -1220,6 +1199,26 @@ export function SettingsModal({
                   onChange={() => handleDocxSettingChange('ignore_trailing_paragraph_whitespace', !formData.docx.ignore_trailing_paragraph_whitespace)}
                   isDarkMode={isDarkMode}
                 />
+
+                {/* Citation Normalization */}
+                <FieldGroup
+                  label={t('settings.citation_normalization', lang)}
+                  hint={t('settings.citation_normalization.hint', lang)}
+                  isDarkMode={isDarkMode}
+                >
+                  <SelectField
+                    value={formData.docx.citation_normalization}
+                    onChange={(nextValue) => handleDocxSettingChange('citation_normalization', nextValue as DocxSettings['citation_normalization'])}
+                    menuBoundaryRef={modalPanelRef}
+                    isDarkMode={isDarkMode}
+                  >
+                    {CITATION_NORMALIZATION_MODES.map((mode) => (
+                      <option key={mode} value={mode} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
+                        {t(`settings.citation_normalization.${mode}`, lang)}
+                      </option>
+                    ))}
+                  </SelectField>
+                </FieldGroup>
 
               </>
             ) : (

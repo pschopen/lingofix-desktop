@@ -132,7 +132,7 @@ public sealed class Settings
             MaxParallelRequests = docx.MaxParallelRequests,
             RestoreNonBreakingSpaces = docx.RestoreNonBreakingSpaces,
             IgnoreTrailingParagraphWhitespace = docx.IgnoreTrailingParagraphWhitespace,
-            CitationNormalizationMode = CitationNormalizer.ParseMode(payload.CitationNormalization),
+            CitationNormalizationMode = CitationNormalizer.ParseMode(docx.CitationNormalization),
             TemperatureSupportedHint = payload.LlmCapabilityHint?.TemperatureSupported,
             ReasoningEffortSupportedHint = payload.LlmCapabilityHint?.ReasoningEffortSupported
         };
@@ -306,9 +306,6 @@ internal sealed class FrontendSettingsPayload
     [JsonPropertyName("reasoning_effort")]
     public string? ReasoningEffort { get; set; }
 
-    [JsonPropertyName("citation_normalization")]
-    public string? CitationNormalization { get; set; }
-
     [JsonPropertyName("docx")]
     public FrontendDocxSettingsPayload? Docx { get; set; }
 
@@ -362,4 +359,7 @@ internal sealed class FrontendDocxSettingsPayload
 
     [JsonPropertyName("ignore_trailing_paragraph_whitespace")]
     public bool IgnoreTrailingParagraphWhitespace { get; set; }
+
+    [JsonPropertyName("citation_normalization")]
+    public string? CitationNormalization { get; set; }
 }

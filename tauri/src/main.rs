@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[allow(dead_code)]
 mod citations;
 
 use std::collections::{HashMap, HashSet};
@@ -460,6 +461,8 @@ struct DocxSettings {
     restore_non_breaking_spaces: bool,
     #[serde(default)]
     ignore_trailing_paragraph_whitespace: bool,
+    #[serde(default = "default_citation_normalization")]
+    citation_normalization: String,
 }
 
 impl Default for DocxSettings {
@@ -477,6 +480,7 @@ impl Default for DocxSettings {
             max_parallel_requests: 4,
             restore_non_breaking_spaces: true,
             ignore_trailing_paragraph_whitespace: false,
+            citation_normalization: default_citation_normalization(),
         }
     }
 }
@@ -530,8 +534,6 @@ struct FrontendSettings {
     editor: EditorSettings,
     docx: DocxSettings,
     font_size: String,
-    #[serde(default = "default_citation_normalization")]
-    citation_normalization: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -582,7 +584,6 @@ impl FrontendSettings {
             editor: EditorSettings::default(),
             docx,
             font_size: "default".into(),
-            citation_normalization: default_citation_normalization(),
         }
     }
 }
@@ -1097,10 +1098,10 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
 
     if !KNOWN_CITATION_NORMALIZATION_MODES
         .iter()
-        .any(|mode| mode.eq_ignore_ascii_case(settings.citation_normalization.trim()))
+        .any(|mode| mode.eq_ignore_ascii_case(settings.docx.citation_normalization.trim()))
     {
         return Err(format!(
-            "Invalid settings: citation_normalization is invalid. {reset_hint}"
+            "Invalid settings: docx.citation_normalization is invalid. {reset_hint}"
         ));
     }
 
@@ -1534,14 +1535,6 @@ async fn correct_text_streaming(
             let _ = app.emit("correction_error", message.clone());
             return Err(message);
         }
-    };
-
-    let final_text = match citations::resolve_style(
-        citations::NormalizationMode::parse(&effective_settings.citation_normalization),
-        &text,
-    ) {
-        Some(style) => citations::normalize_citations(&final_text, style),
-        None => final_text,
     };
 
     write_debug_event(

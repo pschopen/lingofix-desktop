@@ -50,6 +50,7 @@ export interface DocxSettings {
   max_parallel_requests: number;
   restore_non_breaking_spaces: boolean;
   ignore_trailing_paragraph_whitespace: boolean;
+  citation_normalization: CitationNormalizationMode;
 }
 
 export interface EditorSettings {
@@ -103,7 +104,6 @@ export interface Settings {
   editor: EditorSettings;
   docx: DocxSettings;
   font_size: FontSize;
-  citation_normalization: CitationNormalizationMode;
 }
 
 export interface DocxFile {
