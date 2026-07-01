@@ -328,8 +328,8 @@ const KNOWN_PROVIDERS: [&str; 7] = [
 const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
 const KNOWN_REASONING_EFFORTS: [&str; 3] = ["low", "medium", "high"];
 const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
-const KNOWN_CITATION_NORMALIZATION_MODES: [&str; 4] =
-    ["off", "auto", "with_space", "without_space"];
+const KNOWN_CITATION_NORMALIZATION_MODES: [&str; 3] =
+    ["auto", "with_space", "without_space"];
 const KNOWN_LANGUAGES: [&str; 24] = [
     "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "ga", "hr",
     "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "sk", "sl", "sv",
@@ -2645,7 +2645,7 @@ async fn run_docx_processor(
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .map(|stem| {
-                    if stem.ends_with("_corrected") {
+                    if stem.contains("_corrected") {
                         "_corrected"
                     } else {
                         "_lingofix"
@@ -2704,7 +2704,7 @@ async fn run_docx_processor(
                 let output_suffix = Path::new(&final_output)
                     .file_stem()
                     .and_then(|s| s.to_str())
-                    .map(|stem| if stem.ends_with("_corrected") { "_corrected" } else { "_lingofix" })
+                    .map(|stem| if stem.contains("_corrected") { "_corrected" } else { "_lingofix" })
                     .unwrap_or("_lingofix");
                 let target = build_output_path(Path::new(original), output_suffix, OfficeInputKind::Docx)?;
                 tokio::fs::copy(&final_output, &target).await?;
@@ -3698,7 +3698,8 @@ fn build_output_path(
         .parent()
         .ok_or_else(|| anyhow!("invalid input parent"))?;
     let extension_text = extension.extension();
-    let base_name = format!("{stem}{suffix}");
+    let timestamp = format_timestamp_local();
+    let base_name = format!("{stem}{suffix}_{timestamp}");
     let candidate = parent.join(format!("{base_name}.{extension_text}"));
     if !candidate.exists() {
         return Ok(candidate);
@@ -3712,6 +3713,53 @@ fn build_output_path(
         }
         index += 1;
     }
+}
+
+fn format_timestamp_local() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let (year, month, day, hour, minute) = unix_to_ymdhm(now);
+    format!("{year:04}{month:02}{day:02}{hour:02}{minute:02}")
+}
+
+fn unix_to_ymdhm(secs: u64) -> (u32, u32, u32, u32, u32) {
+    let days = (secs / 86400) as i64;
+    let remainder = secs % 86400;
+    let hour = (remainder / 3600) as u32;
+    let minute = ((remainder % 3600) / 60) as u32;
+
+    let mut year = 1970i64;
+    let mut remaining_days = days;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        let days_in_year = if leap { 366 } else { 365 };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+
+    let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let month_lengths = if leap {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+
+    let mut month = 0u32;
+    for (i, &dim) in month_lengths.iter().enumerate() {
+        if remaining_days < dim {
+            month = (i + 1) as u32;
+            break;
+        }
+        remaining_days -= dim;
+    }
+
+    let day = (remaining_days + 1) as u32;
+    (year as u32, month, day, hour, minute)
 }
 
 fn workspace_root() -> anyhow::Result<PathBuf> {

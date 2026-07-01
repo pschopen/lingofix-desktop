@@ -993,7 +993,7 @@ export function SettingsModal({
               </>
             ) : activeTab === 'docx' ? (
               <>
-                {/* Compare Mode */}
+                {/* 1. Compare Mode */}
                 <FieldGroup label={t('settings.docx.compare_mode', lang)} isDarkMode={isDarkMode}>
                   <SelectField
                     value={formData.docx.compare_mode}
@@ -1013,6 +1013,49 @@ export function SettingsModal({
                   </SelectField>
                 </FieldGroup>
 
+                {formData.docx.compare_mode === 'openxml' && (
+                  <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-amber-800/60 bg-amber-950/30' : 'border-amber-200 bg-amber-50'}`}>
+                    <p className={`text-sm ${isDarkMode ? 'text-amber-200' : 'text-amber-800'}`}>
+                      {t('settings.docx.openxml.warning', lang)}
+                    </p>
+                  </div>
+                )}
+
+                {/* 2. Word/LibreOffice Connection Check */}
+                {(formData.docx.compare_mode === 'word-native' || formData.docx.compare_mode === 'libreoffice-uno') && (
+                  <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/70' : 'border-surface-200 bg-surface-50'}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <p className={`text-sm flex-1 ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
+                        {formData.docx.compare_mode === 'libreoffice-uno'
+                          ? t('settings.docx.libreoffice_check.hint', lang)
+                          : isMac
+                            ? t('settings.docx.word_check.hint', lang)
+                            : t('settings.docx.word_check.hint_non_macos', lang)}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleCompareAccessCheck}
+                        disabled={isCheckingCompareAccess}
+                        className="btn-secondary !text-base !whitespace-nowrap shrink-0"
+                      >
+                        {isCheckingCompareAccess ? (
+                          <Loader2 className="animate-spin" size={14} />
+                        ) : null}
+                        {formData.docx.compare_mode === 'libreoffice-uno'
+                          ? t('settings.docx.libreoffice_check.button', lang)
+                          : t('settings.docx.word_check.button', lang)}
+                      </button>
+                    </div>
+                    {compareAccessStatus && (
+                      <p className={`mt-2 text-sm whitespace-pre-wrap ${compareAccessStatus.ok ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {compareAccessStatus.message}
+                        {compareAccessStatus.details ? `\n${compareAccessStatus.details}` : ''}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. Correction Scope */}
                 <FieldGroup label={t('settings.docx.correction_scope_parts', lang)} isDarkMode={isDarkMode}>
                   <div className="mt-1 flex flex-wrap gap-1.5">
                     {DOCX_CORRECTION_SCOPE_PARTS.map((part) => (
@@ -1031,44 +1074,41 @@ export function SettingsModal({
                   </div>
                 </FieldGroup>
 
-                {formData.docx.compare_mode === 'openxml' && (
-                  <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-amber-800/60 bg-amber-950/30' : 'border-amber-200 bg-amber-50'}`}>
-                    <p className={`text-sm ${isDarkMode ? 'text-amber-200' : 'text-amber-800'}`}>
-                      {t('settings.docx.openxml.warning', lang)}
-                    </p>
-                  </div>
-                )}
+                {/* 4. Restore Non-Breaking Spaces */}
+                <ToggleRow
+                  label={t('settings.docx.restore_non_breaking_spaces', lang)}
+                  checked={formData.docx.restore_non_breaking_spaces}
+                  onChange={() => handleDocxSettingChange('restore_non_breaking_spaces', !formData.docx.restore_non_breaking_spaces)}
+                  isDarkMode={isDarkMode}
+                />
 
-                {(formData.docx.compare_mode === 'word-native' || formData.docx.compare_mode === 'libreoffice-uno') && (
-                  <div className={`rounded-lg border px-4 py-3 ${isDarkMode ? 'border-surface-700 bg-surface-800/70' : 'border-surface-200 bg-surface-50'}`}>
-                    <p className={`text-sm ${isDarkMode ? 'text-surface-300' : 'text-surface-700'}`}>
-                      {formData.docx.compare_mode === 'libreoffice-uno'
-                        ? t('settings.docx.libreoffice_check.hint', lang)
-                        : isMac
-                          ? t('settings.docx.word_check.hint', lang)
-                          : t('settings.docx.word_check.hint_non_macos', lang)}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleCompareAccessCheck}
-                      disabled={isCheckingCompareAccess}
-                      className="btn-secondary !mt-2 !text-base"
-                    >
-                      {isCheckingCompareAccess ? (
-                        <Loader2 className="animate-spin" size={14} />
-                      ) : null}
-                      {formData.docx.compare_mode === 'libreoffice-uno'
-                        ? t('settings.docx.libreoffice_check.button', lang)
-                        : t('settings.docx.word_check.button', lang)}
-                    </button>
-                    {compareAccessStatus && (
-                      <p className={`mt-2 text-sm whitespace-pre-wrap ${compareAccessStatus.ok ? 'text-emerald-600' : 'text-amber-600'}`}>
-                        {compareAccessStatus.message}
-                        {compareAccessStatus.details ? `\n${compareAccessStatus.details}` : ''}
-                      </p>
-                    )}
-                  </div>
-                )}
+                {/* 5. Ignore Trailing Paragraph Whitespace */}
+                <ToggleRow
+                  label={t('settings.docx.ignore_trailing_paragraph_whitespace', lang)}
+                  checked={formData.docx.ignore_trailing_paragraph_whitespace}
+                  onChange={() => handleDocxSettingChange('ignore_trailing_paragraph_whitespace', !formData.docx.ignore_trailing_paragraph_whitespace)}
+                  isDarkMode={isDarkMode}
+                />
+
+                {/* 6. Citation Normalization */}
+                <FieldGroup
+                  label={t('settings.citation_normalization', lang)}
+                  hint={t('settings.citation_normalization.hint', lang)}
+                  isDarkMode={isDarkMode}
+                >
+                  <SelectField
+                    value={formData.docx.citation_normalization}
+                    onChange={(nextValue) => handleDocxSettingChange('citation_normalization', nextValue as DocxSettings['citation_normalization'])}
+                    menuBoundaryRef={modalPanelRef}
+                    isDarkMode={isDarkMode}
+                  >
+                    {CITATION_NORMALIZATION_MODES.map((mode) => (
+                      <option key={mode} value={mode} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
+                        {t(`settings.citation_normalization.${mode}`, lang)}
+                      </option>
+                    ))}
+                  </SelectField>
+                </FieldGroup>
 
                 {/* Batching */}
                 <FieldGroup label={`${t('settings.docx.chunk_size', lang)}: ${formData.docx.chunk_size}`} isDarkMode={isDarkMode}>
@@ -1183,42 +1223,6 @@ export function SettingsModal({
                     </FieldGroup>
                   </div>
                 )}
-
-                {/* Restore Non-Breaking Spaces */}
-                <ToggleRow
-                  label={t('settings.docx.restore_non_breaking_spaces', lang)}
-                  checked={formData.docx.restore_non_breaking_spaces}
-                  onChange={() => handleDocxSettingChange('restore_non_breaking_spaces', !formData.docx.restore_non_breaking_spaces)}
-                  isDarkMode={isDarkMode}
-                />
-
-                {/* Ignore Trailing Paragraph Whitespace */}
-                <ToggleRow
-                  label={t('settings.docx.ignore_trailing_paragraph_whitespace', lang)}
-                  checked={formData.docx.ignore_trailing_paragraph_whitespace}
-                  onChange={() => handleDocxSettingChange('ignore_trailing_paragraph_whitespace', !formData.docx.ignore_trailing_paragraph_whitespace)}
-                  isDarkMode={isDarkMode}
-                />
-
-                {/* Citation Normalization */}
-                <FieldGroup
-                  label={t('settings.citation_normalization', lang)}
-                  hint={t('settings.citation_normalization.hint', lang)}
-                  isDarkMode={isDarkMode}
-                >
-                  <SelectField
-                    value={formData.docx.citation_normalization}
-                    onChange={(nextValue) => handleDocxSettingChange('citation_normalization', nextValue as DocxSettings['citation_normalization'])}
-                    menuBoundaryRef={modalPanelRef}
-                    isDarkMode={isDarkMode}
-                  >
-                    {CITATION_NORMALIZATION_MODES.map((mode) => (
-                      <option key={mode} value={mode} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
-                        {t(`settings.citation_normalization.${mode}`, lang)}
-                      </option>
-                    ))}
-                  </SelectField>
-                </FieldGroup>
 
               </>
             ) : (

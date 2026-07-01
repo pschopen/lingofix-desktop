@@ -755,10 +755,6 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     de: 'Vereinheitlicht Seitenangaben wie „S. 502ff." und „S. 502 ff." im korrigierten Text. „Automatisch" übernimmt die im Text häufigste Variante.',
     en: 'Normalizes page references like "p. 502ff." and "p. 502 ff." in the corrected text. "Automatic" uses the most frequent variant found in the text.',
   },
-  'settings.citation_normalization.off': {
-    de: 'Aus',
-    en: 'Off',
-  },
   'settings.citation_normalization.auto': {
     de: 'Automatisch (häufigste Variante erkennen)',
     en: 'Automatic (detect most frequent variant)',

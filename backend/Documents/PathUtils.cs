@@ -110,7 +110,8 @@ public static class PathUtils
         var directory = Path.GetDirectoryName(inputPath) ?? Directory.GetCurrentDirectory();
         var fileName = Path.GetFileNameWithoutExtension(inputPath);
         var ext = Path.GetExtension(inputPath);
-        return Path.Combine(directory, $"{fileName}{suffix}{ext}");
+        var timestamp = DateTime.Now.ToString("yyyyMMddHHmm");
+        return Path.Combine(directory, $"{fileName}{suffix}_{timestamp}{ext}");
     }
 
     public static string BuildTempCorrectedPath(string inputPath)
