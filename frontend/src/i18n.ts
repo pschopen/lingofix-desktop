@@ -697,6 +697,33 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     sv: 'Bevara hårda mellanslag',
   },
 
+  'settings.docx.ignore_trailing_paragraph_whitespace': {
+    bg: 'Игнорирай празните интервали в края на абзаца',
+    cs: 'Ignorovat mezery na konci odstavce',
+    da: 'Ignorer mellemrum i slutningen af afsnit',
+    de: 'Leerzeichen am Absatzende ignorieren',
+    el: 'Αγνόηση κενών στο τέλος της παραγράφου',
+    en: 'Ignore trailing whitespace at end of paragraph',
+    es: 'Ignorar espacios al final del párrafo',
+    et: 'Eira lõigu lõpu tühikuid',
+    fi: 'Ohita kappaleen lopun välilyönnit',
+    fr: 'Ignorer les espaces de fin de paragraphe',
+    ga: 'Déan neamhshuim de spásanna foirceannail sa pharagraf',
+    hr: 'Zanemari razmake na kraju stavka',
+    hu: 'Bekezdés végén lévő szóközök figyelmen kívül hagyása',
+    it: 'Ignora gli spazi finali del paragrafo',
+    lt: 'Ignoruoti tarpus pastraigos pabaigoje',
+    lv: 'Ignorēt atstarpes rindkopas beigās',
+    mt: 'Injora spazji fil-aħħar tal-paragrafu',
+    nl: 'Witruimte aan einde van alinea negeren',
+    pl: 'Ignoruj spacje na końcu akapitu',
+    pt: 'Ignorar espaços no final do parágrafo',
+    ro: 'Ignoră spațiile de la sfârșitul paragrafului',
+    sk: 'Ignorovať medzery na konci odseku',
+    sl: 'Prezri presledke na koncu odstavka',
+    sv: 'Ignorera mellanslag i slutet av stycket',
+  },
+
   // Settings - Citation normalization
   'settings.citation_normalization': {
     bg: 'Унифициране на цитати (стр. 502 ff.)',

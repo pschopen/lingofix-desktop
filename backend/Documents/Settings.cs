@@ -54,6 +54,7 @@ public sealed class Settings
     public bool EnableParallelization { get; set; }
     public int MaxParallelRequests { get; set; }
     public bool RestoreNonBreakingSpaces { get; set; }
+    public bool IgnoreTrailingParagraphWhitespace { get; set; }
     public CitationNormalizer.NormalizationMode CitationNormalizationMode { get; set; } = CitationNormalizer.NormalizationMode.Auto;
     public CitationNormalizer.CitationStyle? CitationStyle { get; set; }
     public bool? TemperatureSupportedHint { get; set; }
@@ -130,6 +131,7 @@ public sealed class Settings
             EnableParallelization = docx.EnableParallelization,
             MaxParallelRequests = docx.MaxParallelRequests,
             RestoreNonBreakingSpaces = docx.RestoreNonBreakingSpaces,
+            IgnoreTrailingParagraphWhitespace = docx.IgnoreTrailingParagraphWhitespace,
             CitationNormalizationMode = CitationNormalizer.ParseMode(payload.CitationNormalization),
             TemperatureSupportedHint = payload.LlmCapabilityHint?.TemperatureSupported,
             ReasoningEffortSupportedHint = payload.LlmCapabilityHint?.ReasoningEffortSupported
@@ -357,4 +359,7 @@ internal sealed class FrontendDocxSettingsPayload
 
     [JsonPropertyName("restore_non_breaking_spaces")]
     public bool RestoreNonBreakingSpaces { get; set; }
+
+    [JsonPropertyName("ignore_trailing_paragraph_whitespace")]
+    public bool IgnoreTrailingParagraphWhitespace { get; set; }
 }

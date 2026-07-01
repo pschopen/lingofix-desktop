@@ -49,6 +49,7 @@ export interface DocxSettings {
   enable_parallelization: boolean;
   max_parallel_requests: number;
   restore_non_breaking_spaces: boolean;
+  ignore_trailing_paragraph_whitespace: boolean;
 }
 
 export interface EditorSettings {

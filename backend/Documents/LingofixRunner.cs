@@ -378,6 +378,18 @@ public static class LingofixRunner
                 }
             }
 
+            if (settings.IgnoreTrailingParagraphWhitespace && trackCreated)
+            {
+                try
+                {
+                    TrailingWhitespaceRejector.Reject(tempOutputPath, logger);
+                }
+                catch (Exception ex)
+                {
+                    logger.Warning($"Trailing paragraph whitespace rejection skipped: {ex.Message}");
+                }
+            }
+
             try
             {
                 if (useNativeOdtLibreOfficeCompare)

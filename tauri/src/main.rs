@@ -458,6 +458,8 @@ struct DocxSettings {
     max_parallel_requests: i32,
     #[serde(default = "default_true")]
     restore_non_breaking_spaces: bool,
+    #[serde(default)]
+    ignore_trailing_paragraph_whitespace: bool,
 }
 
 impl Default for DocxSettings {
@@ -474,6 +476,7 @@ impl Default for DocxSettings {
             enable_parallelization: true,
             max_parallel_requests: 4,
             restore_non_breaking_spaces: true,
+            ignore_trailing_paragraph_whitespace: false,
         }
     }
 }

@@ -1213,6 +1213,14 @@ export function SettingsModal({
                   isDarkMode={isDarkMode}
                 />
 
+                {/* Ignore Trailing Paragraph Whitespace */}
+                <ToggleRow
+                  label={t('settings.docx.ignore_trailing_paragraph_whitespace', lang)}
+                  checked={formData.docx.ignore_trailing_paragraph_whitespace}
+                  onChange={() => handleDocxSettingChange('ignore_trailing_paragraph_whitespace', !formData.docx.ignore_trailing_paragraph_whitespace)}
+                  isDarkMode={isDarkMode}
+                />
+
               </>
             ) : (
               <>
