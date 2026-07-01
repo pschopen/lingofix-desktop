@@ -34,6 +34,9 @@ export type DocxBatchingPart = DocxDocumentPart;
 export const DOCX_CORRECTION_SCOPE_PARTS = DOCX_DOCUMENT_PARTS;
 export type DocxCorrectionScopePart = DocxDocumentPart;
 
+export const CITATION_NORMALIZATION_MODES = ['off', 'auto', 'with_space', 'without_space'] as const;
+export type CitationNormalizationMode = (typeof CITATION_NORMALIZATION_MODES)[number];
+
 export interface DocxSettings {
   compare_mode: DocxCompareMode;
   chunk_size: number;
@@ -99,6 +102,7 @@ export interface Settings {
   editor: EditorSettings;
   docx: DocxSettings;
   font_size: FontSize;
+  citation_normalization: CitationNormalizationMode;
 }
 
 export interface DocxFile {

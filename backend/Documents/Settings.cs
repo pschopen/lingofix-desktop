@@ -54,6 +54,8 @@ public sealed class Settings
     public bool EnableParallelization { get; set; }
     public int MaxParallelRequests { get; set; }
     public bool RestoreNonBreakingSpaces { get; set; }
+    public CitationNormalizer.NormalizationMode CitationNormalizationMode { get; set; } = CitationNormalizer.NormalizationMode.Auto;
+    public CitationNormalizer.CitationStyle? CitationStyle { get; set; }
     public bool? TemperatureSupportedHint { get; set; }
     public bool? ReasoningEffortSupportedHint { get; set; }
 
@@ -128,6 +130,7 @@ public sealed class Settings
             EnableParallelization = docx.EnableParallelization,
             MaxParallelRequests = docx.MaxParallelRequests,
             RestoreNonBreakingSpaces = docx.RestoreNonBreakingSpaces,
+            CitationNormalizationMode = CitationNormalizer.ParseMode(payload.CitationNormalization),
             TemperatureSupportedHint = payload.LlmCapabilityHint?.TemperatureSupported,
             ReasoningEffortSupportedHint = payload.LlmCapabilityHint?.ReasoningEffortSupported
         };
@@ -300,6 +303,9 @@ internal sealed class FrontendSettingsPayload
 
     [JsonPropertyName("reasoning_effort")]
     public string? ReasoningEffort { get; set; }
+
+    [JsonPropertyName("citation_normalization")]
+    public string? CitationNormalization { get; set; }
 
     [JsonPropertyName("docx")]
     public FrontendDocxSettingsPayload? Docx { get; set; }

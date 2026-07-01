@@ -697,6 +697,54 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     sv: 'Bevara hårda mellanslag',
   },
 
+  // Settings - Citation normalization
+  'settings.citation_normalization': {
+    bg: 'Унифициране на цитати (стр. 502 ff.)',
+    cs: 'Sjednotit citace (S. 502 ff.)',
+    da: 'Ensret citater (s. 502 ff.)',
+    de: 'Zitatschreibweisen vereinheitlichen',
+    el: 'Ενοποίηση παραπομπών (Σ. 502 ff.)',
+    en: 'Unify citations (p. 502 ff.)',
+    es: 'Unificar citas (p. 502 ff.)',
+    et: 'Ühtlusta viited (lk 502 ff.)',
+    fi: 'Yhtenäistä viitteet (s. 502 ff.)',
+    fr: 'Uniformiser les citations (p. 502 ff.)',
+    ga: 'Aontaigh tagairtí (lgh. 502 ff.)',
+    hr: 'Ujednači citate (str. 502 ff.)',
+    hu: 'Hivatkozások egységesítése (o. 502 ff.)',
+    it: 'Unifica citazioni (p. 502 ff.)',
+    lt: 'Vienodinti citatas (p. 502 ff.)',
+    lv: 'Vienkāršot atsauces (502. lpp. ff.)',
+    mt: 'Unifika ċitazzjonijiet (p. 502 ff.)',
+    nl: 'Citaties verenigen (p. 502 ff.)',
+    pl: 'Ujednolicenie cytowań (s. 502 ff.)',
+    pt: 'Uniformizar citações (p. 502 ff.)',
+    ro: 'Unifică citările (p. 502 ff.)',
+    sk: 'Zjednotiť citácie (s. 502 ff.)',
+    sl: 'Poenoti citate (str. 502 ff.)',
+    sv: 'Enhetliga citat (s. 502 ff.)',
+  },
+  'settings.citation_normalization.hint': {
+    de: 'Vereinheitlicht Seitenangaben wie „S. 502ff." und „S. 502 ff." im korrigierten Text. „Automatisch" übernimmt die im Text häufigste Variante.',
+    en: 'Normalizes page references like "p. 502ff." and "p. 502 ff." in the corrected text. "Automatic" uses the most frequent variant found in the text.',
+  },
+  'settings.citation_normalization.off': {
+    de: 'Aus',
+    en: 'Off',
+  },
+  'settings.citation_normalization.auto': {
+    de: 'Automatisch (häufigste Variante erkennen)',
+    en: 'Automatic (detect most frequent variant)',
+  },
+  'settings.citation_normalization.with_space': {
+    de: 'Mit Leerzeichen (S. 502 ff.)',
+    en: 'With space (p. 502 ff.)',
+  },
+  'settings.citation_normalization.without_space': {
+    de: 'Ohne Leerzeichen (S. 502ff.)',
+    en: 'Without space (p. 502ff.)',
+  },
+
   // Settings - Font size
   'settings.font_size': {
     de: 'Schriftgröße',

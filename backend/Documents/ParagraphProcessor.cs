@@ -27,6 +27,7 @@ public static class ParagraphProcessor
         var enableParallel = settings.EnableParallelization;
         var maxParallel = Math.Clamp(settings.MaxParallelRequests, Settings.MinMaxParallelRequests, Settings.MaxMaxParallelRequests);
         var cache = enableCache ? new ConcurrentDictionary<string, string>(StringComparer.Ordinal) : null;
+        var citationStyle = settings.CitationStyle;
 
         var batchItems = new List<ParagraphItem>();
         var batchChars = 0;
@@ -121,7 +122,7 @@ public static class ParagraphProcessor
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, null, cancellationToken);
-                ApplyBatchResult(result, cache, logger);
+                ApplyBatchResult(result, cache, logger, citationStyle);
                 completedBatches++;
                 processedParagraphs += batch.Items.Count;
                 completedChars += batch.Items.Sum(item => item.Original.Length);
@@ -150,7 +151,7 @@ public static class ParagraphProcessor
                     var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, concurrency, cancellationToken);
                     lock (progressLock)
                     {
-                        ApplyBatchResult(result, cache, logger);
+                        ApplyBatchResult(result, cache, logger, citationStyle);
                         completedBatches++;
                         processedParagraphs += batch.Items.Count;
                         completedChars += batch.Items.Sum(item => item.Original.Length);
@@ -374,7 +375,7 @@ public static class ParagraphProcessor
         return corrected;
     }
 
-    private static void ApplyBatchResult(BatchResult result, ConcurrentDictionary<string, string>? cache, IRunLogger? logger)
+    private static void ApplyBatchResult(BatchResult result, ConcurrentDictionary<string, string>? cache, IRunLogger? logger, CitationNormalizer.CitationStyle? citationStyle)
     {
         foreach (var item in result.Batch.Items)
         {
@@ -392,6 +393,11 @@ public static class ParagraphProcessor
             if (string.IsNullOrWhiteSpace(corrected))
             {
                 continue;
+            }
+
+            if (citationStyle is not null)
+            {
+                corrected = CitationNormalizer.Normalize(corrected, citationStyle.Value);
             }
 
             ParagraphTextMapper.ApplyCorrection(item.Paragraph, item.Original, corrected);

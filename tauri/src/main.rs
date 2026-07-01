@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod citations;
+
 use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -325,6 +327,8 @@ const KNOWN_PROVIDERS: [&str; 7] = [
 const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
 const KNOWN_REASONING_EFFORTS: [&str; 3] = ["low", "medium", "high"];
 const KNOWN_FONT_SIZES: [&str; 5] = ["small", "default", "large", "xl", "xxl"];
+const KNOWN_CITATION_NORMALIZATION_MODES: [&str; 4] =
+    ["off", "auto", "with_space", "without_space"];
 const KNOWN_LANGUAGES: [&str; 24] = [
     "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "ga", "hr",
     "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "sk", "sl", "sv",
@@ -368,6 +372,10 @@ fn empty_string() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_citation_normalization() -> String {
+    "auto".to_string()
 }
 
 fn default_batching_parts() -> Vec<String> {
@@ -519,6 +527,8 @@ struct FrontendSettings {
     editor: EditorSettings,
     docx: DocxSettings,
     font_size: String,
+    #[serde(default = "default_citation_normalization")]
+    citation_normalization: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -569,6 +579,7 @@ impl FrontendSettings {
             editor: EditorSettings::default(),
             docx,
             font_size: "default".into(),
+            citation_normalization: default_citation_normalization(),
         }
     }
 }
@@ -1081,6 +1092,15 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         ));
     }
 
+    if !KNOWN_CITATION_NORMALIZATION_MODES
+        .iter()
+        .any(|mode| mode.eq_ignore_ascii_case(settings.citation_normalization.trim()))
+    {
+        return Err(format!(
+            "Invalid settings: citation_normalization is invalid. {reset_hint}"
+        ));
+    }
+
     if settings.temperature.is_nan()
         || settings.temperature.is_infinite()
         || settings.temperature < MIN_TEMPERATURE
@@ -1511,6 +1531,14 @@ async fn correct_text_streaming(
             let _ = app.emit("correction_error", message.clone());
             return Err(message);
         }
+    };
+
+    let final_text = match citations::resolve_style(
+        citations::NormalizationMode::parse(&effective_settings.citation_normalization),
+        &text,
+    ) {
+        Some(style) => citations::normalize_citations(&final_text, style),
+        None => final_text,
     };
 
     write_debug_event(

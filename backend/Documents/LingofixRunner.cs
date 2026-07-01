@@ -147,6 +147,23 @@ public static class LingofixRunner
                     logger.Info($"Correction scope active: {scopedWorkItems.Count}/{coverage.WorkItems.Count} parts enabled.");
                 }
 
+                var citationInputTexts = scopedWorkItems
+                    .SelectMany(item => item.Paragraphs)
+                    .Select(ParagraphTextMapper.ExtractEditableText)
+                    .Where(text => !string.IsNullOrWhiteSpace(text));
+                var resolvedCitationStyle = CitationNormalizer.ResolveStyle(
+                    settings.CitationNormalizationMode,
+                    citationInputTexts);
+                settings.CitationStyle = resolvedCitationStyle;
+                if (resolvedCitationStyle is not null)
+                {
+                    logger.Info($"Citation normalization enabled (style: {resolvedCitationStyle}).");
+                }
+                else
+                {
+                    logger.Info("Citation normalization disabled.");
+                }
+
                 if (coverage.CommentCount > 0)
                 {
                     logger.Info($"Comments: {coverage.CommentCount} entries detected (preserved unchanged; excluded from correction).");
@@ -238,7 +255,9 @@ public static class LingofixRunner
                             BatchMaxParagraphs = settings.BatchMaxParagraphs,
                             EnableCache = settings.EnableCache,
                             EnableParallelization = settings.EnableParallelization,
-                            MaxParallelRequests = settings.MaxParallelRequests
+                            MaxParallelRequests = settings.MaxParallelRequests,
+                            CitationNormalizationMode = settings.CitationNormalizationMode,
+                            CitationStyle = settings.CitationStyle
                         };
                     }
 
