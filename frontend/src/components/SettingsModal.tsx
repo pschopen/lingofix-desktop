@@ -1,11 +1,12 @@
 import { Children, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { invoke } from '../lib/bridge';
-import { X, Loader2, ChevronDown, Plus, Copy, Pencil, Trash2 } from 'lucide-react';
+import { X, Loader2, ChevronDown, Plus, Copy, Pencil, Trash2, Sparkles, Cpu } from 'lucide-react';
 import {
   Settings,
   CustomPromptPreset,
   Provider,
+  PROVIDER_SENTINEL_UNCONFIGURED,
   DocxSettings,
   EditorSettings,
   FontSize,
@@ -40,6 +41,8 @@ interface SettingsModalProps {
   onSave: (settings: Settings) => void;
   onPreviewUiLanguageChange: (language: Language) => void;
   onResetSettings: () => Promise<Settings>;
+  onRerunWizard: () => Promise<void> | void;
+  onConfigureOllama: () => Promise<void> | void;
   onCheckUpdates: () => Promise<{ status: 'update-available' | 'up-to-date' | 'error'; message: string }>;
   lang: Language;
   isDarkMode?: boolean;
@@ -67,6 +70,8 @@ export function SettingsModal({
   onSave,
   onPreviewUiLanguageChange,
   onResetSettings,
+  onRerunWizard,
+  onConfigureOllama,
   onCheckUpdates,
   lang,
   isDarkMode = false,
@@ -915,21 +920,37 @@ export function SettingsModal({
                     </FieldGroup>
                   </div>
 
-                  {/* API Key */}
+                  {/* API Key — or Ollama configuration button */}
                   <div className="md:col-span-2">
-                    <FieldGroup
-                      label={t('settings.api_key', lang)}
-                      required={!isOllama}
-                      isDarkMode={isDarkMode}
-                    >
-                      <input
-                        type="password"
-                        value={formData.api_key || ''}
-                        onChange={handleApiKeyChange}
-                        placeholder={isOllama ? t('settings.api_key.optional', lang) : t('settings.api_key.placeholder', lang)}
-                        className={`input !text-base ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
-                      />
-                    </FieldGroup>
+                    {isOllama ? (
+                      <FieldGroup
+                        label={t('settings.api_key', lang)}
+                        isDarkMode={isDarkMode}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => void onConfigureOllama()}
+                          className="btn-secondary !text-base"
+                        >
+                          <Cpu size={16} />
+                          {t('settings.ollama_configure.button', lang)}
+                        </button>
+                      </FieldGroup>
+                    ) : (
+                      <FieldGroup
+                        label={t('settings.api_key', lang)}
+                        required
+                        isDarkMode={isDarkMode}
+                      >
+                        <input
+                          type="password"
+                          value={formData.api_key || ''}
+                          onChange={handleApiKeyChange}
+                          placeholder={t('settings.api_key.placeholder', lang)}
+                          className={`input !text-base ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
+                        />
+                      </FieldGroup>
+                    )}
                   </div>
                 </div>
 
@@ -1339,15 +1360,25 @@ export function SettingsModal({
                     label={t('settings.app_reset', lang)}
                     isDarkMode={isDarkMode}
                   >
-                    <button
-                      type="button"
-                      onClick={handleResetApp}
-                      disabled={isResettingApp}
-                      className="btn-secondary !text-base"
-                    >
-                      {isResettingApp ? <Loader2 className="animate-spin" size={14} /> : null}
-                      {t('settings.app_reset.button', lang)}
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleResetApp}
+                        disabled={isResettingApp}
+                        className="btn-secondary !text-base"
+                      >
+                        {isResettingApp ? <Loader2 className="animate-spin" size={14} /> : null}
+                        {t('settings.app_reset.button', lang)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void onRerunWizard()}
+                        className="btn-secondary !text-base"
+                      >
+                        <Sparkles size={14} />
+                        {t('settings.rerun_wizard.button', lang)}
+                      </button>
+                    </div>
                     {resetMessage && (
                       <p className={`mt-2 text-sm ${resetMessageIsError ? 'text-amber-600' : 'text-emerald-600'}`}>
                         {resetMessage}
@@ -1636,6 +1667,12 @@ function SelectField({
       return;
     }
 
+    // The "none" sentinel is not a real option — it means "no provider configured yet"
+    // and the user is expected to pick one from the open menu. Don't auto-close.
+    if (value === PROVIDER_SENTINEL_UNCONFIGURED) {
+      return;
+    }
+
     if (!options.some((option) => option.value === value)) {
       setIsOpen(false);
     }
@@ -1661,7 +1698,11 @@ function SelectField({
         onClick={toggleOpen}
         className={`input !text-base !pr-9 text-left cursor-pointer ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100' : ''}`}
       >
-        <span className="block truncate">{selected?.label ?? value}</span>
+        <span className="block truncate">
+          {value === PROVIDER_SENTINEL_UNCONFIGURED
+            ? '—'
+            : (selected?.label ?? value)}
+        </span>
       </button>
       <div className="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none">
         <ChevronDown size={16} className={isDarkMode ? 'text-surface-400' : 'text-surface-500'} />

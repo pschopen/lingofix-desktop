@@ -113,6 +113,190 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     de: 'Lingofix',
     en: 'Lingofix',
   },
+  'onboarding.title': {
+    de: 'Willkommen bei Lingofix',
+    en: 'Welcome to Lingofix',
+  },
+  'onboarding.subtitle': {
+    de: 'Wähle aus, wie du Lingofix verwenden möchtest.',
+    en: 'Choose how you want to use Lingofix.',
+  },
+  'onboarding.choose.local': {
+    de: 'Lokal & privat (kostenlos)',
+    en: 'Local & private (free)',
+  },
+  'onboarding.choose.local.desc': {
+    de: 'Ollama läuft auf deinem Gerät. Keine Daten verlassen deinen Computer.',
+    en: 'Ollama runs on your device. No data leaves your computer.',
+  },
+  'onboarding.choose.cloud': {
+    de: 'Cloud (ggf. kostenpflichtig)',
+    en: 'Cloud (may incur costs)',
+  },
+  'onboarding.choose.cloud.desc': {
+    de: 'Nutze einen API-Key eines Anbieters. Schnell, erfordert Internet.',
+    en: 'Use a provider API key. Fast, requires internet.',
+  },
+  'onboarding.choose.skip': {
+    de: 'Später einrichten',
+    en: 'Set up later',
+  },
+  'onboarding.choose.skip.desc': {
+    de: 'Du kannst den Anbieter jederzeit in den Einstellungen wählen.',
+    en: 'You can choose a provider anytime in Settings.',
+  },
+  'onboarding.back': {
+    de: 'Zurück',
+    en: 'Back',
+  },
+  'onboarding.next': {
+    de: 'Weiter',
+    en: 'Next',
+  },
+  'onboarding.ollama.title': {
+    de: 'Lokale Ollama-Einrichtung',
+    en: 'Local Ollama setup',
+  },
+  'onboarding.ollama.ram.detected': {
+    de: 'Arbeitsspeicher erkannt:',
+    en: 'Detected memory:',
+  },
+  'onboarding.ollama.recommended': {
+    de: 'Empfohlen für dein Gerät',
+    en: 'Recommended for your device',
+  },
+  'onboarding.ollama.model': {
+    de: 'Modell',
+    en: 'Model',
+  },
+  'onboarding.ollama.note': {
+    de: 'Der Ollama-Server wird automatisch im Hintergrund gestartet, sobald du das erste Mal korrigierst.',
+    en: 'The Ollama server starts automatically in the background the first time you correct text.',
+  },
+  'onboarding.ollama.not_installed.title': {
+    de: 'Ollama nicht gefunden',
+    en: 'Ollama not found',
+  },
+  'onboarding.ollama.not_installed.desc': {
+    de: 'Ollama ist auf diesem Gerät nicht installiert. Lingofix kann Ollama automatisch herunterladen und portable im App-Datenverzeichnis ablegen – ohne Admin-Rechte.',
+    en: 'Ollama is not installed on this device. Lingofix can download it automatically and place it portably in the app data directory – no admin rights needed.',
+  },
+  'onboarding.ollama.download_ollama': {
+    de: 'Ollama herunterladen',
+    en: 'Download Ollama',
+  },
+  'onboarding.ollama.install_auto': {
+    de: 'Automatisch herunterladen & installieren',
+    en: 'Download & install automatically',
+  },
+  'onboarding.ollama.install_manual': {
+    de: 'Offizielle Website öffnen',
+    en: 'Open official website',
+  },
+  'onboarding.ollama.installing.downloading': {
+    de: 'Ollama wird heruntergeladen…',
+    en: 'Downloading Ollama…',
+  },
+  'onboarding.ollama.installing.extracting': {
+    de: 'Archiv wird entpackt…',
+    en: 'Extracting archive…',
+  },
+  'onboarding.ollama.installing.verifying': {
+    de: 'Installation wird geprüft…',
+    en: 'Verifying installation…',
+  },
+  'onboarding.ollama.retry': {
+    de: 'Erneut prüfen',
+    en: 'Check again',
+  },
+  'onboarding.ollama.install': {
+    de: 'Modell herunterladen & einrichten',
+    en: 'Download model & set up',
+  },
+  'onboarding.ollama.installing': {
+    de: 'Modell wird heruntergeladen…',
+    en: 'Downloading model…',
+  },
+  'onboarding.ollama.installed_models': {
+    de: 'Installierte Modelle',
+    en: 'Installed models',
+  },
+  'onboarding.ollama.installed_models.placeholder': {
+    de: 'Installiertes Modell auswählen…',
+    en: 'Select an installed model…',
+  },
+  'onboarding.ollama.recommended_section': {
+    de: 'Empfohlen: Ministral 3',
+    en: 'Recommended: Ministral 3',
+  },
+  'onboarding.ollama.recommended_section.hint': {
+    de: 'Ministral 3 ist für diesen Anwendungsfall optimiert. Wähle die Größe passend zu deinem Arbeitsspeicher.',
+    en: 'Ministral 3 is optimized for this use case. Pick a size that matches your RAM.',
+  },
+  'onboarding.ollama.continue': {
+    de: 'Modell verwenden',
+    en: 'Use this model',
+  },
+  'onboarding.ollama.using_system': {
+    de: 'Verwende installiertes Ollama (Port 11434)',
+    en: 'Using system-installed Ollama (port 11434)',
+  },
+  'onboarding.ollama.using_managed': {
+    de: 'Verwende Lingofix-Ollama (Port 11435)',
+    en: 'Using Lingofix-managed Ollama (port 11435)',
+  },
+  'onboarding.cloud.title': {
+    de: 'Cloud-Anbieter verbinden',
+    en: 'Connect a cloud provider',
+  },
+  'onboarding.cloud.desc': {
+    de: 'Klicke auf einen Anbieter, um einen API-Key zu erstellen. Trage den Key dann unten ein.',
+    en: 'Click a provider to create an API key. Then paste it below.',
+  },
+  'onboarding.cloud.get_key': {
+    de: 'Key erstellen',
+    en: 'Get key',
+  },
+  'onboarding.cloud.select': {
+    de: 'Anbieter auswählen',
+    en: 'Select a provider',
+  },
+  'onboarding.cloud.api_key': {
+    de: 'API-Key',
+    en: 'API key',
+  },
+  'onboarding.cloud.test': {
+    de: 'Verbinden & Modelle laden',
+    en: 'Connect & load models',
+  },
+  'onboarding.cloud.testing': {
+    de: 'Verbinde…',
+    en: 'Connecting…',
+  },
+  'onboarding.cloud.models_loaded': {
+    de: 'Modelle geladen',
+    en: 'Models loaded',
+  },
+  'onboarding.cloud.need_one': {
+    de: 'Bitte wähle mindestens einen Anbieter aus und gib den API-Key ein.',
+    en: 'Please select at least one provider and enter its API key.',
+  },
+  'onboarding.done.title': {
+    de: 'Einrichtung abgeschlossen',
+    en: 'Setup complete',
+  },
+  'onboarding.done.desc': {
+    de: 'Lingofix ist einsatzbereit. Du kannst die Einstellungen jederzeit unter „Einstellungen“ ändern.',
+    en: 'Lingofix is ready to use. You can change the settings any time in “Settings”.',
+  },
+  'onboarding.done.finish': {
+    de: 'Jetzt loslegen',
+    en: 'Get started',
+  },
+  'onboarding.error': {
+    de: 'Ein Fehler ist aufgetreten',
+    en: 'An error occurred',
+  },
   'settings.button': {
     de: 'Einstellungen',
     en: 'Settings',
@@ -205,6 +389,18 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     de: 'Bitte geben Sie mindestens 3 Zeichen ein.',
     en: 'Please enter at least 3 characters.',
   },
+  'app.banner.no_provider.title': {
+    de: 'Kein Anbieter konfiguriert',
+    en: 'No provider configured',
+  },
+  'app.banner.no_provider.body': {
+    de: 'Bitte konfiguriere einen Anbieter in den Einstellungen, um die Korrektur zu starten.',
+    en: 'Please configure a provider in Settings to start correcting.',
+  },
+  'app.banner.no_provider.action': {
+    de: 'Einstellungen öffnen',
+    en: 'Open settings',
+  },
   'error.close': {
     de: 'Schließen',
     en: 'Close',
@@ -244,8 +440,12 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     en: 'Enter your custom API URL',
   },
   'settings.api_key': {
-    de: 'API Key',
-    en: 'API Key',
+    de: 'API-Schlüssel',
+    en: 'API key',
+  },
+  'settings.ollama_configure.button': {
+    de: 'Ollama konfigurieren',
+    en: 'Configure Ollama',
   },
   'settings.api_key.required': {
     de: 'Erforderlich',
@@ -832,6 +1032,18 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
   'settings.app_reset.failed': {
     de: 'App konnte nicht zurückgesetzt werden',
     en: 'Could not reset app',
+  },
+  'settings.rerun_wizard': {
+    de: 'Einrichtungs-Assistent',
+    en: 'Setup wizard',
+  },
+  'settings.rerun_wizard.hint': {
+    de: 'Öffnet den Einrichtungs-Assistenten erneut, um Anbieter und Modell neu zu wählen.',
+    en: 'Reopens the setup wizard to choose provider and model again.',
+  },
+  'settings.rerun_wizard.button': {
+    de: 'Einrichtung starten',
+    en: 'Start setup',
   },
   'settings.system_paths.hint': {
     de: 'Temp-Ordner, settings.json und debug.log direkt im Dateiexplorer öffnen.',

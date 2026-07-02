@@ -3,6 +3,10 @@ import type { Language } from './i18n';
 export const PROVIDERS = ['openai', 'ollama', 'openrouter', 'huggingface', 'google', 'custom', 'mistral'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
+export const PROVIDER_SENTINEL_UNCONFIGURED = 'none' as const;
+export type UnconfiguredProvider = typeof PROVIDER_SENTINEL_UNCONFIGURED;
+export type AnyProvider = Provider | UnconfiguredProvider;
+
 export const PROVIDER_DEFAULT_URLS: Record<Provider, string> = {
   openai: 'https://api.openai.com/v1',
   ollama: 'http://localhost:11434',
@@ -15,12 +19,36 @@ export const PROVIDER_DEFAULT_URLS: Record<Provider, string> = {
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
   openai: 'OpenAI',
-  ollama: 'Ollama',
+  ollama: 'Ollama (lokal)',
   openrouter: 'Openrouter',
   huggingface: 'Hugging Face',
   google: 'Google AI Studio',
   mistral: 'Mistral',
   custom: 'Custom',
+};
+
+export const PROVIDER_API_KEY_URLS: Partial<Record<Provider, string>> = {
+  openai: 'https://platform.openai.com/api-keys',
+  mistral: 'https://console.mistral.ai/api-keys',
+  openrouter: 'https://openrouter.ai/keys',
+  google: 'https://aistudio.google.com/app/apikey',
+  huggingface: 'https://huggingface.co/settings/tokens',
+};
+
+export const ONBOARDING_PROVIDERS: Provider[] = ['openai', 'mistral', 'openrouter', 'google', 'huggingface'];
+
+export const ONBOARDING_MODELS: { tag: string; label: string }[] = [
+  { tag: 'ministral-3:3b', label: 'Ministral 3 (3B)' },
+  { tag: 'ministral-3:8b', label: 'Ministral 3 (8B)' },
+  { tag: 'ministral-3:14b', label: 'Ministral 3 (14B)' },
+];
+
+export const DEFAULT_MODELS_FALLBACK: Partial<Record<Provider, string>> = {
+  openai: 'gpt-4o-mini',
+  mistral: 'mistral-small-latest',
+  openrouter: 'openai/gpt-4o-mini',
+  google: 'gemini-2.0-flash',
+  huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
 };
 
 export const DOCX_COMPARE_MODES = ['openxml', 'word-native', 'libreoffice-uno'] as const;
@@ -84,7 +112,7 @@ export interface CustomPromptPreset {
 }
 
 export interface Settings {
-  provider: Provider;
+  provider: AnyProvider;
   api_url: string;
   api_key: string | null;
   model: string;
@@ -104,6 +132,7 @@ export interface Settings {
   editor: EditorSettings;
   docx: DocxSettings;
   font_size: FontSize;
+  setup_completed?: boolean | null;
 }
 
 export interface DocxFile {

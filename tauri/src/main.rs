@@ -19,10 +19,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration, timeout};
 use uuid::Uuid;
 
 const MAX_OFFICE_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
@@ -39,6 +39,814 @@ const REASONING_UNSUPPORTED_ERROR_CODE: &str = "REASONING_UNSUPPORTED";
 #[cfg(target_os = "macos")]
 const AUTOMATION_SETTINGS_PATH: &str = "System Settings > Privacy & Security > Automation";
 const LIBREOFFICE_DOWNLOAD_URL: &str = "https://www.libreoffice.org/download/download-libreoffice/";
+const MANAGED_OLLAMA_PORT: u16 = 11435;
+const MANAGED_OLLAMA_URL: &str = "http://127.0.0.1:11435";
+const OLLAMA_READY_TIMEOUT_MS: u64 = 30_000;
+const OLLAMA_PROBE_TIMEOUT_MS: u64 = 600;
+const BUNDLED_OLLAMA_BASENAME: &str = "lingofix-ollama";
+const OLLAMA_DOWNLOAD_PAGE: &str = "https://ollama.com/download";
+const OLLAMA_REGISTRY_BASE: &str = "https://ollama.com/library/ministral-3";
+const OLLAMA_LATEST_RELEASE_API: &str = "https://api.github.com/repos/ollama/ollama/releases/latest";
+const INSTALLED_OLLAMA_DIRNAME: &str = "ollama";
+
+const ONBOARDING_MODELS: [(&str, &str); 3] = [
+    ("ministral-3:3b", "Ministral 3 (3B)"),
+    ("ministral-3:8b", "Ministral 3 (8B)"),
+    ("ministral-3:14b", "Ministral 3 (14B)"),
+];
+
+fn default_onboarding_model_for_ram(ram_bytes: u64) -> &'static str {
+    let gib = (ram_bytes as f64) / 1024.0 / 1024.0 / 1024.0;
+    if gib >= 16.0 {
+        "ministral-3:14b"
+    } else if gib >= 8.0 {
+        "ministral-3:8b"
+    } else {
+        "ministral-3:3b"
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OnboardingModelOption {
+    tag: String,
+    label: String,
+    recommended: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OllamaStatus {
+    managed_url: String,
+    ollama_url: String,
+    ollama_source: String,
+    installed_available: bool,
+    bundled_available: bool,
+    system_available: bool,
+    running_managed: bool,
+    running_at_default: bool,
+    download_url: String,
+    registry_url: String,
+    models: Vec<OnboardingModelOption>,
+    recommended_model: String,
+    total_ram_bytes: u64,
+    installed_models: Vec<String>,
+}
+
+#[derive(Default)]
+struct OllamaRuntimeState {
+    child: Mutex<Option<tokio::process::Child>>,
+}
+
+fn installed_ollama_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join(INSTALLED_OLLAMA_DIRNAME))
+}
+
+fn installed_ollama_path(app: &AppHandle) -> Option<PathBuf> {
+    let dir = installed_ollama_dir(app)?;
+    let exe = if cfg!(target_os = "windows") { "ollama.exe" } else { "ollama" };
+    let candidate = dir.join(exe);
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn bundled_ollama_path(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let ext = if cfg!(target_os = "windows") {
+            ".exe"
+        } else {
+            ""
+        };
+        let target = if cfg!(target_os = "macos") {
+            format!("{}-{}{}", BUNDLED_OLLAMA_BASENAME, std::env::consts::ARCH, ext)
+        } else {
+            format!("{}-{}{}", BUNDLED_OLLAMA_BASENAME, std::env::consts::ARCH, ext)
+        };
+        let candidates = [
+            resource_dir.join("binaries").join(&target),
+            resource_dir.join(&target),
+            resource_dir.join(format!("{}{}", BUNDLED_OLLAMA_BASENAME, ext)),
+        ];
+        for cand in candidates.iter() {
+            if cand.exists() {
+                return Some(cand.clone());
+            }
+        }
+    }
+    None
+}
+
+fn system_ollama_path() -> Option<PathBuf> {
+    if cfg!(target_os = "windows") {
+        if let Ok(out) = std::process::Command::new("where").arg("ollama.exe").output() {
+            let path_str = String::from_utf8_lossy(&out.stdout);
+            if let Some(first) = path_str.lines().next() {
+                let p = PathBuf::from(first.trim().to_string());
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    } else {
+        if let Ok(out) = std::process::Command::new("which").arg("ollama").output() {
+            let path_str = String::from_utf8_lossy(&out.stdout);
+            if let Some(first) = path_str.lines().next() {
+                let p = PathBuf::from(first.trim().to_string());
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn resolve_managed_ollama_binary(app: &AppHandle) -> Option<PathBuf> {
+    if let Some(installed) = installed_ollama_path(app) {
+        return Some(installed);
+    }
+    bundled_ollama_path(app)
+}
+
+async fn probe_ollama(url: &str) -> bool {
+    let client = reqwest::Client::new();
+    let endpoint = format!("{}/api/tags", url.trim_end_matches('/'));
+    match timeout(
+        Duration::from_millis(OLLAMA_PROBE_TIMEOUT_MS),
+        client.get(&endpoint).send(),
+    )
+    .await
+    {
+        Ok(Ok(resp)) => resp.status().is_success(),
+        _ => false,
+    }
+}
+
+async fn list_ollama_models(url: &str) -> Vec<String> {
+    let client = reqwest::Client::new();
+    let endpoint = format!("{}/api/tags", url.trim_end_matches('/'));
+    let resp = match timeout(
+        Duration::from_millis(OLLAMA_READY_TIMEOUT_MS),
+        client.get(&endpoint).send(),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        _ => return Vec::new(),
+    };
+    if !resp.status().is_success() {
+        return Vec::new();
+    }
+    let body: Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    body.get("models")
+        .and_then(|m| m.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn wait_for_ollama(url: &str) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_millis(OLLAMA_READY_TIMEOUT_MS);
+    while std::time::Instant::now() < deadline {
+        if probe_ollama(url).await {
+            return true;
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+    false
+}
+
+fn ollama_url_port(api_url: &str) -> Option<u16> {
+    let normalized = api_url.trim().to_ascii_lowercase();
+    if normalized.contains(":11434") {
+        Some(11434)
+    } else if normalized.contains(&format!(":{}", MANAGED_OLLAMA_PORT)) {
+        Some(MANAGED_OLLAMA_PORT)
+    } else {
+        None
+    }
+}
+
+fn determine_ollama_url(
+    running_at_default: bool,
+    system_available: bool,
+    running_managed: bool,
+    managed_available: bool,
+) -> (&'static str, &'static str) {
+    if running_at_default || system_available {
+        ("http://localhost:11434", "system")
+    } else if running_managed || managed_available {
+        (MANAGED_OLLAMA_URL, "managed")
+    } else {
+        (MANAGED_OLLAMA_URL, "managed")
+    }
+}
+
+async fn ensure_ollama_running(
+    app: &AppHandle,
+    state: &OllamaRuntimeState,
+    url: &str,
+) -> Result<(), String> {
+    if probe_ollama(url).await {
+        return Ok(());
+    }
+
+    let port = ollama_url_port(url).ok_or_else(|| format!("Unknown Ollama URL: {url}"))?;
+
+    let binary = if port == 11434 {
+        system_ollama_path().ok_or_else(|| {
+            "System Ollama is not available. Please install Ollama or let Lingofix download it."
+                .to_string()
+        })?
+    } else {
+        resolve_managed_ollama_binary(app).ok_or_else(|| {
+            "Managed Ollama is not installed. Open Settings to download Ollama or choose an API provider."
+                .to_string()
+        })?
+    };
+
+    #[cfg(unix)]
+    {
+        if let Ok(meta) = std::fs::metadata(&binary) {
+            let mut perm = meta.permissions();
+            perm.set_mode(0o755);
+            let _ = std::fs::set_permissions(&binary, perm);
+        }
+    }
+
+    let host_addr = format!("127.0.0.1:{}", port);
+    let mut cmd = Command::new(&binary);
+    if let Some(parent) = binary.parent() {
+        cmd.current_dir(parent);
+    }
+    cmd.arg("serve");
+    cmd.env("OLLAMA_HOST", host_addr.clone());
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.kill_on_drop(true);
+    let child = cmd.spawn().map_err(|e| format!("failed to start Ollama: {e}"))?;
+
+    {
+        let mut guard = state.child.lock().await;
+        *guard = Some(child);
+    }
+
+    write_debug_event(
+        app,
+        "ollama.serve.start",
+        json!({
+            "binary": binary.to_string_lossy(),
+            "host": host_addr
+        }),
+    );
+
+    if !wait_for_ollama(url).await {
+        let _ = app.emit(
+            "ollama_error",
+            "Ollama did not become ready in time. Please make sure Ollama is installed.",
+        );
+        return Err("Ollama did not become ready in time".to_string());
+    }
+
+    Ok(())
+}
+
+fn is_local_ollama_url(api_url: &str) -> bool {
+    ollama_url_port(api_url).is_some()
+}
+
+async fn ensure_ollama_if_managed(
+    app: &AppHandle,
+    state: &OllamaRuntimeState,
+    api_url: &str,
+) -> Result<(), String> {
+    if is_local_ollama_url(api_url) {
+        ensure_ollama_running(app, state, api_url).await?;
+    }
+    Ok(())
+}
+
+
+fn total_ram_bytes() -> u64 {
+    use sysinfo::System;
+    let mut sys = System::new_all();
+    sys.refresh_memory();
+    sys.total_memory()
+}
+
+#[tauri::command]
+async fn detect_system_ram() -> Result<u64, String> {
+    Ok(total_ram_bytes())
+}
+
+#[tauri::command]
+async fn ollama_status(
+    app: AppHandle,
+) -> Result<OllamaStatus, String> {
+    let ram = total_ram_bytes();
+    let recommended = default_onboarding_model_for_ram(ram).to_string();
+    let models = ONBOARDING_MODELS
+        .iter()
+        .map(|(tag, label)| OnboardingModelOption {
+            tag: tag.to_string(),
+            label: label.to_string(),
+            recommended: *tag == recommended,
+        })
+        .collect::<Vec<_>>();
+
+    let installed_available = installed_ollama_path(&app).is_some();
+    let bundled_available = bundled_ollama_path(&app).is_some();
+    let system_available = system_ollama_path().is_some();
+    let running_managed = probe_ollama(MANAGED_OLLAMA_URL).await;
+    let running_at_default = probe_ollama("http://localhost:11434").await;
+    let managed_available = installed_available || bundled_available;
+
+    let (ollama_url, ollama_source) = determine_ollama_url(
+        running_at_default,
+        system_available,
+        running_managed,
+        managed_available,
+    );
+
+    let installed_models = if running_at_default {
+        list_ollama_models("http://localhost:11434").await
+    } else if running_managed {
+        list_ollama_models(MANAGED_OLLAMA_URL).await
+    } else {
+        Vec::new()
+    };
+
+    Ok(OllamaStatus {
+        managed_url: ollama_url.to_string(),
+        ollama_url: ollama_url.to_string(),
+        ollama_source: ollama_source.to_string(),
+        installed_available,
+        bundled_available,
+        system_available,
+        running_managed,
+        running_at_default,
+        download_url: OLLAMA_DOWNLOAD_PAGE.to_string(),
+        registry_url: OLLAMA_REGISTRY_BASE.to_string(),
+        models,
+        recommended_model: recommended,
+        total_ram_bytes: ram,
+        installed_models,
+    })
+}
+
+#[tauri::command]
+async fn ollama_pull_model(
+    app: AppHandle,
+    state: State<'_, OllamaRuntimeState>,
+    model: String,
+    url: Option<String>,
+) -> Result<(), String> {
+    let resolved_url = url.unwrap_or_else(|| MANAGED_OLLAMA_URL.to_string());
+
+    if !is_local_ollama_url(&resolved_url) {
+        return Err(format!("Refusing to pull into non-local Ollama URL: {resolved_url}"));
+    }
+
+    ensure_ollama_running(&app, state.inner(), &resolved_url).await?;
+
+    write_debug_event(
+        &app,
+        "ollama.pull.start",
+        json!({ "model": model.as_str(), "url": resolved_url.as_str() }),
+    );
+
+    let endpoint = format!("{}/api/pull", resolved_url.trim_end_matches('/'));
+    // No request-level timeout: streaming downloads of multi-GB models can
+    // take much longer than a few minutes, and we don't want reqwest to kill
+    // the connection mid-pull.
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_millis(OLLAMA_READY_TIMEOUT_MS))
+        .build()
+        .map_err(|e| format!("could not build HTTP client: {e}"))?;
+
+    let resp = client
+        .post(&endpoint)
+        .json(&json!({ "model": model.as_str(), "stream": true }))
+        .send()
+        .await
+        .map_err(|e| format!("pull request failed: {e}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        let message = format!("Ollama pull failed (HTTP {}): {}", status, body);
+        write_debug_event(
+            &app,
+            "ollama.pull.error",
+            json!({ "model": model, "error": truncate_debug_message(&message, 800) }),
+        );
+        let _ = app.emit("ollama_error", message.clone());
+        return Err(message);
+    }
+
+    let mut stream = resp.bytes_stream();
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut last_err = String::new();
+    let mut success_seen = false;
+
+    // Overall-progress tracking across all blobs in a multi-file model
+    let mut finished_bytes: u64 = 0;
+    let mut current_digest: Option<String> = None;
+    let mut current_total: u64 = 0;
+    let mut current_completed: u64 = 0;
+    let mut last_overall_percent: u8 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("pull stream error: {e}"))?;
+        buffer.extend_from_slice(&chunk);
+        loop {
+            let newline_pos = match buffer.iter().position(|&b| b == b'\n') {
+                Some(p) => p,
+                None => break,
+            };
+            let line_bytes: Vec<u8> = buffer.drain(..=newline_pos).collect();
+            let line = String::from_utf8_lossy(&line_bytes);
+            let line = line.trim_end_matches('\n').trim_end_matches('\r');
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<Value>(line) {
+                Ok(value) => {
+                    let mut payload = json!({ "model": model.as_str() });
+
+                    if let Some(s) = value.get("status").and_then(|v| v.as_str()) {
+                        payload["status"] = json!(s);
+                        if s == "success" {
+                            success_seen = true;
+                            // Account the active blob as fully downloaded on success
+                            current_completed = current_total;
+                        }
+                    }
+
+                    let digest = value
+                        .get("digest")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let total = value.get("total").and_then(|v| v.as_u64());
+                    let completed = value.get("completed").and_then(|v| v.as_u64());
+
+                    if let (Some(d), Some(t)) = (&digest, total) {
+                        if current_digest.as_deref() != Some(d.as_str()) {
+                            // New blob starting — previous blob is finished
+                            if let Some(prev_total) = (current_total > 0
+                                && current_digest.is_some())
+                                .then_some(current_total)
+                            {
+                                finished_bytes = finished_bytes.saturating_add(prev_total);
+                            }
+                            current_digest = Some(d.clone());
+                            current_total = t;
+                            current_completed = completed.unwrap_or(0);
+                        } else if let Some(c) = completed {
+                            current_completed = c;
+                        }
+                    } else if let Some(c) = completed {
+                        // Update without changing blob identity (e.g. final ticks)
+                        current_completed = c;
+                    }
+
+                    // Per-blob fields for the frontend (informational)
+                    if let Some(t) = total {
+                        payload["total"] = json!(t);
+                    }
+                    if let Some(c) = completed {
+                        payload["completed"] = json!(c);
+                    }
+                    if let (Some(t), Some(c)) = (total, completed) {
+                        if t > 0 {
+                            let blob_percent =
+                                ((c as f64 / t as f64) * 100.0).min(100.0) as u8;
+                            payload["blobPercent"] = json!(blob_percent);
+                        }
+                    }
+
+                    // Compute overall percent across all finished + current blobs
+                    let model_total = finished_bytes.saturating_add(current_total);
+                    let model_completed = finished_bytes.saturating_add(current_completed);
+                    if model_total > 0 {
+                        let percent =
+                            ((model_completed as f64 / model_total as f64) * 100.0).min(100.0)
+                                as u8;
+                        // Monotonic: never let the bar drop when new blobs appear
+                        let percent = percent.max(last_overall_percent);
+                        last_overall_percent = percent;
+                        payload["percent"] = json!(percent);
+                    } else {
+                        // No byte info yet — preserve last known overall percent
+                        payload["percent"] = json!(last_overall_percent);
+                    }
+                    // Always include overall byte counters for the UI
+                    payload["modelTotal"] = json!(model_total);
+                    payload["modelCompleted"] = json!(model_completed);
+
+                    if let Some(err) = value.get("error").and_then(|v| v.as_str()) {
+                        last_err = err.to_string();
+                    }
+                    let _ = app.emit("ollama_pull_progress", payload);
+                }
+                Err(_) => {
+                    // Not JSON — ignore silently, server streams NDJSON only
+                }
+            }
+        }
+    }
+
+    // On stream end without explicit success, treat current blob as finished
+    if !success_seen && current_total > 0 && current_completed >= current_total {
+        let _ = finished_bytes.saturating_add(current_total);
+    }
+
+    if !last_err.is_empty() {
+        write_debug_event(
+            &app,
+            "ollama.pull.error",
+            json!({ "model": model, "error": truncate_debug_message(&last_err, 800) }),
+        );
+        let _ = app.emit("ollama_error", last_err.clone());
+        return Err(last_err);
+    }
+
+    if !success_seen {
+        let message = "Ollama pull finished without success status".to_string();
+        write_debug_event(
+            &app,
+            "ollama.pull.error",
+            json!({ "model": model, "error": message.as_str() }),
+        );
+        let _ = app.emit("ollama_error", message.clone());
+        return Err(message);
+    }
+
+    write_debug_event(&app, "ollama.pull.success", json!({ "model": model }));
+    let _ = app.emit("ollama_pull_complete", model.clone());
+    Ok(())
+}
+
+#[tauri::command]
+fn open_ollama_download_page() -> Result<(), String> {
+    open_external_url(OLLAMA_DOWNLOAD_PAGE.to_string())
+}
+
+#[tauri::command]
+fn open_ollama_registry_page() -> Result<(), String> {
+    open_external_url(OLLAMA_REGISTRY_BASE.to_string())
+}
+
+fn ollama_asset_name() -> Option<String> {
+    let arch = std::env::consts::ARCH;
+    Some(match (std::env::consts::OS, arch) {
+        ("macos", _) => "ollama-darwin.tgz".to_string(),
+        ("linux", "x86_64") => "ollama-linux-amd64.tar.zst".to_string(),
+        ("linux", "aarch64") => "ollama-linux-arm64.tar.zst".to_string(),
+        ("windows", "x86_64") => "ollama-windows-amd64.zip".to_string(),
+        ("windows", "aarch64") => "ollama-windows-arm64.zip".to_string(),
+        _ => return None,
+    })
+}
+
+async fn resolve_ollama_download_url(asset_name: &str) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("lingofix-desktop")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(OLLAMA_LATEST_RELEASE_API)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("failed to query Ollama releases: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Ollama releases request failed (HTTP {})", resp.status()));
+    }
+    let value: Value = resp.json().await.map_err(|e| format!("invalid release JSON: {e}"))?;
+    let assets = value
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "release has no assets".to_string())?;
+    for asset in assets {
+        let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if name == asset_name {
+            if let Some(url) = asset.get("browser_download_url").and_then(|v| v.as_str()) {
+                return Ok(url.to_string());
+            }
+        }
+    }
+    Err(format!("asset '{asset_name}' not found in latest release"))
+}
+
+fn find_ollama_binary_in(dir: &Path) -> Option<PathBuf> {
+    let exe = if cfg!(target_os = "windows") { "ollama.exe" } else { "ollama" };
+    let target = dir.join(exe);
+    if target.is_file() {
+        return Some(target);
+    }
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.eq_ignore_ascii_case(exe) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    if cfg!(target_os = "windows") {
+        let out = std::process::Command::new("tar")
+            .arg("-xf")
+            .arg(archive)
+            .arg("-C")
+            .arg(dest)
+            .output()
+            .map_err(|e| format!("tar not available: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("extraction failed: {}", String::from_utf8_lossy(&out.stderr)));
+        }
+        return Ok(());
+    }
+
+    let mut cmd = std::process::Command::new("tar");
+    cmd.arg("-xf").arg(archive).arg("-C").arg(dest);
+    if let Ok(out) = cmd.output() {
+        if out.status.success() {
+            return Ok(());
+        }
+    }
+
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("zstd -dc '{}' | tar -xf - -C '{}'", archive.display(), dest.display()))
+        .output()
+        .map_err(|e| format!("extraction failed (zstd): {e}"))?;
+    if !out.status.success() {
+        return Err(format!("extraction failed: {}", String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_ollama(app: AppHandle) -> Result<(), String> {
+    let asset_name = ollama_asset_name()
+        .ok_or_else(|| "Ollama is not available for this platform".to_string())?;
+    let download_url = resolve_ollama_download_url(&asset_name).await?;
+
+    let install_dir = installed_ollama_dir(&app)
+        .ok_or_else(|| "could not resolve app config directory".to_string())?;
+    std::fs::create_dir_all(&install_dir).map_err(|e| e.to_string())?;
+
+    let temp_dir = std::env::temp_dir().join(format!("lingofix-ollama-install-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+    let archive_path = temp_dir.join(&asset_name);
+
+    write_debug_event(
+        &app,
+        "ollama.install.download.start",
+        json!({ "asset": asset_name.as_str(), "url": download_url.as_str() }),
+    );
+    let _ = app.emit("ollama_install_progress", json!({ "phase": "downloading", "percent": 0 }));
+
+    let client = reqwest::Client::builder()
+        .user_agent("lingofix-desktop")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client.get(&download_url).send().await.map_err(|e| format!("download request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("download failed (HTTP {})", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+    let mut file = tokio::fs::File::create(&archive_path)
+        .await
+        .map_err(|e| format!("could not create temp file: {e}"))?;
+    let mut stream = resp.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("download stream error: {e}"))?;
+        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        if last_emit.elapsed() >= Duration::from_millis(200) {
+            let percent = if total > 0 { ((downloaded as f64 / total as f64) * 100.0) as u8 } else { 0 };
+            let _ = app.emit("ollama_install_progress", json!({
+                "phase": "downloading",
+                "percent": percent,
+                "downloaded": downloaded,
+                "total": total,
+            }));
+            last_emit = std::time::Instant::now();
+        }
+    }
+    file.flush().await.map_err(|e| e.to_string())?;
+    drop(file);
+
+    let _ = app.emit("ollama_install_progress", json!({ "phase": "extracting", "percent": 100 }));
+    write_debug_event(&app, "ollama.install.extract.start", json!({ "archive": archive_path.to_string_lossy() }));
+
+    let _ = std::fs::remove_dir_all(&install_dir);
+    std::fs::create_dir_all(&install_dir).map_err(|e| e.to_string())?;
+
+    let join_result = tokio::task::spawn_blocking({
+        let archive_path = archive_path.clone();
+        let install_dir = install_dir.clone();
+        move || extract_archive(&archive_path, &install_dir)
+    })
+    .await;
+    match join_result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err(e);
+        }
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err(format!("extraction task failed: {e}"));
+        }
+    }
+
+    let target_path = find_ollama_binary_in(&install_dir)
+        .ok_or_else(|| "extracted archive did not contain an ollama binary".to_string())?;
+
+    #[cfg(unix)]
+    {
+        if let Ok(meta) = std::fs::metadata(&target_path) {
+            let mut perm = meta.permissions();
+            perm.set_mode(0o755);
+            let _ = std::fs::set_permissions(&target_path, perm);
+        }
+        if let Ok(entries) = std::fs::read_dir(&install_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Ok(meta) = std::fs::metadata(&path) {
+                    if meta.is_file() {
+                        let mut perm = meta.permissions();
+                        if perm.mode() & 0o111 != 0 {
+                            perm.set_mode(0o755);
+                            let _ = std::fs::set_permissions(&path, perm);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("xattr")
+            .arg("-dr")
+            .arg("com.apple.quarantine")
+            .arg(&install_dir)
+            .status();
+    }
+
+    let _ = app.emit("ollama_install_progress", json!({ "phase": "verifying", "percent": 100 }));
+    let verify = Command::new(&target_path)
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .current_dir(&install_dir)
+        .output()
+        .await;
+    match verify {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            let msg = format!("ollama --version failed: {}", String::from_utf8_lossy(&out.stdout));
+            write_debug_event(&app, "ollama.install.verify.failed", json!({ "error": msg }));
+            return Err(msg);
+        }
+        Err(e) => {
+            return Err(format!("could not execute downloaded ollama: {e}"));
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    write_debug_event(&app, "ollama.install.complete", json!({ "path": target_path.to_string_lossy() }));
+    let _ = app.emit("ollama_install_complete", json!({ "path": target_path.to_string_lossy() }));
+    Ok(())
+}
 
 const DEFAULT_CUSTOM_PROMPT_DE: &str = "Korrigiere den folgenden Text nach den Duden-Regeln. Korrigiere nur Fehler, alles andere lässt Du unverändert!";
 const DEFAULT_SYSTEM_PROMPT_EN: &str =
@@ -316,7 +1124,7 @@ fn detect_default_compare_mode() -> String {
     }
 }
 
-const KNOWN_PROVIDERS: [&str; 7] = [
+const KNOWN_PROVIDERS: [&str; 8] = [
     "openai",
     "ollama",
     "openrouter",
@@ -324,6 +1132,7 @@ const KNOWN_PROVIDERS: [&str; 7] = [
     "google",
     "custom",
     "mistral",
+    "none",
 ];
 const KNOWN_COMPARE_MODES: [&str; 3] = ["openxml", "word-native", "libreoffice-uno"];
 const KNOWN_REASONING_EFFORTS: [&str; 3] = ["low", "medium", "high"];
@@ -373,6 +1182,10 @@ fn empty_string() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_setup_completed_true() -> Option<bool> {
+    Some(true)
 }
 
 fn default_citation_normalization() -> String {
@@ -534,6 +1347,8 @@ struct FrontendSettings {
     editor: EditorSettings,
     docx: DocxSettings,
     font_size: String,
+    #[serde(default = "default_setup_completed_true")]
+    setup_completed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -584,6 +1399,7 @@ impl FrontendSettings {
             editor: EditorSettings::default(),
             docx,
             font_size: "default".into(),
+            setup_completed: None,
         }
     }
 }
@@ -970,7 +1786,12 @@ async fn load_settings(app: AppHandle, locale: Option<String>) -> Result<Fronten
 
 fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
     let reset_hint = "Open Settings > Advanced and use 'Reset app'.";
-    canonical_provider(&settings.provider)?;
+    let normalized = canonical_provider(&settings.provider)?;
+
+    // "none" means the user skipped the wizard — api_url/model can be empty.
+    if normalized == "none" {
+        return Ok(());
+    }
 
     if settings.api_url.trim().is_empty() {
         return Err(format!(
@@ -1072,7 +1893,13 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         ));
     }
 
-    if settings.provider_keys.len() != KNOWN_PROVIDERS.len() {
+    // "none" is the wizard-skip sentinel and is not required to be present
+    // in provider_keys. Exclude it from the required-length check.
+    let required_provider_count = KNOWN_PROVIDERS
+        .iter()
+        .filter(|p| **p != "none")
+        .count();
+    if settings.provider_keys.len() < required_provider_count {
         return Err(format!(
             "Invalid settings: provider_keys is incomplete. {reset_hint}"
         ));
@@ -1354,10 +2181,16 @@ async fn reset_settings(
 #[tauri::command]
 async fn fetch_models(
     app: AppHandle,
+    ollama_state: State<'_, OllamaRuntimeState>,
     api_url: String,
     api_key: Option<String>,
     provider: String,
 ) -> Result<Vec<String>, String> {
+    if provider.eq_ignore_ascii_case("ollama") {
+        if let Err(err) = ensure_ollama_if_managed(&app, ollama_state.inner(), &api_url).await {
+            let _ = app.emit("ollama_error", err.clone());
+        }
+    }
     let client = reqwest::Client::new();
     let started_at = std::time::Instant::now();
     let effective_key = api_key.filter(|v| !v.trim().is_empty());
@@ -1449,12 +2282,19 @@ async fn correct_text_streaming(
     app: AppHandle,
     state: State<'_, CancellationState>,
     capability_state: State<'_, ModelCapabilityState>,
+    ollama_state: State<'_, OllamaRuntimeState>,
     text: String,
     settings: FrontendSettings,
 ) -> Result<(), String> {
     let started_at = std::time::Instant::now();
     let mut effective_settings = settings;
     effective_settings.api_key = resolve_provider_key(&effective_settings);
+
+    if effective_settings.provider.eq_ignore_ascii_case("ollama") {
+        if let Err(err) = ensure_ollama_if_managed(&app, ollama_state.inner(), &effective_settings.api_url).await {
+            let _ = app.emit("ollama_error", err.clone());
+        }
+    }
 
     write_debug_event(
         &app,
@@ -2228,6 +3068,7 @@ async fn correct_docx(
     app: AppHandle,
     state: State<'_, CancellationState>,
     capability_state: State<'_, ModelCapabilityState>,
+    ollama_state: State<'_, OllamaRuntimeState>,
     file_path: String,
     original_path: Option<String>,
     accept_existing_track_changes: Option<bool>,
@@ -2265,6 +3106,12 @@ async fn correct_docx(
 
     let mut effective_settings = settings;
     effective_settings.api_key = resolve_provider_key(&effective_settings);
+
+    if effective_settings.provider.eq_ignore_ascii_case("ollama") {
+        if let Err(err) = ensure_ollama_if_managed(&app, ollama_state.inner(), &effective_settings.api_url).await {
+            let _ = app.emit("ollama_error", err.clone());
+        }
+    }
 
     let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
@@ -3889,6 +4736,7 @@ fn main() {
         })
         .manage(CancellationState::default())
         .manage(ModelCapabilityState::default())
+        .manage(OllamaRuntimeState::default())
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,
@@ -3908,8 +4756,15 @@ fn main() {
             open_external_url,
             get_app_version,
             get_file_size,
-            save_temp_docx
+            save_temp_docx,
+            detect_system_ram,
+            ollama_status,
+            ollama_pull_model,
+            install_ollama,
+            open_ollama_download_page,
+            open_ollama_registry_page
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, _event| {});
 }

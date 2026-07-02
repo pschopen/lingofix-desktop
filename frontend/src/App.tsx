@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke, listen } from './lib/bridge';
 import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal, ExternalLink } from 'lucide-react';
 import { TextEditor } from './components/TextEditor';
 import { SettingsModal } from './components/SettingsModal';
-import { Settings, FontSize, FONT_SIZE_PX, DocxFile } from './types';
+import Onboarding from './components/Onboarding';
+import { Settings, FontSize, FONT_SIZE_PX, DocxFile, PROVIDER_SENTINEL_UNCONFIGURED } from './types';
 import { Language, t, detectLanguage } from './i18n';
 import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
@@ -149,9 +150,21 @@ function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
+  const [wizardStartStep, setWizardStartStep] = useState<'welcome' | 'ollama' | 'cloud' | 'done'>('welcome');
   const shownUpdateVersionRef = useRef<string | null>(null);
   const cancelPendingDocxStartRef = useRef(false);
   const currentProcessingDocxRef = useRef<DocxFile | null>(null);
+
+  const hasUsableProvider = useCallback((s: Settings): boolean => {
+    if (s.provider === PROVIDER_SENTINEL_UNCONFIGURED) return false;
+    if (s.provider === 'ollama') return Boolean(s.api_url);
+    return Boolean(s.api_key && s.api_key.trim().length > 0);
+  }, []);
+
+  const showNoProviderBanner = useMemo(() => {
+    if (!settings) return false;
+    return !hasUsableProvider(settings);
+  }, [settings, hasUsableProvider]);
 
   // Apply font-size CSS custom property to document root
   useEffect(() => {
@@ -572,6 +585,12 @@ function App() {
       return;
     }
 
+    if (!hasUsableProvider(settings)) {
+      setIsSettingsOpen(true);
+      setError(t('app.banner.no_provider.body', lang));
+      return;
+    }
+
     if (docxFiles.length > 0) {
       await runDocxQueue(docxFiles, settings);
       return;
@@ -740,6 +759,53 @@ function App() {
     return reset;
   }, [lang, setError]);
 
+  const handleCompleteOnboarding = useCallback(async (newSettings: Settings) => {
+    try {
+      const toSave: Settings = { ...newSettings, setup_completed: true };
+      await invoke('save_settings', { settings: toSave });
+      setSettings(toSave);
+      setLang(toSave.ui_language);
+      setWizardStartStep('welcome');
+      setError(null);
+    } catch (err) {
+      console.error('Failed to save onboarding settings:', err);
+      setError(String(err));
+      throw err;
+    }
+  }, [setError]);
+
+  const handleRerunWizard = useCallback(async () => {
+    try {
+      const toSave: Settings = { ...settings!, setup_completed: null };
+      await invoke('save_settings', { settings: toSave });
+      setSettings(toSave);
+    } catch (err) {
+      console.error('Failed to reopen setup wizard:', err);
+      setError(String(err));
+    }
+  }, [settings, setError]);
+
+  const handleConfigureOllama = useCallback(async () => {
+    try {
+      setWizardStartStep('ollama');
+      setIsSettingsOpen(false);
+      const toSave: Settings = { ...settings!, setup_completed: null };
+      await invoke('save_settings', { settings: toSave });
+      setSettings(toSave);
+    } catch (err) {
+      console.error('Failed to open Ollama wizard:', err);
+      setError(String(err));
+    }
+  }, [settings, setError]);
+
+  const handleOpenExternalUrl = useCallback(async (url: string) => {
+    try {
+      await invoke('open_external_url', { url });
+    } catch (err) {
+      setError(String(err));
+    }
+  }, [setError]);
+
   const isDocxMode = docxFiles.length > 0;
   const hasText = text.trim().length > 0;
 
@@ -759,6 +825,30 @@ function App() {
     }
     return message;
   }, [lang]);
+
+  if (!settings) {
+    return (
+      <div className={`h-screen flex items-center justify-center ${isDarkMode ? 'bg-surface-900 text-surface-400' : 'bg-surface-50 text-surface-500'}`}>
+        <div className="flex items-center gap-3 text-sm">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span>…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!settings.setup_completed) {
+    return (
+      <Onboarding
+        settings={settings}
+        lang={lang}
+        isDarkMode={isDarkMode}
+        startStep={wizardStartStep}
+        onComplete={handleCompleteOnboarding}
+        onOpenExternalUrl={handleOpenExternalUrl}
+      />
+    );
+  }
 
   return (
     <div className={`h-screen flex flex-col transition-colors duration-200 ${isDarkMode ? 'bg-surface-900 text-surface-50' : 'bg-surface-50 text-surface-900'}`}>
@@ -1163,6 +1253,39 @@ function App() {
             </div>
           )}
 
+          {showNoProviderBanner && (
+            <div className={`px-5 py-3 border-b flex items-start gap-3 animate-slide-up ${
+              isDarkMode
+                ? 'bg-amber-900/20 border-amber-800/40'
+                : 'bg-amber-50/90 border-amber-100'
+            }`}>
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                isDarkMode ? 'bg-amber-900/30' : 'bg-amber-100'
+              }`}>
+                <AlertCircle size={16} className={isDarkMode ? 'text-amber-300' : 'text-amber-700'} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className={`text-sm font-medium ${isDarkMode ? 'text-amber-200' : 'text-amber-900'}`}>
+                  {t('app.banner.no_provider.title', lang)}
+                </span>
+                <p className={`text-sm mt-0.5 break-words ${isDarkMode ? 'text-amber-300/90' : 'text-amber-800/90'}`}>
+                  {t('app.banner.no_provider.body', lang)}
+                </p>
+                <button
+                  onClick={() => setIsSettingsOpen(true)}
+                  className={`btn-ghost !px-2.5 !py-1.5 !mt-2 !text-sm ${
+                    isDarkMode
+                      ? '!text-amber-300 hover:!bg-amber-900/30'
+                      : '!text-amber-700 hover:!bg-amber-100'
+                  }`}
+                >
+                  <SettingsIcon size={14} />
+                  {t('app.banner.no_provider.action', lang)}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* --- Content Area --- */}
           <div className="flex-1 overflow-hidden">
             <TextEditor
@@ -1191,6 +1314,8 @@ function App() {
         onSave={handleSaveSettings}
         onPreviewUiLanguageChange={handlePreviewUiLanguageChange}
         onResetSettings={handleResetSettings}
+        onRerunWizard={handleRerunWizard}
+        onConfigureOllama={handleConfigureOllama}
         onCheckUpdates={handleManualUpdateCheck}
         lang={lang}
         isDarkMode={isDarkMode}
