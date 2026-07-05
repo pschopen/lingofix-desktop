@@ -25,22 +25,20 @@ const dmgPath = join(artifactsDir, dmgName);
 const rwDmgPath = join(artifactsDir, 'dmg-staging-rw.dmg');
 const mountedVolume = '/Volumes/Lingofix Desktop';
 const volumeName = 'Lingofix Desktop';
-const backupFolderName = 'Manuelle Installation (Backup)';
 
-// Icon layout must match scripts/assets/dmg-background.svg (720x600). The
-// app and Applications symlink live inside the backup folder so the manual
-// drag-and-drop path is visually and structurally secondary to Install.command.
-// The background carries no per-item captions: Finder draws each item's real
+// Icon layout must match scripts/assets/dmg-background.svg (720x640).
+// The app is not notarized, so the only installation path that works on
+// current macOS (Sequoia/Tahoe) is: drag the app onto the Applications
+// symlink, then release it once via System Settings on first launch. The
+// background image spells those steps out; here we just place the two icons
+// inside the "Schritt 1" card where the background's arrow points. The
+// background carries no per-item captions: Finder draws each item's real
 // filename below its icon, so baked-in labels would collide with them.
-// Item y positions map 1:1 onto the background; the title bar eats ~28px at
-// the bottom, so keep the lowest icon + its (possibly two-line) filename well
-// clear of the window's bottom edge.
-const WINDOW_BOUNDS = { left: 400, top: 100, width: 720, height: 600 };
+const WINDOW_BOUNDS = { left: 400, top: 100, width: 720, height: 640 };
 const ICON_SIZE = 128;
 const ICON_POSITIONS = {
-  'Install.command': { x: 360, y: 215 },
-  [backupFolderName]: { x: 250, y: 452 },
-  'README.txt': { x: 470, y: 452 },
+  'Lingofix Desktop.app': { x: 230, y: 205 },
+  'Applications': { x: 500, y: 205 },
 };
 
 cleanup(stagingDir);
@@ -50,40 +48,8 @@ mkdirSync(artifactsDir, { recursive: true });
 mkdirSync(stagingDir, { recursive: true });
 
 console.log(`Staging: ${stagingDir}`);
-const backupDir = join(stagingDir, backupFolderName);
-mkdirSync(backupDir, { recursive: true });
-run('ditto', [appPath, join(backupDir, 'Lingofix Desktop.app')]);
-symlinkSync('/Applications', join(backupDir, 'Applications'));
-
-const installScript = join(repoRoot, 'scripts', 'install-mac.sh');
-if (existsSync(installScript)) {
-  const destScript = join(stagingDir, 'Install.command');
-  run('ditto', [installScript, destScript]);
-  run('chmod', ['+x', destScript]);
-  console.log('Added Install.command to DMG');
-}
-
-const readmeContent = `Lingofix Desktop - Installation
-================================
-
-Bitte Doppelklick auf "Install.command".
-Falls macOS beim ersten Öffnen warnt: mit der rechten Maustaste (oder
-Ctrl-Klick) auf "Install.command" klicken -> "Öffnen" waehlen -> "Öffnen"
-bestätigen. Das Script installiert die App und fragt dabei automatisch
-nach deinem Mac-Passwort. Kein weiterer Schritt nötig.
-
---------------------------------------------------------------------
-Nur falls "Install.command" bei dir nicht funktioniert (Backup):
---------------------------------------------------------------------
-  1. Ordner "${backupFolderName}" öffnen.
-  2. "Lingofix Desktop.app" in den "Applications"-Ordner ziehen.
-  3. Falls macOS beim Start warnt: Systemeinstellungen -> Datenschutz &
-     Sicherheit -> ganz unten auf "Trotzdem öffnen" klicken (erscheint erst,
-     nachdem einmal versucht wurde, die App zu öffnen).
-`;
-const readmePath = join(stagingDir, 'README.txt');
-writeFileSync(readmePath, readmeContent, 'utf8');
-console.log('Added README.txt to DMG');
+run('ditto', [appPath, join(stagingDir, 'Lingofix Desktop.app')]);
+symlinkSync('/Applications', join(stagingDir, 'Applications'));
 
 const backgroundAsset = join(repoRoot, 'scripts', 'assets', 'dmg-background.tiff');
 const volumeIconAsset = join(repoRoot, 'tauri', 'icons', 'icon.icns');
@@ -152,12 +118,12 @@ console.log(`Mounting DMG for signature verification: ${dmgPath}`);
 run('hdiutil', ['attach', dmgPath, '-nobrowse', '-quiet', '-mountpoint', mountedVolume]);
 
 try {
-  const mountedApp = join(mountedVolume, backupFolderName, 'Lingofix Desktop.app');
+  const mountedApp = join(mountedVolume, 'Lingofix Desktop.app');
   if (!existsSync(mountedApp)) {
     fail(`Expected app not found in mounted DMG: ${mountedApp}`);
   }
 
-  const symlinkTarget = join(mountedVolume, backupFolderName, 'Applications');
+  const symlinkTarget = join(mountedVolume, 'Applications');
   if (!existsSync(symlinkTarget)) {
     fail(`Expected Applications symlink not found in mounted DMG: ${symlinkTarget}`);
   }

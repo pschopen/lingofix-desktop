@@ -1,29 +1,52 @@
-<svg width="720" height="600" viewBox="0 0 720 600" xmlns="http://www.w3.org/2000/svg">
+<svg width="720" height="640" viewBox="0 0 720 640" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#f9fafb"/>
       <stop offset="1" stop-color="#eef1f5"/>
     </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#2563eb"/>
+    </marker>
   </defs>
 
-  <rect width="720" height="600" fill="url(#bg)"/>
+  <rect width="720" height="640" fill="url(#bg)"/>
 
-  <text x="360" y="46" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="21" font-weight="600" fill="#111827">Lingofix Desktop &#8211; Installation</text>
+  <text x="360" y="44" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="21" font-weight="600" fill="#111827">Lingofix Desktop &#8211; Installation</text>
 
-  <!-- Primary: heading sits ABOVE the icon; the icon's own filename sits below it -->
-  <rect x="285" y="80" width="150" height="27" rx="13.5" fill="#dbeafe"/>
-  <text x="360" y="98.5" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="12.5" font-weight="700" fill="#1d4ed8" letter-spacing="0.5">EMPFOHLEN</text>
+  <!-- ===== Schritt 1 ===== -->
+  <text x="66" y="86" font-family="-apple-system, Helvetica Neue, Arial" font-size="15.5" font-weight="700" fill="#111827">Schritt 1: App in den Programme-Ordner ziehen</text>
+  <text x="66" y="106" font-family="-apple-system, Helvetica Neue, Arial" font-size="12" fill="#6b7280">Zieh das App-Symbol nach rechts auf den Programme-Ordner.</text>
 
-  <text x="360" y="146" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="18" font-weight="700" fill="#111827">Doppelklick zum Installieren</text>
+  <rect x="66" y="120" width="588" height="182" rx="12" fill="#ffffff" fill-opacity="0.65" stroke="#e2e5ea" stroke-width="1"/>
 
-  <!-- Install.command icon (rendered by Finder, center 360,215); its filename appears ~y=290 -->
+  <!-- App icon (Finder, center 230,205) -->
+  <!-- Applications symlink (Finder, center 500,205) -->
+  <path d="M 300 205 L 420 205" stroke="#2563eb" stroke-width="3.5" fill="none" stroke-linecap="round" marker-end="url(#arrow)"/>
 
-  <text x="360" y="329" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="12.5" fill="#6b7280">Installiert automatisch &#8211; fragt nur kurz nach deinem Mac-Passwort</text>
+  <!-- ===== Schritt 2 ===== -->
+  <text x="66" y="346" font-family="-apple-system, Helvetica Neue, Arial" font-size="15.5" font-weight="700" fill="#111827">Schritt 2: Beim allerersten Start einmal freigeben</text>
+  <text x="66" y="366" font-family="-apple-system, Helvetica Neue, Arial" font-size="12" fill="#6b7280">Nur ein einziges Mal nötig &#8211; danach startet die App ganz normal.</text>
 
-  <!-- Divider marking everything below as backup-only -->
-  <line x1="130" y1="374" x2="248" y2="374" stroke="#d1d5db" stroke-width="1"/>
-  <line x1="472" y1="374" x2="590" y2="374" stroke="#d1d5db" stroke-width="1"/>
-  <text x="360" y="378" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="11" font-weight="600" fill="#9ca3af" letter-spacing="0.5">NUR ALS BACKUP, FALLS NÖTIG</text>
+  <rect x="66" y="380" width="588" height="200" rx="12" fill="#ffffff" fill-opacity="0.65" stroke="#e2e5ea" stroke-width="1"/>
 
-  <!-- Backup folder + README icons (rendered by Finder, centers ~452); their filenames serve as labels -->
+  <!-- Step 1 -->
+  <text x="92" y="412" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" font-weight="700" fill="#2563eb">1.</text>
+  <text x="116" y="412" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" fill="#1f2937">Navigiere zum Ordner &#8222;Programme&#8220;.</text>
+
+  <!-- Step 2 (two lines) -->
+  <text x="92" y="444" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" font-weight="700" fill="#2563eb">2.</text>
+  <text x="116" y="444" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" fill="#1f2937">Doppelklick auf die App. Kommt eine Warnung? Das ist normal &#8211;</text>
+  <text x="116" y="465" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" fill="#1f2937">klick einfach auf &#8222;Fertig&#8220; (nicht &#8222;In den Papierkorb legen&#8220;).</text>
+
+  <!-- Step 3 -->
+  <text x="92" y="497" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" font-weight="700" fill="#2563eb">3.</text>
+  <text x="116" y="497" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" fill="#1f2937">Öffne&#160;&#160;Systemeinstellungen&#160;&#8250;&#160;Datenschutz &amp; Sicherheit.</text>
+
+  <!-- Step 4 -->
+  <text x="92" y="529" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" font-weight="700" fill="#2563eb">4.</text>
+  <text x="116" y="529" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" fill="#1f2937">Scroll nach unten und klick bei &#8222;Lingofix Desktop&#8220; auf &#8222;Trotzdem öffnen&#8220;.</text>
+
+  <!-- Step 5 -->
+  <text x="92" y="561" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" font-weight="700" fill="#2563eb">5.</text>
+  <text x="116" y="561" font-family="-apple-system, Helvetica Neue, Arial" font-size="13.5" fill="#1f2937">Mit &#8222;Öffnen&#8220; bestätigen &#8211; fertig! Ab jetzt genügt ein Doppelklick.</text>
 </svg>
