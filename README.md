@@ -60,15 +60,16 @@ Download the latest release from GitHub:
 
 Choose the correct file for your Mac:
 
-- Apple Silicon (M1, M2, M3, M4): `Lingofix-Desktop-vX.Y.Z-macos-arm64.zip`
-- Intel Mac: `Lingofix-Desktop-vX.Y.Z-macos-x64.zip`
+- Apple Silicon (M1, M2, M3, M4): `Lingofix-Desktop-vX.Y.Z-macos-arm64.dmg`
+- Intel Mac: `Lingofix-Desktop-vX.Y.Z-macos-x64.dmg`
 
 Install steps:
 
-1. Download the `.zip` file from the latest release.
-2. Unzip it.
-3. Drag `Lingofix Desktop.app` into `Applications`.
-4. Start the app.
+1. Download the `.dmg` file from the latest release.
+2. Double-click the `.dmg` to mount it.
+3. In the window that opens, drag `Lingofix Desktop` into the `Applications` folder.
+4. Eject the mounted `.dmg` (drag the volume to the Trash, or click the eject icon next to it in Finder).
+5. Open Lingofix from `Applications`.
 
 ### Windows
 
@@ -97,17 +98,16 @@ flatpak run com.lingofix.desktop
 
 ## macOS: Open an App From an Unidentified Developer
 
-If macOS blocks Lingofix because it is not signed by a verified Apple developer, use these steps:
+Lingofix is distributed as an ad-hoc signed `.dmg`. Apple has not notarized it (which requires a paid Apple Developer ID), so the first time you open the app macOS will block it with a message that the developer cannot be verified. This is expected and safe to bypass:
 
-1. Move the app to `Applications`.
-2. Double-click the app once.
-3. macOS will show a warning and refuse to open it.
-4. Open `System Settings` > `Privacy & Security`.
-5. Scroll to the security section near the bottom.
-6. Find the message about `Lingofix Desktop.app` being blocked.
-7. Click `Open Anyway`.
-8. Open the app again.
-9. Confirm by clicking `Open` in the dialog.
+1. After dragging `Lingofix Desktop` into `Applications`, double-click the app once.
+2. macOS will show a warning and refuse to open it.
+3. Open `System Settings` > `Privacy & Security`.
+4. Scroll to the security section near the bottom.
+5. Find the message about `Lingofix Desktop.app` being blocked.
+6. Click `Open Anyway`.
+7. Open the app again.
+8. Confirm by clicking `Open` in the dialog.
 
 If `Open Anyway` does not appear immediately, try this fallback:
 
@@ -288,8 +288,8 @@ git push origin v0.1.0
 
 This produces release assets such as:
 
-- `Lingofix-Desktop-v0.1.0-macos-arm64.zip`
-- `Lingofix-Desktop-v0.1.0-macos-x64.zip`
+- `Lingofix-Desktop-v0.1.0-macos-arm64.dmg`
+- `Lingofix-Desktop-v0.1.0-macos-x64.dmg`
 - `Lingofix-Desktop-v0.1.0-windows-x64.exe`
 - `Lingofix-Desktop-v0.1.0-linux-x64.flatpak`
 

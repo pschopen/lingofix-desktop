@@ -95,16 +95,14 @@ jobs:
           codesign --force --deep --sign - "$APP_PATH"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
-      - name: Archive app bundle
-        run: |
-          mkdir -p artifacts
-          ditto -c -k --sequesterRsrc --keepParent "tauri/target/aarch64-apple-darwin/release/bundle/macos/Lingofix Desktop.app" "artifacts/Lingofix-Desktop-${{ github.ref_name }}-macos-arm64.zip"
+      - name: Build ad-hoc signed macOS ARM64 DMG
+        run: node scripts/build-dmg-macos.mjs --target aarch64-apple-darwin
 
       - name: Upload macOS ARM64 artifact
         uses: actions/upload-artifact@v7
         with:
           name: release-macos-arm64
-          path: artifacts/Lingofix-Desktop-${{ github.ref_name }}-macos-arm64.zip
+          path: artifacts/Lingofix-Desktop-v*-macos-arm64.dmg
 
   macos-x64:
     name: Build macOS x64
@@ -153,16 +151,14 @@ jobs:
           codesign --force --deep --sign - "$APP_PATH"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
-      - name: Archive app bundle
-        run: |
-          mkdir -p artifacts
-          ditto -c -k --sequesterRsrc --keepParent "tauri/target/x86_64-apple-darwin/release/bundle/macos/Lingofix Desktop.app" "artifacts/Lingofix-Desktop-${{ github.ref_name }}-macos-x64.zip"
+      - name: Build ad-hoc signed macOS x64 DMG
+        run: node scripts/build-dmg-macos.mjs --target x86_64-apple-darwin
 
       - name: Upload macOS x64 artifact
         uses: actions/upload-artifact@v7
         with:
           name: release-macos-x64
-          path: artifacts/Lingofix-Desktop-${{ github.ref_name }}-macos-x64.zip
+          path: artifacts/Lingofix-Desktop-v*-macos-x64.dmg
 
   windows-x64:
     name: Build Windows x64
@@ -372,7 +368,7 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            artifacts/release-macos-arm64/Lingofix-Desktop-${{ github.ref_name }}-macos-arm64.zip
-            artifacts/release-macos-x64/Lingofix-Desktop-${{ github.ref_name }}-macos-x64.zip
+            artifacts/release-macos-arm64/Lingofix-Desktop-v*-macos-arm64.dmg
+            artifacts/release-macos-x64/Lingofix-Desktop-v*-macos-x64.dmg
             artifacts/release-windows-x64/Lingofix-Desktop-${{ github.ref_name }}-windows-x64.exe
             artifacts/release-linux-x64/Lingofix-Desktop-${{ github.ref_name }}-linux-x64.flatpak
