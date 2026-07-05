@@ -1,6 +1,6 @@
 [package]
 name = "lingofix-desktop"
-version = "0.3.2"
+version = "0.4.0"
 description = "Lingofix desktop host"
 authors = ["Lingofix"]
 edition = "2021"
