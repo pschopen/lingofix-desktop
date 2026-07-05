@@ -1,0 +1,29 @@
+<svg width="720" height="600" viewBox="0 0 720 600" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f9fafb"/>
+      <stop offset="1" stop-color="#eef1f5"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="720" height="600" fill="url(#bg)"/>
+
+  <text x="360" y="46" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="21" font-weight="600" fill="#111827">Lingofix Desktop &#8211; Installation</text>
+
+  <!-- Primary: heading sits ABOVE the icon; the icon's own filename sits below it -->
+  <rect x="285" y="80" width="150" height="27" rx="13.5" fill="#dbeafe"/>
+  <text x="360" y="98.5" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="12.5" font-weight="700" fill="#1d4ed8" letter-spacing="0.5">EMPFOHLEN</text>
+
+  <text x="360" y="146" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="18" font-weight="700" fill="#111827">Doppelklick zum Installieren</text>
+
+  <!-- Install.command icon (rendered by Finder, center 360,215); its filename appears ~y=290 -->
+
+  <text x="360" y="329" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="12.5" fill="#6b7280">Installiert automatisch &#8211; fragt nur kurz nach deinem Mac-Passwort</text>
+
+  <!-- Divider marking everything below as backup-only -->
+  <line x1="130" y1="374" x2="248" y2="374" stroke="#d1d5db" stroke-width="1"/>
+  <line x1="472" y1="374" x2="590" y2="374" stroke="#d1d5db" stroke-width="1"/>
+  <text x="360" y="378" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Arial" font-size="11" font-weight="600" fill="#9ca3af" letter-spacing="0.5">NUR ALS BACKUP, FALLS NÖTIG</text>
+
+  <!-- Backup folder + README icons (rendered by Finder, centers ~452); their filenames serve as labels -->
+</svg>
