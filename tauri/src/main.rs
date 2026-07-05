@@ -140,25 +140,65 @@ fn bundled_ollama_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 fn system_ollama_path() -> Option<PathBuf> {
-    if cfg!(target_os = "windows") {
-        if let Ok(out) = std::process::Command::new("where").arg("ollama.exe").output() {
-            let path_str = String::from_utf8_lossy(&out.stdout);
-            if let Some(first) = path_str.lines().next() {
-                let p = PathBuf::from(first.trim().to_string());
-                if p.exists() {
-                    return Some(p);
-                }
+    // 1) Try PATH lookup first (works in terminals and many GUI shells).
+    let which_result = if cfg!(target_os = "windows") {
+        std::process::Command::new("where").arg("ollama.exe").output().ok()
+    } else {
+        std::process::Command::new("which").arg("ollama").output().ok()
+    };
+    if let Some(out) = which_result {
+        let path_str = String::from_utf8_lossy(&out.stdout);
+        if let Some(first) = path_str.lines().next() {
+            let p = PathBuf::from(first.trim().to_string());
+            if p.exists() {
+                return Some(p);
             }
         }
+    }
+
+    // 2) Fallback: known install locations. GUI apps launched from Finder/Dock
+    //    often inherit a minimal PATH from launchd that misses user-local dirs
+    //    like ~/.local/bin, so `which` can return empty even after a successful
+    //    Ollama install.
+    let exe = if cfg!(target_os = "windows") { "ollama.exe" } else { "ollama" };
+    let home = if cfg!(target_os = "windows") {
+        std::env::var("USERPROFILE").ok()
     } else {
-        if let Ok(out) = std::process::Command::new("which").arg("ollama").output() {
-            let path_str = String::from_utf8_lossy(&out.stdout);
-            if let Some(first) = path_str.lines().next() {
-                let p = PathBuf::from(first.trim().to_string());
-                if p.exists() {
-                    return Some(p);
-                }
-            }
+        std::env::var("HOME").ok()
+    };
+    let local_app_data = std::env::var("LOCALAPPDATA").ok();
+    let program_files = std::env::var("ProgramFiles").ok();
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if cfg!(target_os = "macos") {
+        candidates.push(PathBuf::from("/usr/local/bin").join(exe));
+        candidates.push(PathBuf::from("/opt/homebrew/bin").join(exe));
+        if let Some(h) = home.as_deref() {
+            candidates.push(PathBuf::from(h).join(".local/bin").join(exe));
+            candidates.push(PathBuf::from(h).join("Applications/Ollama.app/Contents/Resources").join(exe));
+        }
+        candidates.push(PathBuf::from("/Applications/Ollama.app/Contents/Resources").join(exe));
+    } else if cfg!(target_os = "linux") {
+        candidates.push(PathBuf::from("/usr/local/bin").join(exe));
+        candidates.push(PathBuf::from("/usr/bin").join(exe));
+        if let Some(h) = home.as_deref() {
+            candidates.push(PathBuf::from(h).join(".local/bin").join(exe));
+        }
+    } else if cfg!(target_os = "windows") {
+        if let Some(h) = home.as_deref() {
+            candidates.push(PathBuf::from(h).join("AppData/Local/Programs/Ollama").join(exe));
+        }
+        if let Some(l) = local_app_data.as_deref() {
+            candidates.push(PathBuf::from(l).join("Programs/Ollama").join(exe));
+        }
+        if let Some(p) = program_files.as_deref() {
+            candidates.push(PathBuf::from(p).join("Ollama").join(exe));
+        }
+    }
+
+    for cand in candidates {
+        if cand.exists() {
+            return Some(cand);
         }
     }
     None

@@ -73,12 +73,12 @@ const MODEL_DOWNLOAD_GB: Record<string, number> = {
   'ministral-3:14b': 9,
 };
 
-function formatGiB(bytes: number): string {
+function formatGiB(bytes: number, decimals: number = 0): string {
   const gib = bytes / 1024 / 1024 / 1024;
   if (gib >= 1) {
-    return `${gib.toFixed(0)} GB`;
+    return `${gib.toFixed(decimals)} GB`;
   }
-  return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+  return `${(bytes / 1024 / 1024).toFixed(decimals)} MB`;
 }
 
 interface CloudProviderState {
@@ -146,10 +146,21 @@ function Onboarding({ settings, lang, isDarkMode, startStep, onComplete, onOpenE
   }, [refreshOllamaStatus]);
 
   useEffect(() => {
-    if (step === 'ollama' && !ollamaStatus) {
+    if (step === 'ollama') {
       void refreshOllamaStatus();
     }
-  }, [step, ollamaStatus, refreshOllamaStatus]);
+  }, [step, refreshOllamaStatus]);
+
+  useEffect(() => {
+    if (step !== 'ollama') return;
+    const handler = () => void refreshOllamaStatus();
+    window.addEventListener('focus', handler);
+    document.addEventListener('visibilitychange', handler);
+    return () => {
+      window.removeEventListener('focus', handler);
+      document.removeEventListener('visibilitychange', handler);
+    };
+  }, [step, refreshOllamaStatus]);
 
   useEffect(() => {
     if (!pulling) {
@@ -695,7 +706,7 @@ function Onboarding({ settings, lang, isDarkMode, startStep, onComplete, onOpenE
                         <span className="flex items-center gap-2 tabular-nums">
                           {pullModelBytes && pullModelBytes.total > 0 && (
                             <span className={mutedClass}>
-                              {formatGiB(pullModelBytes.completed)} / {formatGiB(pullModelBytes.total)}
+                              {formatGiB(pullModelBytes.completed, 2)} / {formatGiB(pullModelBytes.total, 2)}
                             </span>
                           )}
                           {pullPercent != null && <span className="font-medium">{pullPercent}%</span>}
@@ -897,7 +908,7 @@ function Onboarding({ settings, lang, isDarkMode, startStep, onComplete, onOpenE
           <div className={`px-8 py-4 border-t flex justify-between items-center ${isDarkMode ? 'border-surface-700 bg-surface-900/40' : 'border-surface-100 bg-surface-50/50'}`}>
             <button
               className="btn-ghost !text-sm"
-              onClick={() => setStep('welcome')}
+              onClick={() => { setOllamaStatus(null); setStep('welcome'); }}
             >
               <ArrowLeft size={15} />
               {t('onboarding.back', lang)}
