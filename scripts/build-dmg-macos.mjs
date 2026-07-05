@@ -41,6 +41,11 @@ const ICON_POSITIONS = {
   'Applications': { x: 500, y: 205 },
 };
 
+// A previous build (or a previous, redundant invocation in the same CI job)
+// may have left "/Volumes/Lingofix Desktop" mounted; hdiutil create would then
+// fail with "Resource busy". Detach any stale volume before starting.
+ensureUnmounted(mountedVolume);
+
 cleanup(stagingDir);
 cleanup(dmgPath);
 cleanup(rwDmgPath);
@@ -194,6 +199,14 @@ function detachWithRetry(mountpoint, attempts = 10) {
   }
 
   fail(`Could not detach ${mountpoint} after ${attempts} attempts.`);
+}
+
+function ensureUnmounted(mountpoint) {
+  if (!existsSync(mountpoint)) {
+    return;
+  }
+  console.log(`Detaching stale volume before build: ${mountpoint}`);
+  detachWithRetry(mountpoint);
 }
 
 function getFolderSizeMb(path) {
