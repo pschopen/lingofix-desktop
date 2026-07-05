@@ -182,14 +182,17 @@ end tell
 }
 
 function detachWithRetry(mountpoint, attempts = 10) {
+  // Prevent Spotlight (mds/mdworker) from indexing the mounted volume, which
+  // can hold an exclusive lock and make hdiutil detach fail on CI runners.
+  spawnSync('mdutil', ['-i', 'off', mountpoint], { stdio: 'ignore' });
+
   for (let i = 0; i < attempts; i += 1) {
     const result = spawnSync('hdiutil', ['detach', mountpoint, '-quiet'], { stdio: 'inherit' });
     if (result.status === 0) {
       return;
     }
-    // Spotlight (mdworker) can briefly hold an exclusive lock right after
-    // mounting; unmounting the filesystem first usually clears it.
-    spawnSync('diskutil', ['unmount', mountpoint], { stdio: 'ignore' });
+    // Force-unmount to release any file-system-level locks (fseventsd, etc.).
+    spawnSync('diskutil', ['unmount', 'force', mountpoint], { stdio: 'ignore' });
     spawnSync('sleep', ['2']);
   }
 
