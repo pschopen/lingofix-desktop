@@ -141,15 +141,17 @@ fn bundled_ollama_path(app: &AppHandle) -> Option<PathBuf> {
 
 fn system_ollama_path() -> Option<PathBuf> {
     // 1) Try PATH lookup first (works in terminals and many GUI shells).
-    let which_result = if cfg!(target_os = "windows") {
+    #[cfg(target_os = "windows")]
+    let which_result = {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let mut cmd = std::process::Command::new("where");
         cmd.arg("ollama.exe").creation_flags(CREATE_NO_WINDOW);
         cmd.output().ok()
-    } else {
-        std::process::Command::new("which").arg("ollama").output().ok()
     };
+
+    #[cfg(not(target_os = "windows"))]
+    let which_result = std::process::Command::new("which").arg("ollama").output().ok();
     if let Some(out) = which_result {
         let path_str = String::from_utf8_lossy(&out.stdout);
         if let Some(first) = path_str.lines().next() {
@@ -728,7 +730,8 @@ fn find_ollama_binary_in(dir: &Path) -> Option<PathBuf> {
 
 fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
-    if cfg!(target_os = "windows") {
+    #[cfg(target_os = "windows")]
+    {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let out = std::process::Command::new("tar")
