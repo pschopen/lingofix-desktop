@@ -142,7 +142,11 @@ fn bundled_ollama_path(app: &AppHandle) -> Option<PathBuf> {
 fn system_ollama_path() -> Option<PathBuf> {
     // 1) Try PATH lookup first (works in terminals and many GUI shells).
     let which_result = if cfg!(target_os = "windows") {
-        std::process::Command::new("where").arg("ollama.exe").output().ok()
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = std::process::Command::new("where");
+        cmd.arg("ollama.exe").creation_flags(CREATE_NO_WINDOW);
+        cmd.output().ok()
     } else {
         std::process::Command::new("which").arg("ollama").output().ok()
     };
@@ -334,6 +338,14 @@ async fn ensure_ollama_running(
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
     cmd.kill_on_drop(true);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+
     let child = cmd.spawn().map_err(|e| format!("failed to start Ollama: {e}"))?;
 
     {
@@ -717,7 +729,10 @@ fn find_ollama_binary_in(dir: &Path) -> Option<PathBuf> {
 fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     if cfg!(target_os = "windows") {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let out = std::process::Command::new("tar")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("-xf")
             .arg(archive)
             .arg("-C")
@@ -863,13 +878,21 @@ async fn install_ollama(app: AppHandle) -> Result<(), String> {
     }
 
     let _ = app.emit("ollama_install_progress", json!({ "phase": "verifying", "percent": 100 }));
-    let verify = Command::new(&target_path)
+    let mut verify = Command::new(&target_path);
+    verify
         .arg("--version")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .current_dir(&install_dir)
-        .output()
-        .await;
+        .current_dir(&install_dir);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        verify.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let verify = verify.output().await;
     match verify {
         Ok(out) if out.status.success() => {}
         Ok(out) => {
