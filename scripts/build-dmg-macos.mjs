@@ -186,6 +186,12 @@ function detachWithRetry(mountpoint, attempts = 10) {
   // can hold an exclusive lock and make hdiutil detach fail on CI runners.
   spawnSync('mdutil', ['-i', 'off', mountpoint], { stdio: 'ignore' });
 
+  // Kill Finder to release any locks it holds on the volume after
+  // AppleScript layout manipulation. This is the most common cause of
+  // "hdiutil detach" failures on GitHub Actions macOS runners.
+  spawnSync('killall', ['Finder'], { stdio: 'ignore' });
+  spawnSync('sleep', ['3']);
+
   for (let i = 0; i < attempts; i += 1) {
     const result = spawnSync('hdiutil', ['detach', mountpoint, '-quiet'], { stdio: 'inherit' });
     if (result.status === 0) {
@@ -193,7 +199,8 @@ function detachWithRetry(mountpoint, attempts = 10) {
     }
     // Force-unmount to release any file-system-level locks (fseventsd, etc.).
     spawnSync('diskutil', ['unmount', 'force', mountpoint], { stdio: 'ignore' });
-    spawnSync('sleep', ['2']);
+    spawnSync('killall', ['Finder'], { stdio: 'ignore' });
+    spawnSync('sleep', ['3']);
   }
 
   const forced = spawnSync('hdiutil', ['detach', mountpoint, '-force', '-quiet'], { stdio: 'inherit' });
