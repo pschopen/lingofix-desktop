@@ -124,6 +124,35 @@ public class ParagraphTextMapperTests
         Assert.Equal(visible, extracted.Length);
     }
 
+    [Fact]
+    public void TocEntry_FieldOnlyParagraph_ReportsNoExtractionGap()
+    {
+        // A TOC line ("Abkürzungsverzeichnis" + tab + page number) is entirely field
+        // code/result text: the TOC field wraps a hyperlink whose page number comes
+        // from a nested PAGEREF field. None of it should ever be rewritten, and
+        // CountVisibleTextChars must agree with ExtractEditableText that there is
+        // nothing to extract here — otherwise every TOC entry falsely looks like a
+        // dropped-text regression.
+        var p = P(
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>" +
+            "<w:r><w:instrText xml:space=\"preserve\"> TOC \\o \\h \\z \\u </w:instrText></w:r>" +
+            "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" +
+            "<w:r><w:t>Abkürzungsverzeichnis</w:t></w:r>" +
+            "<w:r><w:tab/></w:r>" +
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>" +
+            "<w:r><w:instrText>PAGEREF _Toc1 \\h</w:instrText></w:r>" +
+            "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>" +
+            "<w:r><w:t>29</w:t></w:r>" +
+            "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>" +
+            "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>");
+
+        var extracted = ParagraphTextMapper.ExtractEditableText(p);
+        var visible = ParagraphTextMapper.CountVisibleTextChars(p);
+
+        Assert.Equal(string.Empty, extracted);
+        Assert.Equal(0, visible);
+    }
+
     // ---- Round-trip: correction is applied and the tab survives ---------------
 
     [Fact]

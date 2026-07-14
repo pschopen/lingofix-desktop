@@ -18,24 +18,49 @@ internal static class ParagraphTextMapper
     }
 
     /// <summary>
-    /// Counts the visible <c>w:t</c> characters of <paramref name="paragraph"/> that
-    /// are not inside a nested textbox story. This is deliberately independent of
-    /// <see cref="BuildEditableRuns"/>: it is an upper bound on what extraction should
-    /// keep, used as a runtime tripwire so a future extraction regression that silently
-    /// drops text-bearing runs becomes visible instead of corrupting citations.
-    /// (Field-result text is not excluded here; callers compare with a tolerance.)
+    /// Counts the <c>w:t</c> characters of <paramref name="paragraph"/> that extraction
+    /// is expected to keep: visible text that is not inside a nested textbox story, not a
+    /// tracked-change deletion, and not field code/result text (TOC entries, PAGEREF page
+    /// numbers, etc. are deliberately never rewritten). This mirrors those exclusions with
+    /// its own pass rather than reusing <see cref="BuildEditableRuns"/>, so it still serves
+    /// as a runtime tripwire: a future extraction regression that drops ordinary text-bearing
+    /// runs for some other reason becomes visible instead of silently corrupting citations.
     /// </summary>
     public static int CountVisibleTextChars(Paragraph paragraph)
     {
         var total = 0;
-        foreach (var text in paragraph.Descendants<Text>())
+        var inField = false;
+
+        foreach (var run in paragraph.Descendants<Run>())
         {
-            if (DocumentPartUtils.IsInsideNestedTextBox(text, paragraph))
+            if (IsDeletedRun(run))
             {
                 continue;
             }
 
-            total += text.Text.Length;
+            var fieldChar = run.Descendants<FieldChar>().FirstOrDefault();
+            if (fieldChar?.FieldCharType?.Value == FieldCharValues.Begin)
+            {
+                inField = true;
+            }
+
+            var isFieldContent = inField || run.Descendants<OpenXmlElement>().Any(e => e.LocalName == "instrText");
+
+            if (!isFieldContent)
+            {
+                foreach (var text in run.Descendants<Text>())
+                {
+                    if (!DocumentPartUtils.IsInsideNestedTextBox(text, paragraph))
+                    {
+                        total += text.Text.Length;
+                    }
+                }
+            }
+
+            if (fieldChar?.FieldCharType?.Value == FieldCharValues.End)
+            {
+                inField = false;
+            }
         }
 
         return total;
