@@ -38,7 +38,13 @@ export function TextEditor({
 
   const isSupportedOfficeFile = useCallback((nameOrPath: string): boolean => {
     const lower = nameOrPath.toLowerCase();
-    return lower.endsWith('.docx') || lower.endsWith('.odt');
+    return (
+      lower.endsWith('.docx') ||
+      lower.endsWith('.docm') ||
+      lower.endsWith('.dotx') ||
+      lower.endsWith('.dotm') ||
+      lower.endsWith('.odt')
+    );
   }, []);
 
   const normalizeDroppedPath = useCallback((raw: string | undefined | null): string | null => {
@@ -209,7 +215,7 @@ export function TextEditor({
     try {
       const selected = await open({
         multiple: true,
-        filters: [{ name: 'Word/OpenDocument', extensions: ['docx', 'odt'] }],
+        filters: [{ name: 'Word/OpenDocument', extensions: ['docx', 'docm', 'dotx', 'dotm', 'odt'] }],
       });
 
       if (selected) {
@@ -222,7 +228,7 @@ export function TextEditor({
       } else {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.docx,.odt';
+        input.accept = '.docx,.docm,.dotx,.dotm,.odt';
         input.multiple = true;
         input.onchange = async () => {
           const files = Array.from(input.files ?? []);

@@ -7,6 +7,18 @@ namespace Lingofix.Backend.Documents;
 
 public static class TrackChangesGenerator
 {
+    // OOXML WordprocessingML subtypes that can be opened via WordprocessingDocument.
+    private static readonly HashSet<string> OoxmlWordprocessingExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".docx",
+        ".docm",
+        ".dotx",
+        ".dotm",
+    };
+
+    private static bool IsOoxmlWordprocessingPath(string path) =>
+        OoxmlWordprocessingExtensions.Contains(Path.GetExtension(path));
+
     private static readonly TimeSpan ExternalCompareTimeout = TimeSpan.FromMinutes(20);
     private static readonly TimeSpan LibreOfficeProbeTimeout = TimeSpan.FromSeconds(15);
     private const string SOfficePathEnv = "LINGOFIX_SOFFICE_PATH";
@@ -962,7 +974,7 @@ public static class TrackChangesGenerator
             author,
             ExternalCompareTimeout,
             strictTextChangesOnly ? "text-only" : "all");
-        if (outputPath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+        if (IsOoxmlWordprocessingPath(outputPath))
         {
             if (strictTextChangesOnly)
             {

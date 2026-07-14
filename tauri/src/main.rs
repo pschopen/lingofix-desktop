@@ -1719,7 +1719,10 @@ fn resolve_provider_key(settings: &FrontendSettings) -> Option<String> {
 fn office_input_kind(path: &Path) -> Option<OfficeInputKind> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
-        "docx" => Some(OfficeInputKind::Docx),
+        // OOXML WordprocessingML family (ZIP/XML packages). These are handled
+        // natively by the Open XML SDK in the backend, so they take the same
+        // pass-through path as .docx (no LibreOffice conversion).
+        "docx" | "docm" | "dotx" | "dotm" => Some(OfficeInputKind::Docx),
         "odt" => Some(OfficeInputKind::Odt),
         _ => None,
     }
@@ -1741,7 +1744,7 @@ fn normalize_office_input_path(path: &str) -> anyhow::Result<(PathBuf, OfficeInp
     }
 
     let kind = office_input_kind(&canonical)
-        .ok_or_else(|| anyhow!("only .docx and .odt files are allowed"))?;
+        .ok_or_else(|| anyhow!("only .docx, .docm, .dotx, .dotm and .odt files are allowed"))?;
 
     Ok((canonical, kind))
 }
@@ -4465,8 +4468,11 @@ async fn save_temp_docx(name: String, base64: String) -> Result<String, String> 
         .and_then(|s| s.to_str())
         .unwrap_or("document.docx");
     let lower_name = safe_name.to_ascii_lowercase();
-    if !(lower_name.ends_with(".docx") || lower_name.ends_with(".odt")) {
-        return Err("only .docx and .odt uploads are allowed".to_string());
+    let has_allowed_extension = [".docx", ".docm", ".dotx", ".dotm", ".odt"]
+        .iter()
+        .any(|ext| lower_name.ends_with(ext));
+    if !has_allowed_extension {
+        return Err("only .docx, .docm, .dotx, .dotm and .odt uploads are allowed".to_string());
     }
 
     let dir = lingofix_temp_root().join("uploads");

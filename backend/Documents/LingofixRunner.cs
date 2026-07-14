@@ -4,6 +4,17 @@ namespace Lingofix.Backend.Documents;
 
 public static class LingofixRunner
 {
+    // OOXML WordprocessingML packages the Open XML SDK can open natively.
+    // ODT sources are converted to .docx before reaching the backend, so they
+    // are not listed here. Legacy binary .doc/.dot are not supported.
+    private static readonly HashSet<string> SupportedOoxmlExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".docx",
+        ".docm",
+        ".dotx",
+        ".dotm",
+    };
+
     public static async Task<RunResult> RunAsync(RunOptions options, IRunLogger? logger = null, CancellationToken cancellationToken = default)
     {
         logger ??= NullRunLogger.Instance;
@@ -25,9 +36,10 @@ public static class LingofixRunner
             throw new FileNotFoundException($"File not found: {normalizedInputPath}", normalizedInputPath);
         }
 
-        if (!normalizedInputPath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+        var inputExtension = Path.GetExtension(normalizedInputPath);
+        if (!SupportedOoxmlExtensions.Contains(inputExtension))
         {
-            throw new InvalidOperationException("Please provide a .docx file.");
+            throw new InvalidOperationException("Please provide a Word document (.docx, .docm, .dotx or .dotm).");
         }
 
         const long maxInputBytes = 30L * 1024L * 1024L;
@@ -57,17 +69,21 @@ public static class LingofixRunner
         var finalOutputPath = useNativeOdtLibreOfficeCompare
             ? Path.ChangeExtension(trackOutputPath, ".odt")
             : trackOutputPath;
+        // Keep the external-compare working files in the same OOXML subtype as
+        // the input (.docx/.docm/.dotx/.dotm) so the promoted output container
+        // matches its file name. ODT sources reach here already converted to
+        // .docx, so inputExtension is ".docx" for them.
         var tempOutputPath = isExternalCompare
-            ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, useNativeOdtLibreOfficeCompare ? "output.odt" : "output.docx")
+            ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, useNativeOdtLibreOfficeCompare ? "output.odt" : $"output{inputExtension}")
             : PathUtils.BuildTempOutputPath(trackOutputPath);
         var tempOriginalPath = isExternalCompare
-            ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "original.docx")
+            ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, $"original{inputExtension}")
             : Path.Combine(PathUtils.GetLingofixTempRoot(), $"orig_{Guid.NewGuid():N}{Path.GetExtension(normalizedInputPath)}");
         CopyReadableSnapshot(normalizedInputPath, tempOriginalPath);
         var checkpoint = ProcessingCheckpointStore.Load(normalizedInputPath, logger);
         var correctedPath = checkpoint?.CorrectedPath
             ?? (isExternalCompare
-                ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, "corrected.docx")
+                ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, $"corrected{inputExtension}")
                 : PathUtils.BuildTempCorrectedPath(normalizedInputPath));
         var completedLabels = new HashSet<string>(checkpoint?.CompletedLabels ?? [], StringComparer.Ordinal);
         var completedBatchesByLabel = checkpoint?.CompletedBatchesByLabel is null
