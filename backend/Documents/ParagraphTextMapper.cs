@@ -17,6 +17,30 @@ internal static class ParagraphTextMapper
         return runs.Count == 0 ? string.Empty : originalText;
     }
 
+    /// <summary>
+    /// Counts the visible <c>w:t</c> characters of <paramref name="paragraph"/> that
+    /// are not inside a nested textbox story. This is deliberately independent of
+    /// <see cref="BuildEditableRuns"/>: it is an upper bound on what extraction should
+    /// keep, used as a runtime tripwire so a future extraction regression that silently
+    /// drops text-bearing runs becomes visible instead of corrupting citations.
+    /// (Field-result text is not excluded here; callers compare with a tolerance.)
+    /// </summary>
+    public static int CountVisibleTextChars(Paragraph paragraph)
+    {
+        var total = 0;
+        foreach (var text in paragraph.Descendants<Text>())
+        {
+            if (DocumentPartUtils.IsInsideNestedTextBox(text, paragraph))
+            {
+                continue;
+            }
+
+            total += text.Text.Length;
+        }
+
+        return total;
+    }
+
     public static void ApplyCorrection(Paragraph paragraph, string original, string corrected)
     {
         corrected = XmlTextSanitizer.StripInvalidXmlChars(corrected, out _);
@@ -470,16 +494,11 @@ internal static class ParagraphTextMapper
 
         foreach (var run in paragraph.Descendants<Run>())
         {
-            if (IsDeletedRun(run))
-            {
-                continue;
-            }
-
-            // Runs nested inside a textbox belong to their own textbox paragraph
-            // (which is processed separately). Excluding them here keeps the host
-            // paragraph's text stream free of textbox content, so corrections are
-            // never redistributed across the textbox boundary.
-            if (DocumentPartUtils.IsInsideNestedTextBox(run, paragraph))
+            // Tracked-change deletions and runs nested inside a textbox belong to a
+            // different text stream (the deletion history, or the textbox's own
+            // paragraph which is processed separately). They must never contribute
+            // to this paragraph's editable stream.
+            if (IsDeletedRun(run) || DocumentPartUtils.IsInsideNestedTextBox(run, paragraph))
             {
                 continue;
             }
@@ -490,42 +509,33 @@ internal static class ParagraphTextMapper
                 inField = true;
             }
 
-            if (inField || IsStructuralRun(run))
+            // Editability is derived from the presence of editable <w:t> text, NOT
+            // from the absence of structural siblings. A single run may legally mix
+            // a tab, break, symbol, drawing or reference mark with real text; those
+            // structural children contribute nothing to the editable stream but must
+            // never cause adjacent text in the same run to be dropped. Field regions
+            // (instructions between fldChar begin/end, and computed results) are the
+            // only in-run content that is deliberately excluded, because rewriting a
+            // field's text would corrupt the field.
+            var isFieldContent = inField
+                || run.Descendants<OpenXmlElement>().Any(e => e.LocalName == "instrText");
+
+            if (!isFieldContent)
             {
-                if (fieldChar?.FieldCharType?.Value == FieldCharValues.End)
+                // Text nested inside a textbox story (w:txbxContent) that is hosted
+                // by this run is excluded exactly as in DocxPartScanner: it belongs
+                // to its own textbox paragraph and is corrected there.
+                var textNodes = run.Descendants<Text>()
+                    .Where(t => !DocumentPartUtils.IsInsideNestedTextBox(t, paragraph))
+                    .ToList();
+                var runText = string.Concat(textNodes.Select(t => t.Text));
+                if (!string.IsNullOrEmpty(runText))
                 {
-                    inField = false;
+                    var start = builder.Length;
+                    builder.Append(runText);
+                    runs.Add(new EditableRun(textNodes, runText, start, builder.Length, false));
                 }
-
-                continue;
             }
-
-            var textNodes = run.Descendants<Text>().ToList();
-            if (textNodes.Count == 0)
-            {
-                if (fieldChar?.FieldCharType?.Value == FieldCharValues.End)
-                {
-                    inField = false;
-                }
-
-                continue;
-            }
-
-            var runText = string.Concat(textNodes.Select(t => t.Text));
-            if (string.IsNullOrEmpty(runText))
-            {
-                if (fieldChar?.FieldCharType?.Value == FieldCharValues.End)
-                {
-                    inField = false;
-                }
-
-                continue;
-            }
-
-            var start = builder.Length;
-            builder.Append(runText);
-            var end = builder.Length;
-            runs.Add(new EditableRun(textNodes, runText, start, end, false));
 
             if (fieldChar?.FieldCharType?.Value == FieldCharValues.End)
             {
@@ -572,39 +582,6 @@ internal static class ParagraphTextMapper
         }
 
         if (run.Ancestors<DeletedRun>().Any())
-        {
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool IsStructuralRun(Run run)
-    {
-        if (run.Descendants<FootnoteReference>().Any() ||
-            run.Descendants<EndnoteReference>().Any() ||
-            run.Descendants<FootnoteReferenceMark>().Any() ||
-            run.Descendants<EndnoteReferenceMark>().Any() ||
-            run.Descendants<CommentReference>().Any())
-        {
-            return true;
-        }
-
-        if (run.Descendants<FieldChar>().Any() ||
-            run.Descendants<OpenXmlElement>().Any(e => e.LocalName == "instrText"))
-        {
-            return true;
-        }
-
-        if (run.Descendants<Drawing>().Any() ||
-            run.Descendants<OpenXmlElement>().Any(e => e.LocalName == "pict"))
-        {
-            return true;
-        }
-
-        if (run.Descendants<TabChar>().Any() ||
-            run.Descendants<Break>().Any() ||
-            run.Descendants<SymbolChar>().Any())
         {
             return true;
         }

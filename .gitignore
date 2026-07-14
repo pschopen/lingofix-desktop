@@ -36,6 +36,9 @@ backend/bin/
 backend/obj/
 backend/TestResults/
 backend/**/publish/
+backend.Tests/bin/
+backend.Tests/obj/
+backend.Tests/TestResults/
 
 # Rust / Tauri
 tauri/target/

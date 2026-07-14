@@ -38,9 +38,13 @@ public static class ParagraphProcessor
         var paragraphList = paragraphs.ToList();
         var totalParagraphs = paragraphList.Count;
         var totalChars = 0;
+        var extractionGapWarnings = 0;
         foreach (var paragraph in paragraphList)
         {
             var original = ParagraphTextMapper.ExtractEditableText(paragraph);
+
+            WarnOnExtractionGap(paragraph, original, logger, ref extractionGapWarnings);
+
             if (string.IsNullOrWhiteSpace(original))
             {
                 continue;
@@ -181,6 +185,38 @@ public static class ParagraphProcessor
         }
 
         await Task.WhenAll(running);
+    }
+
+    // Runtime tripwire against silent text loss during extraction. A healthy extractor
+    // keeps essentially all visible w:t text, so this never fires on well-formed input;
+    // it exists to make a future extraction regression (or an exotic run layout) visible
+    // in the log instead of it quietly shipping half a footnote to the model.
+    private const double MinExtractionCoverage = 0.75;
+    private const int MinVisibleCharsForGapCheck = 20;
+    private const int MaxExtractionGapWarnings = 25;
+
+    private static void WarnOnExtractionGap(Paragraph paragraph, string extracted, IRunLogger? logger, ref int warningCount)
+    {
+        if (logger is null || warningCount >= MaxExtractionGapWarnings)
+        {
+            return;
+        }
+
+        var visible = ParagraphTextMapper.CountVisibleTextChars(paragraph);
+        if (visible < MinVisibleCharsForGapCheck || extracted.Length >= visible * MinExtractionCoverage)
+        {
+            return;
+        }
+
+        warningCount++;
+        var droppedPct = 100 - (int)Math.Round(100.0 * extracted.Length / visible);
+        var snippet = extracted.Length <= 60 ? extracted : extracted[..60] + "…";
+        snippet = snippet.Replace('\n', ' ').Replace('\r', ' ').Trim();
+        logger.Warning($"Extraction gap: kept {extracted.Length}/{visible} visible chars (~{droppedPct}% dropped). Kept text starts: \"{snippet}\"");
+        if (warningCount == MaxExtractionGapWarnings)
+        {
+            logger.Warning($"Extraction gap: further warnings suppressed after {MaxExtractionGapWarnings}.");
+        }
     }
 
     private static async Task<string> CorrectWithChunkingAsync(string original, int chunkSize, LlmClient llmClient, CancellationToken cancellationToken)
