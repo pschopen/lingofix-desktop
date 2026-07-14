@@ -360,10 +360,32 @@ public static class LingofixRunner
                     logger.Info("Track changes generated with OpenXML");
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 logger.Error($"Comparison step failed ({compareMode}): {ex.Message}");
-                throw;
+
+                // The correction itself already ran to completion and is saved in
+                // correctedPath; only the (cosmetic) track-changes comparison failed.
+                // Discarding the whole run here throws away a fully corrected document
+                // and, once the temp files are cleared, loses it for good. For the
+                // external comparators (Word/LibreOffice), degrade to delivering the
+                // corrected file without track changes instead of failing outright.
+                // The native-ODT path is excluded: its output container differs from
+                // correctedPath, so the plain copy below would not apply.
+                var canSalvageCorrected = isExternalCompare
+                    && !useNativeOdtLibreOfficeCompare
+                    && File.Exists(correctedPath);
+                if (!canSalvageCorrected)
+                {
+                    throw;
+                }
+
+                logger.Warning("Returning corrected file without generated track changes. You can run the document comparison manually in your office application.");
+                trackCreated = false;
             }
 
             if (!trackCreated)
