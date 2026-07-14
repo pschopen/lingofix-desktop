@@ -475,6 +475,15 @@ internal static class ParagraphTextMapper
                 continue;
             }
 
+            // Runs nested inside a textbox belong to their own textbox paragraph
+            // (which is processed separately). Excluding them here keeps the host
+            // paragraph's text stream free of textbox content, so corrections are
+            // never redistributed across the textbox boundary.
+            if (DocumentPartUtils.IsInsideNestedTextBox(run, paragraph))
+            {
+                continue;
+            }
+
             var fieldChar = run.Descendants<FieldChar>().FirstOrDefault();
             if (fieldChar?.FieldCharType?.Value == FieldCharValues.Begin)
             {

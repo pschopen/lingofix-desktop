@@ -124,6 +124,11 @@ internal static class DocxPartScanner
 
     private static string ExtractText(Paragraph paragraph)
     {
-        return string.Concat(paragraph.Descendants<Text>().Select(t => t.Text));
+        // Textbox content is a descendant of its host paragraph but belongs to its own
+        // textbox paragraph. Exclude it so the host is judged (and processed) on its own
+        // text only; the textbox paragraph is collected and corrected in its own right.
+        return string.Concat(paragraph.Descendants<Text>()
+            .Where(t => !DocumentPartUtils.IsInsideNestedTextBox(t, paragraph))
+            .Select(t => t.Text));
     }
 }

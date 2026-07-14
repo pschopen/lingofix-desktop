@@ -567,7 +567,11 @@ public static class TrackChangesGenerator
 
     private static string ExtractText(Paragraph paragraph)
     {
-        var texts = paragraph.Descendants<Text>().Select(t => t.Text);
+        // Exclude textbox content: it belongs to its own (separately diffed) textbox
+        // paragraph, not to the host paragraph's text stream.
+        var texts = paragraph.Descendants<Text>()
+            .Where(t => !DocumentPartUtils.IsInsideNestedTextBox(t, paragraph))
+            .Select(t => t.Text);
         return string.Concat(texts);
     }
 
@@ -578,6 +582,13 @@ public static class TrackChangesGenerator
 
         foreach (var run in paragraph.Descendants<Run>())
         {
+            // Textbox-internal runs are not part of the host stream; their reference
+            // marks (if any) are handled when the textbox paragraph is diffed.
+            if (DocumentPartUtils.IsInsideNestedTextBox(run, paragraph))
+            {
+                continue;
+            }
+
             var referenceElements = run.Descendants<OpenXmlElement>()
                 .Where(e => e is FootnoteReference ||
                             e is EndnoteReference ||
@@ -602,7 +613,9 @@ public static class TrackChangesGenerator
                 markers.Add(new ReferenceMarker(offset, markerRun));
             }
 
-            var runText = string.Concat(run.Descendants<Text>().Select(t => t.Text));
+            var runText = string.Concat(run.Descendants<Text>()
+                .Where(t => !DocumentPartUtils.IsInsideNestedTextBox(t, paragraph))
+                .Select(t => t.Text));
             offset += runText.Length;
         }
 
@@ -614,6 +627,16 @@ public static class TrackChangesGenerator
         var runs = paragraph.Elements<Run>().ToList();
         foreach (var run in runs)
         {
+            // Preserve runs that host a drawing/textbox/picture/OLE object in place.
+            // Removing them would delete the textbox (its content lives inside the run)
+            // and re-emit its text as ordinary body runs. Keeping the run's object
+            // identity also lets the textbox's own paragraphs — enumerated separately by
+            // ApplyParagraphDiff — receive their own tracked changes.
+            if (DocumentPartUtils.RunCarriesEmbeddedObject(run))
+            {
+                continue;
+            }
+
             run.Remove();
         }
 
@@ -834,7 +857,14 @@ public static class TrackChangesGenerator
 
         foreach (var run in paragraph.Descendants<Run>())
         {
-            var runText = string.Concat(run.Descendants<Text>().Select(t => t.Text));
+            if (DocumentPartUtils.IsInsideNestedTextBox(run, paragraph))
+            {
+                continue;
+            }
+
+            var runText = string.Concat(run.Descendants<Text>()
+                .Where(t => !DocumentPartUtils.IsInsideNestedTextBox(t, paragraph))
+                .Select(t => t.Text));
             if (runText.Length == 0)
             {
                 continue;
