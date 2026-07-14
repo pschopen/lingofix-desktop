@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -16,6 +17,7 @@ public sealed class LlmClient
     private const int ReasoningSupportUnknown = 0;
     private const int ReasoningSupportSupported = 1;
     private const int ReasoningSupportUnsupported = 2;
+    private const int MaxRateLimitAttempts = 20;
 
     private static readonly HttpClient SharedHttpClient = CreateHttpClient();
     private readonly string _endpoint;
@@ -28,6 +30,7 @@ public sealed class LlmClient
     private readonly bool _enableReasoning;
     private readonly string _reasoningEffort;
     private readonly IRunLogger? _logger;
+    private readonly AdaptiveRateLimiter _rateLimiter = new();
     private string _apiKey = string.Empty;
     private int _temperatureSupport = TemperatureSupportUnknown;
     private int _reasoningSupport = ReasoningSupportUnknown;
@@ -304,8 +307,11 @@ public sealed class LlmClient
 
         var allowTemperatureFallbackRetry = allowTemperatureFallback && includeTemperature;
         var allowReasoningFallbackRetry = allowReasoningFallback && includeReasoningEffort;
+        var rateLimitAttempts = 0;
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
+            await _rateLimiter.WaitAsync(cancellationToken);
+
             var effectiveRequest = new ChatCompletionsRequest
             {
                 Model = request.Model,
@@ -332,6 +338,8 @@ public sealed class LlmClient
 
             if (response.IsSuccessStatusCode)
             {
+                _rateLimiter.OnSuccess();
+
                 if (includeTemperature)
                 {
                     Volatile.Write(ref _temperatureSupport, TemperatureSupportSupported);
@@ -361,12 +369,23 @@ public sealed class LlmClient
             var retryAfterSeconds = GetRetryAfterSeconds(response);
             if (response.StatusCode == (HttpStatusCode)429)
             {
-                if (attempt == maxAttempts)
+                rateLimitAttempts++;
+
+                // Slow the shared pacing down. The limiter also pushes the next global
+                // slot past any Retry-After, so the WaitAsync at the top of the loop is
+                // the single place that waits before we retry (no separate Task.Delay).
+                _rateLimiter.OnRateLimited(retryAfterSeconds);
+
+                if (rateLimitAttempts > MaxRateLimitAttempts)
                 {
                     throw new LlmRateLimitException(retryAfterSeconds, responseBody);
                 }
 
-                await Task.Delay(GetRetryDelay(attempt, retryAfterSeconds), cancellationToken);
+                _logger?.Info($"Rate limit hit (attempt {rateLimitAttempts}/{MaxRateLimitAttempts}). Slowing down and retrying.");
+
+                // Rate-limit retries are unbounded relative to maxAttempts; only the
+                // dedicated rate-limit counter above governs when to give up.
+                attempt = 0;
                 continue;
             }
 
@@ -701,5 +720,99 @@ public sealed class LlmRateLimitException : Exception
         : base($"Rate limit reached. Retry-After: {(retryAfterSeconds?.ToString() ?? "n/a")}. {message}".Trim())
     {
         RetryAfterSeconds = retryAfterSeconds;
+    }
+}
+
+/// <summary>
+/// Paces requests to a shared minimum interval so all parallel workers of one run
+/// converge on a provider's actual rate limit (e.g. Mistral Large's ~0.6 req/s)
+/// instead of hammering it on every retry.
+///
+/// Control law is AIMD (multiplicative increase on 429, additive decrease after a
+/// streak of successes), which is far more stable than multiplicative-both. Growth is
+/// debounced to once per penalty window so that a burst of simultaneous 429s from a
+/// single overload event only slows us down once, not once per concurrent request.
+/// Retry-After is honored as a hard floor for the next global slot even when it exceeds
+/// the pacing cap, so we never retry before the server said we may.
+/// </summary>
+internal sealed class AdaptiveRateLimiter
+{
+    private const double MinIntervalMs = 0;
+    private const double MaxIntervalMs = 15_000;
+    private const double InitialPenaltyMs = 250;
+    private const double IncreaseFactor = 2.0;
+    private const double DecreaseStepMs = 150;
+    private const int SuccessesBeforeDecay = 8;
+
+    private readonly object _sync = new();
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private double _intervalMs;
+    private TimeSpan _nextSlot = TimeSpan.Zero;
+    private TimeSpan _growthLockedUntil = TimeSpan.Zero;
+    private int _consecutiveSuccesses;
+
+    public async Task WaitAsync(CancellationToken cancellationToken)
+    {
+        TimeSpan delay;
+        lock (_sync)
+        {
+            var now = _clock.Elapsed;
+            var slot = _nextSlot > now ? _nextSlot : now;
+            _nextSlot = slot + TimeSpan.FromMilliseconds(_intervalMs);
+            delay = slot - now;
+        }
+
+        if (delay > TimeSpan.Zero)
+        {
+            await Task.Delay(delay, cancellationToken);
+        }
+    }
+
+    public void OnRateLimited(int? retryAfterSeconds)
+    {
+        lock (_sync)
+        {
+            var now = _clock.Elapsed;
+            var retryAfterMs = retryAfterSeconds.HasValue ? retryAfterSeconds.Value * 1000.0 : 0;
+
+            // Debounce: concurrent 429s from the same overload burst arrive before the
+            // penalty window opened by the first one elapses, so they don't stack growth.
+            if (now >= _growthLockedUntil)
+            {
+                var grown = _intervalMs <= 0 ? InitialPenaltyMs : _intervalMs * IncreaseFactor;
+                _intervalMs = Math.Min(Math.Max(grown, MinIntervalMs), MaxIntervalMs);
+                _consecutiveSuccesses = 0;
+                _growthLockedUntil = now + TimeSpan.FromMilliseconds(_intervalMs);
+            }
+
+            // Push the next global slot past both the pacing interval and any Retry-After.
+            // This is what actually delays the retry (via WaitAsync), and it honors a
+            // Retry-After larger than our interval cap.
+            var resumeAt = now + TimeSpan.FromMilliseconds(Math.Max(_intervalMs, retryAfterMs));
+            if (resumeAt > _nextSlot)
+            {
+                _nextSlot = resumeAt;
+            }
+        }
+    }
+
+    public void OnSuccess()
+    {
+        lock (_sync)
+        {
+            if (_intervalMs <= MinIntervalMs)
+            {
+                _consecutiveSuccesses = 0;
+                return;
+            }
+
+            if (++_consecutiveSuccesses < SuccessesBeforeDecay)
+            {
+                return;
+            }
+
+            _consecutiveSuccesses = 0;
+            _intervalMs = Math.Max(_intervalMs - DecreaseStepMs, MinIntervalMs);
+        }
     }
 }
