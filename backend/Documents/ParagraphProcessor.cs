@@ -144,7 +144,18 @@ public static class ParagraphProcessor
         var running = new List<Task>();
         var maxInFlight = Math.Max(maxParallel * 2, maxParallel + 1);
 
-        Task StartBatchTask(WorkBatch batch)
+        // Batches finish out of order under parallelism, but the checkpoint's resume
+        // index is positional (resumeCompletedBatches -> work.Skip). Persisting the raw
+        // completion count would let a crash record e.g. "6 done" while the finished six
+        // are scattered; resuming would then Skip the first six positions and silently
+        // drop the unprocessed batches among them. So the persisted count may only
+        // advance across a *contiguous* prefix of finished batches. The document itself
+        // is still saved after every batch (durability); replaying already-applied
+        // batches beyond the prefix on resume is a safe no-op.
+        var completedFlags = new bool[work.Count];
+        var contiguousDone = 0;
+
+        Task StartBatchTask(WorkBatch batch, int index)
         {
             return Task.Run(async () =>
             {
@@ -161,7 +172,9 @@ public static class ParagraphProcessor
                         completedChars += batch.Items.Sum(item => item.Original.Length);
                         var completedWork = totalWork == totalChars ? completedChars : processedParagraphs;
                         progressCallback?.Invoke(completedWork, totalWork, $"Batch {completedBatches}/{totalBatches}");
-                        batchCheckpointCallback?.Invoke(completedBatches, totalBatches);
+                        completedFlags[index] = true;
+                        contiguousDone = AdvanceContiguousPrefix(completedFlags, contiguousDone);
+                        batchCheckpointCallback?.Invoke(resumedBatches + contiguousDone, totalBatches);
                     }
                 }
                 finally
@@ -171,9 +184,9 @@ public static class ParagraphProcessor
             }, cancellationToken);
         }
 
-        foreach (var batch in work)
+        for (var index = 0; index < work.Count; index++)
         {
-            running.Add(StartBatchTask(batch));
+            running.Add(StartBatchTask(work[index], index));
             if (running.Count < maxInFlight)
             {
                 continue;
@@ -185,6 +198,22 @@ public static class ParagraphProcessor
         }
 
         await Task.WhenAll(running);
+    }
+
+    /// <summary>
+    /// Advances <paramref name="current"/> across the leading run of completed batches
+    /// in <paramref name="completedFlags"/>. Only a contiguous prefix counts, so an
+    /// out-of-order completion never inflates the resume index past a batch that has not
+    /// finished yet. See the parallel dispatch loop for why this matters for checkpoints.
+    /// </summary>
+    internal static int AdvanceContiguousPrefix(bool[] completedFlags, int current)
+    {
+        while (current < completedFlags.Length && completedFlags[current])
+        {
+            current++;
+        }
+
+        return current;
     }
 
     // Runtime tripwire against silent text loss during extraction. A healthy extractor
