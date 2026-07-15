@@ -4996,6 +4996,54 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     sl: 'Najv. vzporednih zahtev',
     sv: 'Max parallella förfrågningar',
   },
+  'settings.docx.speed_mode': {
+    en: 'Speed',
+    de: 'Geschwindigkeit',
+  },
+  'settings.docx.speed_mode.hint': {
+    en: 'Automatic learns the provider’s rate limit and tunes itself. Manual keeps fixed limits.',
+    de: 'Automatisch lernt das Anbieter-Limit und passt sich selbst an. Manuell nutzt feste Grenzen.',
+  },
+  'settings.docx.speed_mode.auto': {
+    en: 'Automatic',
+    de: 'Automatisch',
+  },
+  'settings.docx.speed_mode.manual': {
+    en: 'Manual',
+    de: 'Manuell',
+  },
+  'settings.docx.requests_per_minute': {
+    en: 'Requests per minute',
+    de: 'Anfragen pro Minute',
+  },
+  'settings.docx.requests_per_minute.hint': {
+    en: 'Optional. Leave empty for no limit.',
+    de: 'Optional. Leer lassen für kein Limit.',
+  },
+  'settings.docx.requests_per_minute.ollama_hint': {
+    en: 'Local model — no server rate limit.',
+    de: 'Lokales Modell — kein Server-Limit.',
+  },
+  'settings.docx.requests_per_minute.placeholder': {
+    en: 'No limit',
+    de: 'Kein Limit',
+  },
+  'docx.progress.eta': {
+    en: '≈ {value} left',
+    de: 'noch ca. {value}',
+  },
+  'docx.progress.eta.minutes': {
+    en: '{count} min',
+    de: '{count} Min',
+  },
+  'docx.progress.eta.hours': {
+    en: '{count} h',
+    de: '{count} Std',
+  },
+  'docx.throttle.notice': {
+    en: 'Provider is limiting the speed — adjusted to {rpm} requests/min',
+    de: 'Anbieter begrenzt die Geschwindigkeit — angepasst auf {rpm} Anfragen/Min',
+  },
   'settings.docx.restore_non_breaking_spaces': {
     bg: 'Запазване на неразривните интервали',
     cs: 'Zachovat nedělitelné mezery',

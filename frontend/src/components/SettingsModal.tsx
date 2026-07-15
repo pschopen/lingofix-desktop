@@ -20,6 +20,8 @@ import {
   DOCX_CORRECTION_SCOPE_PARTS,
   REASONING_EFFORTS,
   CITATION_NORMALIZATION_MODES,
+  SPEED_MODES,
+  SpeedMode,
   DocxBatchingPart,
   DocxCorrectionScopePart,
   ReasoningEffort,
@@ -1221,16 +1223,28 @@ export function SettingsModal({
                   isDarkMode={isDarkMode}
                 />
 
-                {/* Parallelization */}
-                <ToggleRow
-                  label={t('settings.docx.parallelization', lang)}
-                  checked={formData.docx.enable_parallelization}
-                  onChange={() => handleDocxSettingChange('enable_parallelization', !formData.docx.enable_parallelization)}
+                {/* Speed mode */}
+                <FieldGroup
+                  label={t('settings.docx.speed_mode', lang)}
+                  hint={t('settings.docx.speed_mode.hint', lang)}
                   isDarkMode={isDarkMode}
-                />
+                >
+                  <SelectField
+                    value={formData.docx.speed_mode}
+                    onChange={(nextValue) => handleDocxSettingChange('speed_mode', nextValue as SpeedMode)}
+                    menuBoundaryRef={modalPanelRef}
+                    isDarkMode={isDarkMode}
+                  >
+                    {SPEED_MODES.map((mode) => (
+                      <option key={mode} value={mode} className={isDarkMode ? '!bg-surface-700 !text-surface-100' : ''}>
+                        {t(`settings.docx.speed_mode.${mode}`, lang)}
+                      </option>
+                    ))}
+                  </SelectField>
+                </FieldGroup>
 
-                {formData.docx.enable_parallelization && (
-                  <div className="pl-4 border-l-2 border-accent-100">
+                {formData.docx.speed_mode === 'manual' && (
+                  <div className="pl-4 border-l-2 border-accent-100 space-y-4">
                     <FieldGroup label={`${t('settings.docx.max_parallel_requests', lang)}: ${formData.docx.max_parallel_requests}`} isDarkMode={isDarkMode}>
                       <input
                         type="range"
@@ -1240,6 +1254,32 @@ export function SettingsModal({
                         value={formData.docx.max_parallel_requests}
                         onChange={(e) => handleDocxSettingChange('max_parallel_requests', Number(e.target.value))}
                         className="w-full mt-1"
+                      />
+                    </FieldGroup>
+
+                    <FieldGroup
+                      label={t('settings.docx.requests_per_minute', lang)}
+                      hint={isOllama
+                        ? t('settings.docx.requests_per_minute.ollama_hint', lang)
+                        : t('settings.docx.requests_per_minute.hint', lang)}
+                      isDarkMode={isDarkMode}
+                    >
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        disabled={isOllama}
+                        placeholder={t('settings.docx.requests_per_minute.placeholder', lang)}
+                        value={formData.docx.manual_requests_per_minute ?? ''}
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          const parsed = raw === '' ? null : Math.max(0, Math.round(Number(raw)));
+                          handleDocxSettingChange(
+                            'manual_requests_per_minute',
+                            parsed === null || Number.isNaN(parsed) ? null : parsed,
+                          );
+                        }}
+                        className={`input !text-base ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100' : ''} ${isOllama ? 'opacity-50 cursor-not-allowed' : ''}`}
                       />
                     </FieldGroup>
                   </div>

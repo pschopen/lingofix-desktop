@@ -154,6 +154,12 @@ function App() {
   const shownUpdateVersionRef = useRef<string | null>(null);
   const cancelPendingDocxStartRef = useRef(false);
   const currentProcessingDocxRef = useRef<DocxFile | null>(null);
+  // Wall-clock start of the current docx batch run, for the throughput-based ETA.
+  const docxRunStartRef = useRef<number | null>(null);
+  // Provider is throttling: the request rate the limiter has settled on (req/min), or
+  // null while no recent rate-limit signal has been seen.
+  const [docxThrottleRpm, setDocxThrottleRpm] = useState<number | null>(null);
+  const docxThrottleClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hasUsableProvider = useCallback((s: Settings): boolean => {
     if (s.provider === PROVIDER_SENTINEL_UNCONFIGURED) return false;
@@ -436,6 +442,21 @@ function App() {
       if (event.payload.level === 'warning') {
         setDocxWarning(event.payload.message);
       }
+
+      // Throttle notice: the backend logs "Rate limit/overload hit ...; interval_ms=NNN"
+      // whenever the provider pushes back. Surface it (with the current req/min) and let it
+      // fade once the limiter has been quiet for a while (i.e. it reached a plateau).
+      const message = event.payload.message;
+      if (/rate limit\/overload hit/i.test(message)) {
+        const match = message.match(/interval_ms=(\d+)/i);
+        const intervalMs = match ? Number(match[1]) : 0;
+        const rpm = intervalMs > 0 ? Math.max(1, Math.round(60000 / intervalMs)) : null;
+        setDocxThrottleRpm(rpm);
+        if (docxThrottleClearTimerRef.current) {
+          clearTimeout(docxThrottleClearTimerRef.current);
+        }
+        docxThrottleClearTimerRef.current = setTimeout(() => setDocxThrottleRpm(null), 12000);
+      }
     });
     
     return () => {
@@ -447,6 +468,9 @@ function App() {
       unlistenDocxComplete.then(fn => fn()).catch(() => {});
       unlistenDocxError.then(fn => fn()).catch(() => {});
       unlistenDocxLog.then(fn => fn()).catch(() => {});
+      if (docxThrottleClearTimerRef.current) {
+        clearTimeout(docxThrottleClearTimerRef.current);
+      }
     };
   }, [
     appendDocxLog,
@@ -552,6 +576,8 @@ function App() {
 
       const file = files[index];
       setActiveDocxFileIndex(index);
+      docxRunStartRef.current = Date.now();
+      setDocxThrottleRpm(null);
       setDocxProgress({ percent: 0, message: `${t('docx.processing', lang)} (${index + 1}/${files.length})` });
 
       try {
@@ -941,8 +967,34 @@ function App() {
                       </span>
                     )}
                     <span className={`text-base truncate ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>{docxProgress.message}</span>
+                    {(() => {
+                      const start = docxRunStartRef.current;
+                      const percent = docxProgress.percent;
+                      if (!start || percent < 3 || percent >= 100) {
+                        return null;
+                      }
+                      const elapsedMs = Date.now() - start;
+                      const remainingMs = (elapsedMs * (100 - percent)) / percent;
+                      const remainingMin = Math.max(1, Math.round(remainingMs / 60000));
+                      const value = remainingMin >= 60
+                        ? t('docx.progress.eta.hours', lang).replace('{count}', String(Math.round((remainingMin / 60) * 10) / 10))
+                        : t('docx.progress.eta.minutes', lang).replace('{count}', String(remainingMin));
+                      return (
+                        <span className={`text-base tabular-nums whitespace-nowrap ${isDarkMode ? 'text-surface-500' : 'text-surface-400'}`}>
+                          {t('docx.progress.eta', lang).replace('{value}', value)}
+                        </span>
+                      );
+                    })()}
+                    {docxThrottleRpm !== null && (
+                      <span
+                        title={t('docx.throttle.notice', lang).replace('{rpm}', String(docxThrottleRpm))}
+                        className={`text-sm whitespace-nowrap px-2 py-0.5 rounded-md ${isDarkMode ? 'bg-amber-500/15 text-amber-300' : 'bg-amber-100 text-amber-700'}`}
+                      >
+                        {t('docx.throttle.notice', lang).replace('{rpm}', String(docxThrottleRpm))}
+                      </span>
+                    )}
                   </div>
-                  
+
                   {/* Log Toggle Button */}
                   <button
                     onClick={() => setShowLogs(!showLogs)}

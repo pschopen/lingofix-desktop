@@ -473,7 +473,7 @@ public sealed class LlmClient
                     throw new LlmRateLimitException(retryAfterSeconds, responseBody);
                 }
 
-                _logger?.Info($"Rate limit/overload hit (status {(int)response.StatusCode}, attempt {rateLimitAttempts}/{MaxRateLimitAttempts}). Slowing down and retrying.");
+                _logger?.Info($"Rate limit/overload hit (status {(int)response.StatusCode}, attempt {rateLimitAttempts}/{MaxRateLimitAttempts}); interval_ms={(long)Math.Round(_rateLimiter.CurrentIntervalMs)}. Slowing down and retrying.");
 
                 // Rate-limit retries are unbounded relative to maxAttempts; only the
                 // dedicated rate-limit counter above governs when to give up.

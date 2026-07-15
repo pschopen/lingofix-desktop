@@ -76,10 +76,15 @@ export interface DocxSettings {
   enable_cache: boolean;
   enable_parallelization: boolean;
   max_parallel_requests: number;
+  speed_mode: SpeedMode;
+  manual_requests_per_minute: number | null;
   restore_non_breaking_spaces: boolean;
   ignore_trailing_paragraph_whitespace: boolean;
   citation_normalization: CitationNormalizationMode;
 }
+
+export const SPEED_MODES = ['auto', 'manual'] as const;
+export type SpeedMode = (typeof SPEED_MODES)[number];
 
 export interface EditorSettings {
   chunk_size: number;
