@@ -35,6 +35,8 @@ public sealed class LlmClient
     private int _temperatureSupport = TemperatureSupportUnknown;
     private int _reasoningSupport = ReasoningSupportUnknown;
     private bool _rateLearningEnabled;
+    private int _loggedSuccessHeaders;
+    private int _loggedThrottleHeaders;
     private readonly object _latencySync = new();
     private double _latencyEmaMs;
     private bool _hasLatencySample;
@@ -325,28 +327,99 @@ public sealed class LlmClient
         return remainder.Length == 0 ? text : remainder;
     }
 
-    private static int? GetRetryAfterSeconds(HttpResponseMessage response)
+    private static int? GetRetryAfterSeconds(HttpResponseMessage response, string? responseBody = null)
     {
         var retryAfter = response.Headers.RetryAfter;
-        if (retryAfter is null)
+        if (retryAfter is not null)
+        {
+            if (retryAfter.Delta.HasValue)
+            {
+                var seconds = (int)Math.Ceiling(retryAfter.Delta.Value.TotalSeconds);
+                return Math.Max(1, seconds);
+            }
+
+            if (retryAfter.Date.HasValue)
+            {
+                var delta = retryAfter.Date.Value - DateTimeOffset.UtcNow;
+                var seconds = (int)Math.Ceiling(delta.TotalSeconds);
+                return Math.Max(1, seconds);
+            }
+        }
+
+        // Gemini returns no Retry-After header; the wait lives in the JSON body as a
+        // RetryInfo.retryDelay (e.g. "6s"). Honor it as a hard floor like a real header.
+        return TryParseGeminiRetryDelaySeconds(responseBody);
+    }
+
+    /// <summary>
+    /// Pulls the Google RetryInfo <c>retryDelay</c> (e.g. "6s", "1.5s", "600ms") out of a
+    /// Gemini-style error body and returns it in whole seconds (rounded up, min 1).
+    /// </summary>
+    internal static int? TryParseGeminiRetryDelaySeconds(string? responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
         {
             return null;
         }
 
-        if (retryAfter.Delta.HasValue)
+        try
         {
-            var seconds = (int)Math.Ceiling(retryAfter.Delta.Value.TotalSeconds);
-            return Math.Max(1, seconds);
-        }
+            using var doc = JsonDocument.Parse(responseBody);
+            if (!doc.RootElement.TryGetProperty("error", out var error) ||
+                error.ValueKind != JsonValueKind.Object ||
+                !error.TryGetProperty("details", out var details) ||
+                details.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
 
-        if (retryAfter.Date.HasValue)
+            foreach (var detail in details.EnumerateArray())
+            {
+                if (detail.ValueKind == JsonValueKind.Object &&
+                    detail.TryGetProperty("retryDelay", out var retryDelay) &&
+                    retryDelay.ValueKind == JsonValueKind.String)
+                {
+                    return ParseDurationToSeconds(retryDelay.GetString());
+                }
+            }
+        }
+        catch (JsonException)
         {
-            var delta = retryAfter.Date.Value - DateTimeOffset.UtcNow;
-            var seconds = (int)Math.Ceiling(delta.TotalSeconds);
-            return Math.Max(1, seconds);
         }
 
         return null;
+    }
+
+    private static int? ParseDurationToSeconds(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var text = raw.Trim();
+        double value;
+        if (text.EndsWith("ms", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!double.TryParse(text[..^2].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value))
+            {
+                return null;
+            }
+
+            return Math.Max(1, (int)Math.Ceiling(value / 1000.0));
+        }
+
+        if (text.EndsWith("s", StringComparison.OrdinalIgnoreCase))
+        {
+            text = text[..^1].Trim();
+        }
+
+        if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value))
+        {
+            return null;
+        }
+
+        return Math.Max(1, (int)Math.Ceiling(value));
     }
 
     private static int GetRetryDelay(int attempt, int? retryAfterSeconds)
@@ -425,6 +498,11 @@ public sealed class LlmClient
 
             using (response)
             {
+            // Step 0 for provider rate signals: capture the response headers once for a 2xx
+            // and once for a throttle, so a real run reveals which vendor headers exist
+            // (x-ratelimit-*, retry hints, ...) before committing to parsing any of them.
+            LogResponseHeadersOnce(response);
+
             if (response.IsSuccessStatusCode)
             {
                 RecordLatency(sendStopwatch.Elapsed.TotalMilliseconds);
@@ -456,7 +534,7 @@ public sealed class LlmClient
                 return finalResult;
             }
 
-            var retryAfterSeconds = GetRetryAfterSeconds(response);
+            var retryAfterSeconds = GetRetryAfterSeconds(response, responseBody);
             if (IsThrottleStatus(response.StatusCode))
             {
                 rateLimitAttempts++;
@@ -520,6 +598,64 @@ public sealed class LlmClient
         }
 
         throw new InvalidOperationException("LLM request failed after retries.");
+    }
+
+    private void LogResponseHeadersOnce(HttpResponseMessage response)
+    {
+        if (_logger is null)
+        {
+            return;
+        }
+
+        var isThrottle = IsThrottleStatus(response.StatusCode);
+        var isSuccess = response.IsSuccessStatusCode;
+        if (!isThrottle && !isSuccess)
+        {
+            return;
+        }
+
+        // Only the first sample of each kind, and only once per client instance.
+        if (isThrottle)
+        {
+            if (Interlocked.Exchange(ref _loggedThrottleHeaders, 1) != 0)
+            {
+                return;
+            }
+        }
+        else if (Interlocked.Exchange(ref _loggedSuccessHeaders, 1) != 0)
+        {
+            return;
+        }
+
+        var headers = response.Headers.Concat(response.Content.Headers);
+        var parts = new List<string>();
+        foreach (var header in headers)
+        {
+            var name = header.Key;
+            // Never echo credential-bearing response headers.
+            if (name.Equals("set-cookie", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("authorization", StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add($"{name}=<redacted>");
+                continue;
+            }
+
+            var value = string.Join(",", header.Value);
+            if (value.Length > 120)
+            {
+                value = value[..120] + "…";
+            }
+
+            parts.Add($"{name}={value}");
+        }
+
+        var line = string.Join("; ", parts);
+        if (line.Length > 1600)
+        {
+            line = line[..1600] + "…";
+        }
+
+        _logger.Info($"Response headers ({(int)response.StatusCode}, {(isThrottle ? "throttle" : "success")}): {line}");
     }
 
     private void RecordLatency(double sampleMs)
