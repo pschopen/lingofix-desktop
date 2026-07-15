@@ -13,6 +13,11 @@ public static class ParagraphProcessor
     // this many paced retries the rate-limit error is propagated instead.
     private const int MaxBatchRateLimitRetries = 3;
 
+    // Auto mode: internal ceiling on derived parallelism, and the conservative starting
+    // worker count used until enough latency has been measured to derive a real target.
+    private const int AutoParallelCap = 8;
+    private const int AutoInitialParallel = 2;
+
     public static async Task ProcessAsync(
         IEnumerable<Paragraph> paragraphs,
         LlmClient llmClient,
@@ -28,8 +33,8 @@ public static class ParagraphProcessor
         var batchMaxChars = Math.Clamp(settings.BatchMaxChars, Settings.MinBatchMaxChars, Settings.MaxBatchMaxChars);
         var batchMaxParagraphs = Math.Clamp(settings.BatchMaxParagraphs, Settings.MinBatchMaxParagraphs, Settings.MaxBatchMaxParagraphs);
         var enableCache = settings.EnableCache;
-        var enableParallel = settings.EnableParallelization;
-        var maxParallel = Math.Clamp(settings.MaxParallelRequests, Settings.MinMaxParallelRequests, Settings.MaxMaxParallelRequests);
+        var configuredParallel = Math.Clamp(settings.MaxParallelRequests, Settings.MinMaxParallelRequests, Settings.MaxMaxParallelRequests);
+        var isOllama = string.Equals(settings.Provider, "ollama", StringComparison.OrdinalIgnoreCase);
         var cache = enableCache ? new ConcurrentDictionary<string, string>(StringComparer.Ordinal) : null;
         var citationStyle = settings.CitationStyle;
 
@@ -124,7 +129,35 @@ public static class ParagraphProcessor
             }
         }
 
-        if (!enableParallel || maxParallel <= 1)
+        // Decide the concurrency profile from the speed mode.
+        //  * Auto:   parallelism is *derived* from measured latency / learned interval and
+        //            re-tuned per batch; it is never a user setting.
+        //  * Manual: parallelism is the user's fixed value (1 = serial).
+        //  * Ollama: local, unpaced — a fixed moderate parallelism, no derivation.
+        var speedMode = settings.SpeedMode;
+        int concurrencyCap;
+        int initialParallel;
+        bool deriveParallel;
+        if (isOllama)
+        {
+            concurrencyCap = Math.Clamp(configuredParallel, 1, AutoParallelCap);
+            initialParallel = concurrencyCap;
+            deriveParallel = false;
+        }
+        else if (speedMode == SpeedMode.Manual)
+        {
+            concurrencyCap = configuredParallel;
+            initialParallel = configuredParallel;
+            deriveParallel = false;
+        }
+        else
+        {
+            concurrencyCap = AutoParallelCap;
+            initialParallel = Math.Min(AutoInitialParallel, AutoParallelCap);
+            deriveParallel = true;
+        }
+
+        if (!deriveParallel && initialParallel <= 1)
         {
             foreach (var batch in work)
             {
@@ -142,11 +175,13 @@ public static class ParagraphProcessor
             return;
         }
 
-        logger?.Info($"Parallelization enabled (max {maxParallel}). Jobs: {work.Count}.");
-        var concurrency = new AdaptiveConcurrency(maxParallel);
+        logger?.Info(deriveParallel
+            ? $"Speed mode: auto (parallelism derived, cap {concurrencyCap}). Jobs: {work.Count}."
+            : $"Speed mode: manual (parallelism {initialParallel}). Jobs: {work.Count}.");
+        var concurrency = new DynamicConcurrencyGate(initialParallel, concurrencyCap);
         var progressLock = new object();
         var running = new List<Task>();
-        var maxInFlight = Math.Max(maxParallel * 2, maxParallel + 1);
+        var maxInFlight = Math.Max(concurrencyCap * 2, concurrencyCap + 1);
 
         // Batches finish out of order under parallelism, but the checkpoint's resume
         // index is positional (resumeCompletedBatches -> work.Skip). Persisting the raw
@@ -180,6 +215,16 @@ public static class ParagraphProcessor
                     completedFlags[index] = true;
                     contiguousDone = AdvanceContiguousPrefix(completedFlags, contiguousDone);
                     batchCheckpointCallback?.Invoke(resumedBatches + contiguousDone, totalBatches);
+
+                    // Auto mode: retune parallelism to keep the learned pacing interval
+                    // saturated — enough workers that latency is hidden, no more.
+                    if (deriveParallel)
+                    {
+                        concurrency.SetTarget(DeriveParallelism(
+                            llmClient.AverageLatencyMs,
+                            llmClient.CurrentPacingIntervalMs,
+                            concurrencyCap));
+                    }
                 }
             }, cancellationToken);
         }
@@ -286,7 +331,7 @@ public static class ParagraphProcessor
         IRunLogger? logger,
         ConcurrentDictionary<string, string>? cache,
         int chunkSize,
-        AdaptiveConcurrency? concurrency,
+        IConcurrencyGate? concurrency,
         CancellationToken cancellationToken)
     {
         var results = new Dictionary<int, string>();
@@ -309,7 +354,6 @@ public static class ParagraphProcessor
                 results[item.Id] = corrected;
             }
 
-            concurrency?.Success();
             return new BatchResult(batch, results);
         }
 
@@ -377,7 +421,6 @@ public static class ParagraphProcessor
             logger?.Info("Batching: partial fallback done.");
         }
 
-        concurrency?.Success();
         logger?.Info($"Batching: OK (paragraphs: {batch.Items.Count}).");
         return new BatchResult(batch, parsed);
     }
@@ -388,7 +431,7 @@ public static class ParagraphProcessor
         IRunLogger? logger,
         ConcurrentDictionary<string, string>? cache,
         int chunkSize,
-        AdaptiveConcurrency? concurrency,
+        IConcurrencyGate? concurrency,
         CancellationToken cancellationToken,
         string context = "single fallback")
     {
@@ -784,19 +827,48 @@ public static class ParagraphProcessor
 
     private sealed record BatchResult(WorkBatch Batch, Dictionary<int, string> Corrections);
 
-    private sealed class AdaptiveConcurrency : IConcurrencyGate
+    /// <summary>
+    /// Auto mode: how many workers keep the pacing interval saturated. If each request
+    /// takes <paramref name="latencyMs"/> and one may start every <paramref name="intervalMs"/>,
+    /// then ⌈latency/interval⌉ requests are in flight at the steady state. Clamped to
+    /// [1, cap]. An unthrottled interval (0) means the rate limiter is not the bottleneck,
+    /// so run at the full cap; no latency sample yet means start with one worker.
+    /// </summary>
+    internal static int DeriveParallelism(double latencyMs, double intervalMs, int cap)
     {
-        private readonly int _max;
+        cap = Math.Max(1, cap);
+        if (intervalMs <= 0)
+        {
+            return cap;
+        }
+
+        if (latencyMs <= 0)
+        {
+            return 1;
+        }
+
+        var workers = (int)Math.Ceiling(latencyMs / intervalMs);
+        return Math.Clamp(workers, 1, cap);
+    }
+
+    /// <summary>
+    /// Bounds in-flight HTTP to a target that can be raised or lowered at runtime. Raising
+    /// releases permits (up to the cap); lowering lets excess permits expire on the next
+    /// Release via <c>_pendingReductions</c> rather than yanking an in-use slot.
+    /// </summary>
+    private sealed class DynamicConcurrencyGate : IConcurrencyGate
+    {
+        private readonly int _cap;
         private int _current;
         private int _pendingReductions;
         private readonly SemaphoreSlim _semaphore;
         private readonly object _sync = new();
 
-        public AdaptiveConcurrency(int max)
+        public DynamicConcurrencyGate(int initialTarget, int cap)
         {
-            _max = Math.Max(1, max);
-            _current = _max;
-            _semaphore = new SemaphoreSlim(_max, _max);
+            _cap = Math.Max(1, cap);
+            _current = Math.Clamp(initialTarget, 1, _cap);
+            _semaphore = new SemaphoreSlim(_current, _cap);
         }
 
         public Task WaitAsync(CancellationToken cancellationToken) => _semaphore.WaitAsync(cancellationToken);
@@ -815,38 +887,35 @@ public static class ParagraphProcessor
             _semaphore.Release();
         }
 
-        public int? Backoff()
+        public void SetTarget(int target)
         {
+            target = Math.Clamp(target, 1, _cap);
+            var toRelease = 0;
             lock (_sync)
             {
-                var target = Math.Max(1, _current / 2);
-                var delta = _current - target;
-                if (delta <= 0)
-                {
-                    return null;
-                }
-
-                _current = target;
-                _pendingReductions += delta;
-                return target;
-            }
-        }
-
-        public void Success()
-        {
-            var shouldRelease = false;
-            lock (_sync)
-            {
-                if (_current >= _max)
+                if (target == _current)
                 {
                     return;
                 }
 
-                _current++;
-                shouldRelease = true;
+                if (target > _current)
+                {
+                    var delta = target - _current;
+                    _current = target;
+                    // Cancel queued reductions first (those Releases now add a permit back),
+                    // then release any remaining shortfall as fresh permits.
+                    var cancel = Math.Min(_pendingReductions, delta);
+                    _pendingReductions -= cancel;
+                    toRelease = delta - cancel;
+                }
+                else
+                {
+                    _pendingReductions += _current - target;
+                    _current = target;
+                }
             }
 
-            if (shouldRelease)
+            for (var i = 0; i < toRelease; i++)
             {
                 _semaphore.Release();
             }

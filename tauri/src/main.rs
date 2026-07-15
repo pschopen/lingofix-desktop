@@ -1258,6 +1258,10 @@ fn default_citation_normalization() -> String {
     "auto".to_string()
 }
 
+fn default_speed_mode() -> String {
+    "auto".to_string()
+}
+
 fn default_batching_parts() -> Vec<String> {
     KNOWN_DOCX_PARTS
         .iter()
@@ -1340,6 +1344,10 @@ struct DocxSettings {
     enable_cache: bool,
     enable_parallelization: bool,
     max_parallel_requests: i32,
+    #[serde(default = "default_speed_mode")]
+    speed_mode: String,
+    #[serde(default)]
+    manual_requests_per_minute: Option<i32>,
     #[serde(default = "default_true")]
     restore_non_breaking_spaces: bool,
     #[serde(default)]
@@ -1361,6 +1369,8 @@ impl Default for DocxSettings {
             enable_cache: true,
             enable_parallelization: true,
             max_parallel_requests: 4,
+            speed_mode: default_speed_mode(),
+            manual_requests_per_minute: None,
             restore_non_breaking_spaces: true,
             ignore_trailing_paragraph_whitespace: false,
             citation_normalization: default_citation_normalization(),
@@ -2096,6 +2106,21 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         return Err(format!(
             "Invalid settings: docx.max_parallel_requests is out of range. {reset_hint}"
         ));
+    }
+
+    let speed_mode = settings.docx.speed_mode.trim().to_ascii_lowercase();
+    if speed_mode != "auto" && speed_mode != "manual" {
+        return Err(format!(
+            "Invalid settings: docx.speed_mode must be 'auto' or 'manual'. {reset_hint}"
+        ));
+    }
+
+    if let Some(rpm) = settings.docx.manual_requests_per_minute {
+        if rpm < 0 {
+            return Err(format!(
+                "Invalid settings: docx.manual_requests_per_minute must not be negative. {reset_hint}"
+            ));
+        }
     }
 
     Ok(())
@@ -3284,6 +3309,8 @@ async fn run_docx_processor(
             "batch_max_paragraphs": settings.docx.batch_max_paragraphs,
             "parallelization": settings.docx.enable_parallelization,
             "max_parallel_requests": settings.docx.max_parallel_requests,
+            "speed_mode": settings.docx.speed_mode.as_str(),
+            "manual_requests_per_minute": settings.docx.manual_requests_per_minute,
             "enable_reasoning": settings.enable_reasoning,
             "reasoning_effort": &settings.reasoning_effort
         }),

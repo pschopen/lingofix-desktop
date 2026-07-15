@@ -34,6 +34,11 @@ public sealed class LlmClient
     private string _apiKey = string.Empty;
     private int _temperatureSupport = TemperatureSupportUnknown;
     private int _reasoningSupport = ReasoningSupportUnknown;
+    private bool _rateLearningEnabled;
+    private readonly object _latencySync = new();
+    private double _latencyEmaMs;
+    private bool _hasLatencySample;
+    private const double LatencyEmaWeight = 0.3;
     public LlmClient(
         string provider,
         string apiBase,
@@ -45,6 +50,8 @@ public sealed class LlmClient
         string reasoningEffort,
         bool? temperatureSupportedHint,
         bool? reasoningEffortSupportedHint,
+        SpeedMode speedMode = SpeedMode.Auto,
+        int? manualRequestsPerMinute = null,
         double? rateHintIntervalMs = null,
         IRunLogger? logger = null)
     {
@@ -61,13 +68,40 @@ public sealed class LlmClient
         _reasoningSupport = ToSupportState(reasoningEffortSupportedHint);
         _logger = logger;
 
-        // Session memory: seed the limiter with the interval learned earlier this session
-        // (fed back in by the Tauri host) so the run skips re-calibration. Ollama is local
-        // and unpaced, so a hint is meaningless there.
-        if (!_isOllama && rateHintIntervalMs is > 0)
+        if (_isOllama)
         {
-            _rateLimiter.Seed(rateHintIntervalMs.Value);
+            // Local server, no server-side rate limit: never pace.
+            _rateLimiter.Configure(pacingEnabled: false, learnFloor: false, hardMinIntervalMs: 0);
         }
+        else if (speedMode == SpeedMode.Manual)
+        {
+            var hardMin = manualRequestsPerMinute is > 0 ? 60_000.0 / manualRequestsPerMinute.Value : 0;
+            _rateLimiter.Configure(pacingEnabled: true, learnFloor: false, hardMinIntervalMs: hardMin);
+        }
+        else
+        {
+            _rateLimiter.Configure(pacingEnabled: true, learnFloor: true, hardMinIntervalMs: 0);
+            _rateLearningEnabled = true;
+
+            // Session memory: seed the limiter with the interval learned earlier this
+            // session (fed back in by the Tauri host) so the run skips re-calibration.
+            if (rateHintIntervalMs is > 0)
+            {
+                _rateLimiter.Seed(rateHintIntervalMs.Value);
+            }
+        }
+    }
+
+    /// <summary>Current shared pacing interval in ms (0 = unthrottled).</summary>
+    public double CurrentPacingIntervalMs => _rateLimiter.CurrentIntervalMs;
+
+    /// <summary>
+    /// Moving average of observed HTTP round-trip latency in ms. Used (in Auto mode) to
+    /// derive how many workers are needed to keep the pacing interval saturated.
+    /// </summary>
+    public double AverageLatencyMs
+    {
+        get { lock (_latencySync) { return _latencyEmaMs; } }
     }
 
     /// <summary>
@@ -77,6 +111,13 @@ public sealed class LlmClient
     /// </summary>
     public void EmitRateUpdateLog()
     {
+        // Only Auto mode learns a rate worth remembering. Manual's interval is the user's
+        // fixed value (plus transient backoff), so we do not feed it back as session memory.
+        if (!_rateLearningEnabled)
+        {
+            return;
+        }
+
         var interval = _rateLimiter.CurrentIntervalMs;
         if (interval <= 0)
         {
@@ -370,6 +411,7 @@ public sealed class LlmClient
 
             HttpResponseMessage response;
             string responseBody;
+            var sendStopwatch = Stopwatch.StartNew();
             try
             {
                 response = await SharedHttpClient.SendAsync(message, cancellationToken);
@@ -379,11 +421,13 @@ public sealed class LlmClient
             {
                 gate?.Release();
             }
+            sendStopwatch.Stop();
 
             using (response)
             {
             if (response.IsSuccessStatusCode)
             {
+                RecordLatency(sendStopwatch.Elapsed.TotalMilliseconds);
                 _rateLimiter.OnSuccess();
 
                 if (includeTemperature)
@@ -476,6 +520,22 @@ public sealed class LlmClient
         }
 
         throw new InvalidOperationException("LLM request failed after retries.");
+    }
+
+    private void RecordLatency(double sampleMs)
+    {
+        if (sampleMs <= 0)
+        {
+            return;
+        }
+
+        lock (_latencySync)
+        {
+            _latencyEmaMs = _hasLatencySample
+                ? (LatencyEmaWeight * sampleMs) + ((1 - LatencyEmaWeight) * _latencyEmaMs)
+                : sampleMs;
+            _hasLatencySample = true;
+        }
     }
 
     private static bool IsThrottleStatus(HttpStatusCode status)
@@ -838,6 +898,11 @@ internal sealed class AdaptiveRateLimiter
     private TimeSpan _growthLockedUntil = TimeSpan.MinValue;
     private int _consecutiveSuccesses;
 
+    // Mode configuration (see Configure). Defaults are the Auto profile.
+    private bool _pacingEnabled = true;
+    private bool _learnFloor = true;
+    private double _hardMinIntervalMs;
+
     public AdaptiveRateLimiter()
         : this(CreateStopwatchClock(), static () => Random.Shared.NextDouble(), static (delay, ct) => Task.Delay(delay, ct))
     {
@@ -870,6 +935,29 @@ internal sealed class AdaptiveRateLimiter
     }
 
     /// <summary>
+    /// Selects the control profile:
+    ///  * Auto:   pacingEnabled, learnFloor, hardMin 0 — learns the limit and plateaus.
+    ///  * Manual: pacingEnabled, !learnFloor, hardMin = 60000/rpm (or 0 = unthrottled) —
+    ///            holds the fixed interval; a 429 only causes a temporary safety backoff
+    ///            that decays straight back to hardMin, never learning a new plateau.
+    ///  * Ollama: pacing disabled entirely (local server, no server-side limit).
+    /// </summary>
+    public void Configure(bool pacingEnabled, bool learnFloor, double hardMinIntervalMs)
+    {
+        lock (_sync)
+        {
+            _pacingEnabled = pacingEnabled;
+            _learnFloor = learnFloor;
+            _hardMinIntervalMs = Math.Max(0, hardMinIntervalMs);
+            if (_hardMinIntervalMs > 0)
+            {
+                _intervalMs = Math.Min(_hardMinIntervalMs, MaxIntervalMs);
+                _learnedFloorMs = _intervalMs;
+            }
+        }
+    }
+
+    /// <summary>
     /// Seeds the limiter from a previously learned interval (session memory). Sets both
     /// the starting interval and a provisional floor so the run skips re-calibration.
     /// </summary>
@@ -893,6 +981,11 @@ internal sealed class AdaptiveRateLimiter
         TimeSpan delay;
         lock (_sync)
         {
+            if (!_pacingEnabled)
+            {
+                return;
+            }
+
             var now = _now();
             var slot = _nextSlot > now ? _nextSlot : now;
 
@@ -919,6 +1012,11 @@ internal sealed class AdaptiveRateLimiter
     {
         lock (_sync)
         {
+            if (!_pacingEnabled)
+            {
+                return;
+            }
+
             var now = _now();
             var retryAfterMs = retryAfterSeconds.HasValue ? retryAfterSeconds.Value * 1000.0 : 0;
 
@@ -932,8 +1030,10 @@ internal sealed class AdaptiveRateLimiter
                 _growthLockedUntil = now + TimeSpan.FromMilliseconds(_intervalMs);
 
                 // The interval that just got a 429 did not hold; raise the safe floor to
-                // the grown interval so decay never probes back down into it.
-                if (_intervalMs > _learnedFloorMs)
+                // the grown interval so decay never probes back down into it. In Manual
+                // mode we do not learn a floor — the backoff is temporary and must decay
+                // all the way back to the configured hard minimum.
+                if (_learnFloor && _intervalMs > _learnedFloorMs)
                 {
                     _learnedFloorMs = _intervalMs;
                 }
@@ -954,8 +1054,15 @@ internal sealed class AdaptiveRateLimiter
     {
         lock (_sync)
         {
-            if (_intervalMs <= 0)
+            if (!_pacingEnabled || _intervalMs <= 0)
             {
+                _consecutiveSuccesses = 0;
+                return;
+            }
+
+            if (_intervalMs <= _hardMinIntervalMs && !_learnFloor)
+            {
+                // Manual mode already sitting at the configured interval; nothing to decay.
                 _consecutiveSuccesses = 0;
                 return;
             }
@@ -967,17 +1074,26 @@ internal sealed class AdaptiveRateLimiter
 
             _consecutiveSuccesses = 0;
 
-            // The current interval survived a full streak → record it as the new safe
-            // floor if it is the smallest one seen so far.
-            if (_learnedFloorMs <= 0 || _intervalMs < _learnedFloorMs)
+            double decayFloor;
+            if (_learnFloor)
             {
-                _learnedFloorMs = _intervalMs;
+                // The current interval survived a full streak → record it as the new safe
+                // floor if it is the smallest one seen so far, then probe just below it.
+                if (_learnedFloorMs <= 0 || _intervalMs < _learnedFloorMs)
+                {
+                    _learnedFloorMs = _intervalMs;
+                }
+
+                decayFloor = _learnedFloorMs * FloorProbeRatio;
+            }
+            else
+            {
+                // Manual: never probe below the configured hard minimum.
+                decayFloor = 0;
             }
 
-            // Decay toward the limit, but stop just below the learned floor so we keep a
-            // plateau instead of racing back to zero.
-            var probeFloor = _learnedFloorMs * FloorProbeRatio;
-            _intervalMs = Math.Max(_intervalMs - DecreaseStepMs, probeFloor);
+            var minInterval = Math.Max(decayFloor, _hardMinIntervalMs);
+            _intervalMs = Math.Max(_intervalMs - DecreaseStepMs, minInterval);
         }
     }
 }

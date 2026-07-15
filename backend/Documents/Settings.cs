@@ -3,6 +3,17 @@ using System.Text.Json.Serialization;
 
 namespace Lingofix.Backend.Documents;
 
+/// <summary>
+/// Two speed models. <see cref="Auto"/> learns the provider's real rate limit and derives
+/// parallelism from it; <see cref="Manual"/> holds the user's fixed caps (with only a
+/// temporary safety backoff on 429/503).
+/// </summary>
+public enum SpeedMode
+{
+    Auto,
+    Manual
+}
+
 public sealed class Settings
 {
     public const double MinTemperature = 0.0;
@@ -51,8 +62,13 @@ public sealed class Settings
     public int BatchMaxChars { get; set; }
     public int BatchMaxParagraphs { get; set; }
     public bool EnableCache { get; set; }
+    // Retained for backward-compatible parsing of older settings.json; no longer gates
+    // behavior (SpeedMode does). Not written back out.
     public bool EnableParallelization { get; set; }
     public int MaxParallelRequests { get; set; }
+    public SpeedMode SpeedMode { get; set; } = SpeedMode.Auto;
+    // null = unthrottled. Only used in Manual mode.
+    public int? ManualRequestsPerMinute { get; set; }
     public bool RestoreNonBreakingSpaces { get; set; }
     public bool IgnoreTrailingParagraphWhitespace { get; set; }
     public CitationNormalizer.NormalizationMode CitationNormalizationMode { get; set; } = CitationNormalizer.NormalizationMode.Auto;
@@ -131,6 +147,8 @@ public sealed class Settings
             EnableCache = docx.EnableCache,
             EnableParallelization = docx.EnableParallelization,
             MaxParallelRequests = docx.MaxParallelRequests,
+            SpeedMode = ParseSpeedMode(docx.SpeedMode),
+            ManualRequestsPerMinute = NormalizeRequestsPerMinute(docx.ManualRequestsPerMinute),
             RestoreNonBreakingSpaces = docx.RestoreNonBreakingSpaces,
             IgnoreTrailingParagraphWhitespace = docx.IgnoreTrailingParagraphWhitespace,
             CitationNormalizationMode = CitationNormalizer.ParseMode(docx.CitationNormalization),
@@ -259,6 +277,25 @@ public sealed class Settings
         return result;
     }
 
+    private static SpeedMode ParseSpeedMode(string? raw)
+    {
+        // Missing/empty/unknown -> Auto. Migration intent: existing installs (which never
+        // wrote speed_mode) come up in Auto mode.
+        return string.Equals(raw?.Trim(), "manual", StringComparison.OrdinalIgnoreCase)
+            ? SpeedMode.Manual
+            : SpeedMode.Auto;
+    }
+
+    private static int? NormalizeRequestsPerMinute(int? raw)
+    {
+        if (!raw.HasValue || raw.Value <= 0)
+        {
+            return null;
+        }
+
+        return Math.Clamp(raw.Value, 1, 100_000);
+    }
+
     private static string ParseReasoningEffort(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
@@ -364,6 +401,12 @@ internal sealed class FrontendDocxSettingsPayload
 
     [JsonPropertyName("max_parallel_requests")]
     public int MaxParallelRequests { get; set; }
+
+    [JsonPropertyName("speed_mode")]
+    public string? SpeedMode { get; set; }
+
+    [JsonPropertyName("manual_requests_per_minute")]
+    public int? ManualRequestsPerMinute { get; set; }
 
     [JsonPropertyName("restore_non_breaking_spaces")]
     public bool RestoreNonBreakingSpaces { get; set; }

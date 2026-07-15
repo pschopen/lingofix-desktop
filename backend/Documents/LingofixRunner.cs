@@ -110,6 +110,8 @@ public static class LingofixRunner
             settings.ReasoningEffort,
             settings.TemperatureSupportedHint,
             settings.ReasoningEffortSupportedHint,
+            settings.SpeedMode,
+            settings.ManualRequestsPerMinute,
             settings.RateHintIntervalMs,
             logger);
         if (!string.IsNullOrWhiteSpace(apiKey))
@@ -273,6 +275,8 @@ public static class LingofixRunner
                             EnableCache = settings.EnableCache,
                             EnableParallelization = settings.EnableParallelization,
                             MaxParallelRequests = settings.MaxParallelRequests,
+                            SpeedMode = settings.SpeedMode,
+                            ManualRequestsPerMinute = settings.ManualRequestsPerMinute,
                             CitationNormalizationMode = settings.CitationNormalizationMode,
                             CitationStyle = settings.CitationStyle
                         };
