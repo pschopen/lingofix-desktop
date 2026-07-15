@@ -9,6 +9,10 @@ public static class ParagraphProcessor
 {
     private const string BatchParagraphSeparator = "\n\n";
 
+    // On 429/503/529 the whole batch is re-sent (never split into single requests). After
+    // this many paced retries the rate-limit error is propagated instead.
+    private const int MaxBatchRateLimitRetries = 3;
+
     public static async Task ProcessAsync(
         IEnumerable<Paragraph> paragraphs,
         LlmClient llmClient,
@@ -159,27 +163,23 @@ public static class ParagraphProcessor
         {
             return Task.Run(async () =>
             {
-                await concurrency.WaitAsync(cancellationToken);
-                try
+                // No concurrency slot is held here: the gate (concurrency) is passed into
+                // the LLM client, which acquires it only around the HTTP send — never
+                // across the shared pacing wait. That keeps throughput at the provider's
+                // real rate limit instead of maxParallel/latency.
+                cancellationToken.ThrowIfCancellationRequested();
+                var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, concurrency, cancellationToken);
+                lock (progressLock)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, concurrency, cancellationToken);
-                    lock (progressLock)
-                    {
-                        ApplyBatchResult(result, cache, logger, citationStyle);
-                        completedBatches++;
-                        processedParagraphs += batch.Items.Count;
-                        completedChars += batch.Items.Sum(item => item.Original.Length);
-                        var completedWork = totalWork == totalChars ? completedChars : processedParagraphs;
-                        progressCallback?.Invoke(completedWork, totalWork, $"Batch {completedBatches}/{totalBatches}");
-                        completedFlags[index] = true;
-                        contiguousDone = AdvanceContiguousPrefix(completedFlags, contiguousDone);
-                        batchCheckpointCallback?.Invoke(resumedBatches + contiguousDone, totalBatches);
-                    }
-                }
-                finally
-                {
-                    concurrency.Release();
+                    ApplyBatchResult(result, cache, logger, citationStyle);
+                    completedBatches++;
+                    processedParagraphs += batch.Items.Count;
+                    completedChars += batch.Items.Sum(item => item.Original.Length);
+                    var completedWork = totalWork == totalChars ? completedChars : processedParagraphs;
+                    progressCallback?.Invoke(completedWork, totalWork, $"Batch {completedBatches}/{totalBatches}");
+                    completedFlags[index] = true;
+                    contiguousDone = AdvanceContiguousPrefix(completedFlags, contiguousDone);
+                    batchCheckpointCallback?.Invoke(resumedBatches + contiguousDone, totalBatches);
                 }
             }, cancellationToken);
         }
@@ -248,24 +248,24 @@ public static class ParagraphProcessor
         }
     }
 
-    private static async Task<string> CorrectWithChunkingAsync(string original, int chunkSize, LlmClient llmClient, CancellationToken cancellationToken)
+    private static async Task<string> CorrectWithChunkingAsync(string original, int chunkSize, LlmClient llmClient, IConcurrencyGate? gate, CancellationToken cancellationToken)
     {
         if (original.Length <= chunkSize)
         {
-            return await llmClient.CorrectAsync(original, cancellationToken);
+            return await llmClient.CorrectAsync(original, gate, cancellationToken);
         }
 
         var chunks = SplitIntoChunks(original, chunkSize);
         if (chunks.Count == 1)
         {
-            return await llmClient.CorrectAsync(original, cancellationToken);
+            return await llmClient.CorrectAsync(original, gate, cancellationToken);
         }
 
         var builder = new StringBuilder(original.Length);
         foreach (var chunk in chunks)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var correctedChunk = await llmClient.CorrectAsync(chunk, cancellationToken);
+            var correctedChunk = await llmClient.CorrectAsync(chunk, gate, cancellationToken);
             if (string.IsNullOrWhiteSpace(correctedChunk))
             {
                 builder.Append(chunk);
@@ -300,7 +300,7 @@ public static class ParagraphProcessor
         {
             foreach (var item in batch.Items)
             {
-                var corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, cancellationToken);
+                var corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, concurrency, cancellationToken);
                 if (string.IsNullOrWhiteSpace(corrected))
                 {
                     continue;
@@ -315,30 +315,36 @@ public static class ParagraphProcessor
 
         var request = BuildBatchRequest(batch.Items);
         string response;
-        try
+        var rateLimitRetries = 0;
+        while (true)
         {
-            response = await llmClient.CorrectBatchAsync(request, settings.BatchPrompt, cancellationToken);
-        }
-        catch (LlmRateLimitException ex)
-        {
-            var newLimit = concurrency?.Backoff();
-            if (newLimit.HasValue)
+            try
             {
-                logger?.Info($"Rate limit: parallelism reduced to {newLimit.Value}.");
+                response = await llmClient.CorrectBatchAsync(request, settings.BatchPrompt, concurrency, cancellationToken);
+                break;
             }
-
-            if (ex.RetryAfterSeconds.HasValue)
+            catch (LlmRateLimitException) when (rateLimitRetries < MaxBatchRateLimitRetries)
             {
-                await Task.Delay(ex.RetryAfterSeconds.Value * 1000, cancellationToken);
+                // 429/503/529: retry the SAME batch rather than exploding it into single
+                // requests (that would multiply load exactly during overload). The shared
+                // rate limiter has already paced the next slot past any Retry-After, so the
+                // next CorrectBatchAsync waits the right amount before sending.
+                rateLimitRetries++;
+                logger?.Info($"Batching: rate limit, retrying same batch ({rateLimitRetries}/{MaxBatchRateLimitRetries}, paragraphs: {batch.Items.Count}).");
+                continue;
             }
-
-            logger?.Info($"Batching: rate limit, falling back to single requests (paragraphs: {batch.Items.Count}).");
-            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
-        }
-        catch
-        {
-            logger?.Info($"Batching: LLM error, falling back to single requests (paragraphs: {batch.Items.Count}).");
-            return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
+            catch (LlmRateLimitException)
+            {
+                // Exhausted batch-level rate-limit retries: propagate. We deliberately do
+                // NOT fall back to single requests on rate limits.
+                logger?.Info($"Batching: rate limit persisted after {MaxBatchRateLimitRetries} batch retries; propagating (paragraphs: {batch.Items.Count}).");
+                throw;
+            }
+            catch
+            {
+                logger?.Info($"Batching: LLM error, falling back to single requests (paragraphs: {batch.Items.Count}).");
+                return await ProcessBatchFallbackAsync(batch, llmClient, logger, cache, chunkSize, concurrency, cancellationToken);
+            }
         }
 
         if (!TryParseBatchResponse(response, batch.Items, out var parsed, out var parseFailure))
@@ -394,22 +400,13 @@ public static class ParagraphProcessor
             string corrected;
             try
             {
-                corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, cancellationToken);
+                corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, concurrency, cancellationToken);
             }
-            catch (LlmRateLimitException ex)
+            catch (LlmRateLimitException)
             {
-                var newLimit = concurrency?.Backoff();
-                if (newLimit.HasValue)
-                {
-                    logger?.Info($"Rate limit: parallelism reduced to {newLimit.Value}.");
-                }
-
-                if (ex.RetryAfterSeconds.HasValue)
-                {
-                    await Task.Delay(ex.RetryAfterSeconds.Value * 1000, cancellationToken);
-                }
-
-                corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, cancellationToken);
+                // The rate limiter already paced the next slot; retry the single item once
+                // more without touching parallelism (the limiter is the only 429 regulator).
+                corrected = await CorrectWithCacheAsync(item.Original, chunkSize, llmClient, cache, concurrency, cancellationToken);
             }
 
             if (string.IsNullOrWhiteSpace(corrected))
@@ -424,14 +421,14 @@ public static class ParagraphProcessor
         return new BatchResult(batch, results);
     }
 
-    private static async Task<string> CorrectWithCacheAsync(string original, int chunkSize, LlmClient llmClient, ConcurrentDictionary<string, string>? cache, CancellationToken cancellationToken)
+    private static async Task<string> CorrectWithCacheAsync(string original, int chunkSize, LlmClient llmClient, ConcurrentDictionary<string, string>? cache, IConcurrencyGate? gate, CancellationToken cancellationToken)
     {
         if (cache is not null && cache.TryGetValue(original, out var cached))
         {
             return cached;
         }
 
-        var corrected = await CorrectWithChunkingAsync(original, chunkSize, llmClient, cancellationToken);
+        var corrected = await CorrectWithChunkingAsync(original, chunkSize, llmClient, gate, cancellationToken);
         if (cache is not null && !string.IsNullOrWhiteSpace(corrected))
         {
             cache.TryAdd(original, corrected);
@@ -787,7 +784,7 @@ public static class ParagraphProcessor
 
     private sealed record BatchResult(WorkBatch Batch, Dictionary<int, string> Corrections);
 
-    private sealed class AdaptiveConcurrency
+    private sealed class AdaptiveConcurrency : IConcurrencyGate
     {
         private readonly int _max;
         private int _current;

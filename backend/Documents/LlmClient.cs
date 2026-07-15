@@ -99,7 +99,7 @@ public sealed class LlmClient
         return supported.Value ? TemperatureSupportSupported : TemperatureSupportUnsupported;
     }
 
-    public async Task<string> CorrectAsync(string input, CancellationToken cancellationToken = default)
+    public async Task<string> CorrectAsync(string input, IConcurrencyGate? gate = null, CancellationToken cancellationToken = default)
     {
         var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, input);
         var baseRequest = new ChatCompletionsRequest
@@ -116,10 +116,11 @@ public sealed class LlmClient
         return await SendWithTemperatureFallbackAsync(
             baseRequest,
             sanitizeOutput: true,
+            gate: gate,
             cancellationToken: cancellationToken);
     }
 
-    public async Task<string> CorrectBatchAsync(string input, string _batchPrompt, CancellationToken cancellationToken = default)
+    public async Task<string> CorrectBatchAsync(string input, string _batchPrompt, IConcurrencyGate? gate = null, CancellationToken cancellationToken = default)
     {
         var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, input);
         var baseRequest = new ChatCompletionsRequest
@@ -136,6 +137,7 @@ public sealed class LlmClient
         return await SendWithTemperatureFallbackAsync(
             baseRequest,
             sanitizeOutput: false,
+            gate: gate,
             cancellationToken: cancellationToken,
             maxAttempts: 1,
             allowTemperatureFallback: true,
@@ -295,6 +297,7 @@ public sealed class LlmClient
     private async Task<string> SendWithTemperatureFallbackAsync(
         ChatCompletionsRequest request,
         bool sanitizeOutput,
+        IConcurrencyGate? gate = null,
         CancellationToken cancellationToken = default,
         int maxAttempts = 3,
         bool allowTemperatureFallback = true,
@@ -333,9 +336,27 @@ public sealed class LlmClient
                 message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
             }
 
-            using var response = await SharedHttpClient.SendAsync(message, cancellationToken);
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            // The concurrency slot wraps only the in-flight HTTP send, not the pacing
+            // WaitAsync above, so a slow pace never ties up a slot and starves throughput.
+            if (gate is not null)
+            {
+                await gate.WaitAsync(cancellationToken);
+            }
 
+            HttpResponseMessage response;
+            string responseBody;
+            try
+            {
+                response = await SharedHttpClient.SendAsync(message, cancellationToken);
+                responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            }
+            finally
+            {
+                gate?.Release();
+            }
+
+            using (response)
+            {
             if (response.IsSuccessStatusCode)
             {
                 _rateLimiter.OnSuccess();
@@ -367,13 +388,15 @@ public sealed class LlmClient
             }
 
             var retryAfterSeconds = GetRetryAfterSeconds(response);
-            if (response.StatusCode == (HttpStatusCode)429)
+            if (IsThrottleStatus(response.StatusCode))
             {
                 rateLimitAttempts++;
 
                 // Slow the shared pacing down. The limiter also pushes the next global
                 // slot past any Retry-After, so the WaitAsync at the top of the loop is
                 // the single place that waits before we retry (no separate Task.Delay).
+                // 503/529 (overload) share this path with 429: a common counter is a
+                // deliberate simplification — overload is throttled the same as a hard limit.
                 _rateLimiter.OnRateLimited(retryAfterSeconds);
 
                 if (rateLimitAttempts > MaxRateLimitAttempts)
@@ -381,7 +404,7 @@ public sealed class LlmClient
                     throw new LlmRateLimitException(retryAfterSeconds, responseBody);
                 }
 
-                _logger?.Info($"Rate limit hit (attempt {rateLimitAttempts}/{MaxRateLimitAttempts}). Slowing down and retrying.");
+                _logger?.Info($"Rate limit/overload hit (status {(int)response.StatusCode}, attempt {rateLimitAttempts}/{MaxRateLimitAttempts}). Slowing down and retrying.");
 
                 // Rate-limit retries are unbounded relative to maxAttempts; only the
                 // dedicated rate-limit counter above governs when to give up.
@@ -424,9 +447,17 @@ public sealed class LlmClient
             }
 
             await Task.Delay(GetRetryDelay(attempt, retryAfterSeconds), cancellationToken);
+            }
         }
 
         throw new InvalidOperationException("LLM request failed after retries.");
+    }
+
+    private static bool IsThrottleStatus(HttpStatusCode status)
+    {
+        var code = (int)status;
+        // 429 Too Many Requests, 503 Service Unavailable, 529 Overloaded (Anthropic/others).
+        return code == 429 || code == 503 || code == 529;
     }
 
     private void LogRequestPayload(ChatCompletionsRequest request, int attempt)
@@ -724,47 +755,138 @@ public sealed class LlmRateLimitException : Exception
 }
 
 /// <summary>
+/// Bounds the number of concurrently in-flight HTTP requests. Kept separate from the
+/// rate limiter (which governs *when* a request may start) so a slot is only held for
+/// the actual send, never across the pacing wait — otherwise throughput would collapse
+/// to maxParallel/latency, below the provider's real rate limit.
+/// </summary>
+public interface IConcurrencyGate
+{
+    Task WaitAsync(CancellationToken cancellationToken);
+    void Release();
+}
+
+/// <summary>
 /// Paces requests to a shared minimum interval so all parallel workers of one run
 /// converge on a provider's actual rate limit (e.g. Mistral Large's ~0.6 req/s)
 /// instead of hammering it on every retry.
 ///
 /// Control law is AIMD (multiplicative increase on 429, additive decrease after a
-/// streak of successes), which is far more stable than multiplicative-both. Growth is
-/// debounced to once per penalty window so that a burst of simultaneous 429s from a
+/// streak of successes). Two additions keep it converging to a *plateau* instead of
+/// oscillating back to "unthrottled":
+///
+///  * A learned floor — the smallest interval that has survived a full success streak.
+///    Decay stops just below it (at <see cref="FloorProbeRatio"/> of the floor) so the
+///    limiter gently probes for a relaxed limit but never crashes back to zero and runs
+///    straight into the limit again. A 429 raises the floor to the interval that just
+///    failed.
+///  * Jitter on slot spacing so parallel workers desynchronise instead of bursting at
+///    exact slot boundaries.
+///
+/// Growth is debounced to once per penalty window so a burst of simultaneous 429s from a
 /// single overload event only slows us down once, not once per concurrent request.
 /// Retry-After is honored as a hard floor for the next global slot even when it exceeds
 /// the pacing cap, so we never retry before the server said we may.
+///
+/// The clock, jitter and delay are injectable so convergence is deterministically
+/// testable without real time.
 /// </summary>
 internal sealed class AdaptiveRateLimiter
 {
-    private const double MinIntervalMs = 0;
     private const double MaxIntervalMs = 15_000;
     private const double InitialPenaltyMs = 250;
     private const double IncreaseFactor = 2.0;
     private const double DecreaseStepMs = 150;
-    private const int SuccessesBeforeDecay = 8;
+    private const int SuccessesBeforeDecay = 20;
+    private const double FloorProbeRatio = 0.9;
+    private const double JitterFraction = 0.25;
 
     private readonly object _sync = new();
-    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private readonly Func<TimeSpan> _now;
+    private readonly Func<double> _nextJitter;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+
     private double _intervalMs;
+    // Smallest interval known to survive a full success streak; 0 = not yet learned.
+    private double _learnedFloorMs;
     private TimeSpan _nextSlot = TimeSpan.Zero;
-    private TimeSpan _growthLockedUntil = TimeSpan.Zero;
+    private TimeSpan _growthLockedUntil = TimeSpan.MinValue;
     private int _consecutiveSuccesses;
+
+    public AdaptiveRateLimiter()
+        : this(CreateStopwatchClock(), static () => Random.Shared.NextDouble(), static (delay, ct) => Task.Delay(delay, ct))
+    {
+    }
+
+    internal AdaptiveRateLimiter(
+        Func<TimeSpan> now,
+        Func<double> nextJitter,
+        Func<TimeSpan, CancellationToken, Task> delay)
+    {
+        _now = now;
+        _nextJitter = nextJitter;
+        _delay = delay;
+    }
+
+    private static Func<TimeSpan> CreateStopwatchClock()
+    {
+        var clock = Stopwatch.StartNew();
+        return () => clock.Elapsed;
+    }
+
+    internal double CurrentIntervalMs
+    {
+        get { lock (_sync) { return _intervalMs; } }
+    }
+
+    internal double LearnedFloorMs
+    {
+        get { lock (_sync) { return _learnedFloorMs; } }
+    }
+
+    /// <summary>
+    /// Seeds the limiter from a previously learned interval (session memory). Sets both
+    /// the starting interval and a provisional floor so the run skips re-calibration.
+    /// </summary>
+    public void Seed(double intervalMs)
+    {
+        if (double.IsNaN(intervalMs) || intervalMs <= 0)
+        {
+            return;
+        }
+
+        lock (_sync)
+        {
+            _intervalMs = Math.Min(intervalMs, MaxIntervalMs);
+            _learnedFloorMs = _intervalMs;
+            _consecutiveSuccesses = 0;
+        }
+    }
 
     public async Task WaitAsync(CancellationToken cancellationToken)
     {
         TimeSpan delay;
         lock (_sync)
         {
-            var now = _clock.Elapsed;
+            var now = _now();
             var slot = _nextSlot > now ? _nextSlot : now;
-            _nextSlot = slot + TimeSpan.FromMilliseconds(_intervalMs);
+
+            var increment = _intervalMs;
+            if (increment > 0)
+            {
+                // ±JitterFraction around the interval; average spacing is unchanged, but
+                // parallel workers no longer line up on identical slot boundaries.
+                var jitter = (_nextJitter() * 2.0 - 1.0) * JitterFraction;
+                increment = Math.Max(0, increment * (1.0 + jitter));
+            }
+
+            _nextSlot = slot + TimeSpan.FromMilliseconds(increment);
             delay = slot - now;
         }
 
         if (delay > TimeSpan.Zero)
         {
-            await Task.Delay(delay, cancellationToken);
+            await _delay(delay, cancellationToken);
         }
     }
 
@@ -772,7 +894,7 @@ internal sealed class AdaptiveRateLimiter
     {
         lock (_sync)
         {
-            var now = _clock.Elapsed;
+            var now = _now();
             var retryAfterMs = retryAfterSeconds.HasValue ? retryAfterSeconds.Value * 1000.0 : 0;
 
             // Debounce: concurrent 429s from the same overload burst arrive before the
@@ -780,9 +902,16 @@ internal sealed class AdaptiveRateLimiter
             if (now >= _growthLockedUntil)
             {
                 var grown = _intervalMs <= 0 ? InitialPenaltyMs : _intervalMs * IncreaseFactor;
-                _intervalMs = Math.Min(Math.Max(grown, MinIntervalMs), MaxIntervalMs);
+                _intervalMs = Math.Min(grown, MaxIntervalMs);
                 _consecutiveSuccesses = 0;
                 _growthLockedUntil = now + TimeSpan.FromMilliseconds(_intervalMs);
+
+                // The interval that just got a 429 did not hold; raise the safe floor to
+                // the grown interval so decay never probes back down into it.
+                if (_intervalMs > _learnedFloorMs)
+                {
+                    _learnedFloorMs = _intervalMs;
+                }
             }
 
             // Push the next global slot past both the pacing interval and any Retry-After.
@@ -800,7 +929,7 @@ internal sealed class AdaptiveRateLimiter
     {
         lock (_sync)
         {
-            if (_intervalMs <= MinIntervalMs)
+            if (_intervalMs <= 0)
             {
                 _consecutiveSuccesses = 0;
                 return;
@@ -812,7 +941,18 @@ internal sealed class AdaptiveRateLimiter
             }
 
             _consecutiveSuccesses = 0;
-            _intervalMs = Math.Max(_intervalMs - DecreaseStepMs, MinIntervalMs);
+
+            // The current interval survived a full streak → record it as the new safe
+            // floor if it is the smallest one seen so far.
+            if (_learnedFloorMs <= 0 || _intervalMs < _learnedFloorMs)
+            {
+                _learnedFloorMs = _intervalMs;
+            }
+
+            // Decay toward the limit, but stop just below the learned floor so we keep a
+            // plateau instead of racing back to zero.
+            var probeFloor = _learnedFloorMs * FloorProbeRatio;
+            _intervalMs = Math.Max(_intervalMs - DecreaseStepMs, probeFloor);
         }
     }
 }

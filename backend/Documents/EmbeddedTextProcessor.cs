@@ -63,7 +63,7 @@ internal static class EmbeddedTextProcessor
                 var original = node.Value;
                 if (!cache.TryGetValue(original, out var corrected))
                 {
-                    corrected = await llmClient.CorrectAsync(original, cancellationToken);
+                    corrected = await llmClient.CorrectAsync(original, cancellationToken: cancellationToken);
                     if (string.IsNullOrWhiteSpace(corrected))
                     {
                         corrected = original;
