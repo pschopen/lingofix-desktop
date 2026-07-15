@@ -45,6 +45,7 @@ public sealed class LlmClient
         string reasoningEffort,
         bool? temperatureSupportedHint,
         bool? reasoningEffortSupportedHint,
+        double? rateHintIntervalMs = null,
         IRunLogger? logger = null)
     {
         _isOllama = string.Equals(provider, "ollama", StringComparison.OrdinalIgnoreCase);
@@ -59,6 +60,30 @@ public sealed class LlmClient
         _temperatureSupport = ToSupportState(temperatureSupportedHint);
         _reasoningSupport = ToSupportState(reasoningEffortSupportedHint);
         _logger = logger;
+
+        // Session memory: seed the limiter with the interval learned earlier this session
+        // (fed back in by the Tauri host) so the run skips re-calibration. Ollama is local
+        // and unpaced, so a hint is meaningless there.
+        if (!_isOllama && rateHintIntervalMs is > 0)
+        {
+            _rateLimiter.Seed(rateHintIntervalMs.Value);
+        }
+    }
+
+    /// <summary>
+    /// Emits the interval the limiter converged on this run so the host can keep it as
+    /// in-memory session memory and seed the next run of the same provider/model. No-op
+    /// when nothing was learned (interval still zero, i.e. never throttled).
+    /// </summary>
+    public void EmitRateUpdateLog()
+    {
+        var interval = _rateLimiter.CurrentIntervalMs;
+        if (interval <= 0)
+        {
+            return;
+        }
+
+        _logger?.Info($"LLM rate update: key={_capabilityCacheKey}; interval_ms={(long)Math.Round(interval)}");
     }
 
     private static HttpClient CreateHttpClient()

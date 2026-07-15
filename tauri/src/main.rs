@@ -1320,6 +1320,10 @@ enum CorrectionChunkOutcome {
 struct ModelCapabilityState {
     temperature_support: Mutex<HashMap<String, bool>>,
     reasoning_effort_support: Mutex<HashMap<String, bool>>,
+    // In-memory session memory of the pacing interval (ms) the rate limiter converged on,
+    // keyed by provider|api_url|model. Never persisted to disk: effective limits drift over
+    // days, so an app restart deliberately starts a fresh calibration.
+    rate_interval_ms: Mutex<HashMap<String, u64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3095,6 +3099,39 @@ fn parse_llm_capability_update_log(message: &str) -> Option<LlmCapabilityUpdate>
     })
 }
 
+#[derive(Debug)]
+struct LlmRateUpdate {
+    key: String,
+    interval_ms: u64,
+}
+
+fn parse_llm_rate_update_log(message: &str) -> Option<LlmRateUpdate> {
+    let prefix = "LLM rate update: ";
+    if !message.starts_with(prefix) {
+        return None;
+    }
+
+    let mut key = String::new();
+    let mut interval_ms: Option<u64> = None;
+    for part in message[prefix.len()..].split(';') {
+        let part = part.trim();
+        if let Some(value) = part.strip_prefix("key=") {
+            key = value.trim().to_string();
+        } else if let Some(value) = part.strip_prefix("interval_ms=") {
+            interval_ms = value.trim().parse::<u64>().ok();
+        }
+    }
+
+    if key.is_empty() {
+        return None;
+    }
+
+    Some(LlmRateUpdate {
+        key,
+        interval_ms: interval_ms?,
+    })
+}
+
 fn extract_api_error_message(body: &str) -> String {
     if body.trim().is_empty() {
         return "no response body".to_string();
@@ -3273,6 +3310,10 @@ async fn run_docx_processor(
         let cache = capability_state.reasoning_effort_support.lock().await;
         cache.get(&capability_key).copied()
     };
+    let rate_hint = {
+        let cache = capability_state.rate_interval_ms.lock().await;
+        cache.get(&capability_key).copied()
+    };
 
     write_debug_event(
         app,
@@ -3280,7 +3321,8 @@ async fn run_docx_processor(
         json!({
             "key": capability_key,
             "temperature_supported": temperature_hint,
-            "reasoning_effort_supported": reasoning_hint
+            "reasoning_effort_supported": reasoning_hint,
+            "rate_interval_ms": rate_hint
         }),
     );
 
@@ -3295,6 +3337,11 @@ async fn run_docx_processor(
         }
         if !hint_obj.is_empty() {
             object.insert("llm_capability_hint".to_string(), Value::Object(hint_obj));
+        }
+        if let Some(value) = rate_hint {
+            let mut rate_obj = serde_json::Map::new();
+            rate_obj.insert("interval_ms".to_string(), json!(value));
+            object.insert("llm_rate_hint".to_string(), Value::Object(rate_obj));
         }
     }
 
@@ -3460,6 +3507,22 @@ async fn run_docx_processor(
                                                 "key": update.key,
                                                 "capability": update.capability,
                                                 "supported": update.supported
+                                            }),
+                                        );
+                                    }
+                                }
+                                if let Some(update) = parse_llm_rate_update_log(message) {
+                                    if update.key == capability_key {
+                                        {
+                                            let mut cache = capability_state.rate_interval_ms.lock().await;
+                                            cache.insert(capability_key.clone(), update.interval_ms);
+                                        }
+                                        write_debug_event(
+                                            app,
+                                            "docx.run.rate_update",
+                                            json!({
+                                                "key": update.key,
+                                                "interval_ms": update.interval_ms
                                             }),
                                         );
                                     }
@@ -4839,4 +4902,43 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, _event| {});
+}
+
+#[cfg(test)]
+mod rate_hint_tests {
+    use super::{parse_llm_rate_update_log, parse_llm_capability_update_log};
+
+    #[test]
+    fn parses_rate_update_log() {
+        let update = parse_llm_rate_update_log(
+            "LLM rate update: key=mistral|https://api.mistral.ai/v1|mistral-large; interval_ms=1500",
+        )
+        .expect("should parse a rate update line");
+        assert_eq!(update.key, "mistral|https://api.mistral.ai/v1|mistral-large");
+        assert_eq!(update.interval_ms, 1500);
+    }
+
+    #[test]
+    fn ignores_lines_that_are_not_rate_updates() {
+        assert!(parse_llm_rate_update_log(
+            "LLM capability update: key=x; capability=temperature; supported=true"
+        )
+        .is_none());
+        assert!(parse_llm_rate_update_log("some unrelated log line").is_none());
+    }
+
+    #[test]
+    fn requires_a_parsable_interval() {
+        assert!(parse_llm_rate_update_log("LLM rate update: key=x").is_none());
+        assert!(parse_llm_rate_update_log("LLM rate update: key=x; interval_ms=abc").is_none());
+    }
+
+    #[test]
+    fn rate_and_capability_parsers_do_not_overlap() {
+        // A capability line must not be misread as a rate update and vice versa.
+        assert!(parse_llm_capability_update_log(
+            "LLM rate update: key=x; interval_ms=1000"
+        )
+        .is_none());
+    }
 }

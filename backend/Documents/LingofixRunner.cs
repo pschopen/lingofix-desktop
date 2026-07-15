@@ -110,6 +110,7 @@ public static class LingofixRunner
             settings.ReasoningEffort,
             settings.TemperatureSupportedHint,
             settings.ReasoningEffortSupportedHint,
+            settings.RateHintIntervalMs,
             logger);
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
@@ -316,6 +317,10 @@ public static class LingofixRunner
 
                 doc.Save();
             }
+
+            // Correction finished: surface the learned pacing interval so the host keeps
+            // it as session memory and seeds the next run of this provider/model.
+            llmClient.EmitRateUpdateLog();
 
             logger.Progress(85, "Generating comparison...");
             try

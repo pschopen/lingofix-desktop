@@ -59,6 +59,7 @@ public sealed class Settings
     public CitationNormalizer.CitationStyle? CitationStyle { get; set; }
     public bool? TemperatureSupportedHint { get; set; }
     public bool? ReasoningEffortSupportedHint { get; set; }
+    public double? RateHintIntervalMs { get; set; }
 
     public static string ResolveApiKey(string raw)
     {
@@ -134,7 +135,8 @@ public sealed class Settings
             IgnoreTrailingParagraphWhitespace = docx.IgnoreTrailingParagraphWhitespace,
             CitationNormalizationMode = CitationNormalizer.ParseMode(docx.CitationNormalization),
             TemperatureSupportedHint = payload.LlmCapabilityHint?.TemperatureSupported,
-            ReasoningEffortSupportedHint = payload.LlmCapabilityHint?.ReasoningEffortSupported
+            ReasoningEffortSupportedHint = payload.LlmCapabilityHint?.ReasoningEffortSupported,
+            RateHintIntervalMs = payload.LlmRateHint?.IntervalMs
         };
 
         if (double.IsNaN(normalized.Temperature) || double.IsInfinity(normalized.Temperature))
@@ -311,6 +313,15 @@ internal sealed class FrontendSettingsPayload
 
     [JsonPropertyName("llm_capability_hint")]
     public FrontendLlmCapabilityHintPayload? LlmCapabilityHint { get; set; }
+
+    [JsonPropertyName("llm_rate_hint")]
+    public FrontendLlmRateHintPayload? LlmRateHint { get; set; }
+}
+
+internal sealed class FrontendLlmRateHintPayload
+{
+    [JsonPropertyName("interval_ms")]
+    public double? IntervalMs { get; set; }
 }
 
 internal sealed class FrontendLlmCapabilityHintPayload
