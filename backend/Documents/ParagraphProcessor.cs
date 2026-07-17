@@ -15,7 +15,10 @@ public static class ParagraphProcessor
 
     // Auto mode: internal ceiling on derived parallelism, and the conservative starting
     // worker count used until enough latency has been measured to derive a real target.
-    private const int AutoParallelCap = 8;
+    // Matches the manual maximum (Settings.MaxMaxParallelRequests) so an unthrottled
+    // provider (interval -> 0, where DeriveParallelism returns the cap) can open as many
+    // slots in Auto as a user could request in Manual.
+    private const int AutoParallelCap = 16;
     private const int AutoInitialParallel = 2;
 
     public static async Task ProcessAsync(
