@@ -503,6 +503,15 @@ public sealed class LlmClient
             // (x-ratelimit-*, retry hints, ...) before committing to parsing any of them.
             LogResponseHeadersOnce(response);
 
+            // If the provider states a hard request/minute ceiling in its headers (Mistral
+            // does, on every response), pace directly to it instead of discovering it via
+            // repeated 429s. Applied for successes and throttles alike, so the floor is set
+            // as early as possible.
+            if (TryGetRequestsPerMinuteLimit(response, out var advertisedReqPerMinute))
+            {
+                _rateLimiter.ApplyAuthoritativeLimit(advertisedReqPerMinute);
+            }
+
             if (response.IsSuccessStatusCode)
             {
                 RecordLatency(sendStopwatch.Elapsed.TotalMilliseconds);
@@ -598,6 +607,32 @@ public sealed class LlmClient
         }
 
         throw new InvalidOperationException("LLM request failed after retries.");
+    }
+
+    /// <summary>
+    /// Reads a provider's advertised per-minute request ceiling from the response headers,
+    /// when one is present. Mistral returns <c>x-ratelimit-limit-req-minute</c> on every
+    /// response; Gemini and Ollama send no such header, so those keep the purely reactive
+    /// (429-driven) pacing.
+    /// </summary>
+    private static bool TryGetRequestsPerMinuteLimit(HttpResponseMessage response, out double requestsPerMinute)
+    {
+        requestsPerMinute = 0;
+        if (!response.Headers.TryGetValues("x-ratelimit-limit-req-minute", out var values))
+        {
+            return false;
+        }
+
+        foreach (var value in values)
+        {
+            if (double.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed) && parsed > 0)
+            {
+                requestsPerMinute = parsed;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void LogResponseHeadersOnce(HttpResponseMessage response)
@@ -1022,6 +1057,17 @@ internal sealed class AdaptiveRateLimiter
     private const double FloorProbeRatio = 0.9;
     private const double JitterFraction = 0.25;
 
+    // Auto mode opens with this gentle non-zero spacing instead of interval 0, so the very
+    // first wave of workers is paced apart rather than fired as a simultaneous burst that
+    // blows a small per-minute budget (e.g. Mistral's 15/min) before any header is seen.
+    private const double AutoStartIntervalMs = 500;
+
+    // When a provider advertises a hard request/minute ceiling in its headers we pace to
+    // 60000/limit, but leave a margin below the raw limit: slot jitter (±JitterFraction)
+    // and the server's rolling-minute window would otherwise let occasional bursts cross
+    // the limit and trip needless 429s. Targeting ~91% of the ceiling absorbs that.
+    private const double HeaderReqSafetyFactor = 1.1;
+
     private readonly object _sync = new();
     private readonly Func<TimeSpan> _now;
     private readonly Func<double> _nextJitter;
@@ -1030,6 +1076,10 @@ internal sealed class AdaptiveRateLimiter
     private double _intervalMs;
     // Smallest interval known to survive a full success streak; 0 = not yet learned.
     private double _learnedFloorMs;
+    // Authoritative lower bound derived from a provider-advertised req/minute ceiling
+    // (see ApplyAuthoritativeLimit); 0 = provider sends no such header. The interval is
+    // never paced below this, so we stop probing past a limit the server stated outright.
+    private double _authoritativeFloorMs;
     private TimeSpan _nextSlot = TimeSpan.Zero;
     private TimeSpan _growthLockedUntil = TimeSpan.MinValue;
     private int _consecutiveSuccesses;
@@ -1070,6 +1120,11 @@ internal sealed class AdaptiveRateLimiter
         get { lock (_sync) { return _learnedFloorMs; } }
     }
 
+    internal double AuthoritativeFloorMs
+    {
+        get { lock (_sync) { return _authoritativeFloorMs; } }
+    }
+
     /// <summary>
     /// Selects the control profile:
     ///  * Auto:   pacingEnabled, learnFloor, hardMin 0 — learns the limit and plateaus.
@@ -1090,6 +1145,14 @@ internal sealed class AdaptiveRateLimiter
                 _intervalMs = Math.Min(_hardMinIntervalMs, MaxIntervalMs);
                 _learnedFloorMs = _intervalMs;
             }
+            else if (pacingEnabled && learnFloor)
+            {
+                // Auto profile: start gently paced rather than unthrottled so the opening
+                // burst can't exhaust a small budget before the first rate-limit header
+                // arrives. The floor stays 0 (unlearned) so a genuinely unlimited provider
+                // still decays back toward zero.
+                _intervalMs = AutoStartIntervalMs;
+            }
         }
     }
 
@@ -1109,6 +1172,44 @@ internal sealed class AdaptiveRateLimiter
             _intervalMs = Math.Min(intervalMs, MaxIntervalMs);
             _learnedFloorMs = _intervalMs;
             _consecutiveSuccesses = 0;
+        }
+    }
+
+    /// <summary>
+    /// Applies a provider-advertised hard ceiling of <paramref name="requestsPerMinute"/>
+    /// (from a header such as Mistral's x-ratelimit-limit-req-minute). Instead of
+    /// discovering the limit by crashing into it and overshooting on AIMD growth, we pace
+    /// directly to 60000/limit (with a small safety margin) and never probe below it.
+    /// Auto profile only — Manual keeps the user's fixed interval, Ollama is unpaced.
+    /// Idempotent: repeated identical calls do not perturb ongoing decay.
+    /// </summary>
+    public void ApplyAuthoritativeLimit(double requestsPerMinute)
+    {
+        if (double.IsNaN(requestsPerMinute) || requestsPerMinute <= 0)
+        {
+            return;
+        }
+
+        lock (_sync)
+        {
+            // Manual pacing is the user's explicit choice; Ollama/local is unpaced. Only
+            // Auto (which learns a floor) defers to the server-stated ceiling.
+            if (!_pacingEnabled || !_learnFloor)
+            {
+                return;
+            }
+
+            var target = Math.Min(60_000.0 / requestsPerMinute * HeaderReqSafetyFactor, MaxIntervalMs);
+            _authoritativeFloorMs = target;
+
+            // Only raise (never lower) the live interval here; a higher interval grown by a
+            // recent 429 is left to decay back down to the floor on its own. Resetting the
+            // streak solely when we actually raise keeps repeated calls from stalling decay.
+            if (_intervalMs < target)
+            {
+                _intervalMs = target;
+                _consecutiveSuccesses = 0;
+            }
         }
     }
 
@@ -1209,6 +1310,16 @@ internal sealed class AdaptiveRateLimiter
             }
 
             _consecutiveSuccesses = 0;
+
+            if (_authoritativeFloorMs > 0)
+            {
+                // The provider stated its ceiling outright, so the sustainable rate is
+                // already known — no gradual probing needed. Any interval that a transient
+                // 429 inflated above the floor returns straight to it once a success streak
+                // confirms recovery, instead of crawling down 150 ms at a time for hours.
+                _intervalMs = Math.Max(_authoritativeFloorMs, _hardMinIntervalMs);
+                return;
+            }
 
             double decayFloor;
             if (_learnFloor)

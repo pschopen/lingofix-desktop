@@ -123,6 +123,83 @@ public class AdaptiveRateLimiterTests
     }
 
     [Fact]
+    public void Auto_Profile_Starts_Gently_Paced_Not_Unthrottled()
+    {
+        var limiter = new AdaptiveRateLimiter(() => TimeSpan.Zero, () => 0.5, (_, _) => Task.CompletedTask);
+
+        // Auto: pacing on, learn a floor, no manual hard minimum.
+        limiter.Configure(pacingEnabled: true, learnFloor: true, hardMinIntervalMs: 0);
+
+        // The opening interval is non-zero, so the first wave of workers is spaced apart
+        // instead of firing simultaneously and blowing a small per-minute budget.
+        Assert.True(limiter.CurrentIntervalMs > 0, "auto profile should start with a non-zero interval");
+        // ...but no floor is learned yet, so a truly unlimited provider can still relax down.
+        Assert.Equal(0, limiter.LearnedFloorMs, 3);
+    }
+
+    [Fact]
+    public void AuthoritativeLimit_Paces_To_The_Advertised_Ceiling_And_Pins_The_Floor()
+    {
+        var limiter = new AdaptiveRateLimiter(() => TimeSpan.Zero, () => 0.5, (_, _) => Task.CompletedTask);
+        limiter.Configure(pacingEnabled: true, learnFloor: true, hardMinIntervalMs: 0);
+
+        // Server states 15 req/min. Target is 60000/15 = 4000 ms plus a safety margin.
+        limiter.ApplyAuthoritativeLimit(15);
+
+        Assert.InRange(limiter.CurrentIntervalMs, 4000, 4600);
+        Assert.InRange(limiter.AuthoritativeFloorMs, 4000, 4600);
+
+        // Even a long success streak cannot decay the interval below the stated ceiling.
+        for (var i = 0; i < 200; i++)
+        {
+            limiter.OnSuccess();
+        }
+
+        Assert.True(limiter.CurrentIntervalMs >= 4000, $"interval decayed below the advertised ceiling: {limiter.CurrentIntervalMs}");
+    }
+
+    [Fact]
+    public void AuthoritativeLimit_Caps_Runaway_Backoff_Recovery_Toward_The_Ceiling()
+    {
+        var clock = new VirtualClock();
+        var limiter = new AdaptiveRateLimiter(clock.NowFn, () => 0.5, clock.Delay);
+        limiter.Configure(pacingEnabled: true, learnFloor: true, hardMinIntervalMs: 0);
+        limiter.ApplyAuthoritativeLimit(15); // floor ~4400 ms
+
+        // A burst of 429s drives the interval up to the 15 s ceiling, as in the field log.
+        for (var i = 0; i < 8; i++)
+        {
+            clock.Delay(TimeSpan.FromSeconds(20), System.Threading.CancellationToken.None);
+            limiter.OnRateLimited(null);
+        }
+        Assert.True(limiter.CurrentIntervalMs > 5000, "429 burst should have grown the interval");
+
+        // Unlike the old limiter (which pinned near 0.9 * 15 s essentially forever once a
+        // 429 raised the learned floor), one success streak now returns straight to the
+        // authoritative floor. One success streak (SuccessesBeforeDecay == 20) is enough.
+        for (var i = 0; i < 20; i++)
+        {
+            limiter.OnSuccess();
+        }
+
+        Assert.InRange(limiter.CurrentIntervalMs, 4000, 4600);
+    }
+
+    [Fact]
+    public void AuthoritativeLimit_Ignored_In_Manual_Mode()
+    {
+        var limiter = new AdaptiveRateLimiter(() => TimeSpan.Zero, () => 0.5, (_, _) => Task.CompletedTask);
+        // Manual: fixed 6000 ms (10 req/min), no floor learning.
+        limiter.Configure(pacingEnabled: true, learnFloor: false, hardMinIntervalMs: 6000);
+
+        // A server-advertised 15 req/min must not override the user's explicit choice.
+        limiter.ApplyAuthoritativeLimit(15);
+
+        Assert.Equal(6000, limiter.CurrentIntervalMs, 1);
+        Assert.Equal(0, limiter.AuthoritativeFloorMs, 3);
+    }
+
+    [Fact]
     public async Task Jitter_Keeps_Slot_Spacing_Within_Bounds_And_Averaging_The_Interval()
     {
         var clock = new VirtualClock();
