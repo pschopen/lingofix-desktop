@@ -3,7 +3,8 @@ import { diffWordsWithSpace } from 'diff';
 import { invoke, listen, open } from '../lib/bridge';
 import { FileText, Upload, X } from 'lucide-react';
 import { Language, t } from '../i18n';
-import { DocxFile } from '../types';
+import { DocxFile, OperationMode } from '../types';
+import { TranslationResult } from './TranslationResult';
 
 interface TextEditorProps {
   text: string;
@@ -18,6 +19,7 @@ interface TextEditorProps {
   docxFiles: DocxFile[];
   onDocxFiles: (files: DocxFile[] | null) => void;
   isCorrecting: boolean;
+  mode: OperationMode;
 }
 
 export function TextEditor({
@@ -33,6 +35,7 @@ export function TextEditor({
   docxFiles,
   onDocxFiles,
   isCorrecting,
+  mode,
 }: TextEditorProps) {
   const [isDragging, setIsDragging] = useState(false);
 
@@ -340,6 +343,17 @@ export function TextEditor({
       </p>
     </div>
   ) : null;
+  // Translation mode: a full-text replacement diff is unreadable, so show original and
+  // translation side by side instead of the inline word-diff view.
+  if (showDiff && correctedText && mode === 'translation') {
+    return (
+      <div className={`relative w-full h-full transition-colors duration-200 ${dragContainerClass}`} style={{ padding: 0, margin: 0 }}>
+        {dragOverlay}
+        <TranslationResult original={text} translated={correctedText} lang={lang} isDarkMode={isDarkMode} />
+      </div>
+    );
+  }
+
   // Diff view - no border, flush with header
   if (showDiff && diffHtml) {
     return (

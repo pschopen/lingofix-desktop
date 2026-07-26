@@ -4,8 +4,8 @@ import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, 
 import { TextEditor } from './components/TextEditor';
 import { SettingsModal } from './components/SettingsModal';
 import Onboarding from './components/Onboarding';
-import { Settings, FontSize, FONT_SIZE_PX, DocxFile, PROVIDER_SENTINEL_UNCONFIGURED } from './types';
-import { Language, t, detectLanguage } from './i18n';
+import { Settings, FontSize, FONT_SIZE_PX, DocxFile, PROVIDER_SENTINEL_UNCONFIGURED, OperationMode } from './types';
+import { Language, t, detectLanguage, EU_LANGUAGE_CODES, LANGUAGE_LABELS } from './i18n';
 import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
 
@@ -146,6 +146,7 @@ function App() {
     setDocxLogs,
     appendDocxLog,
   } = useDocxState();
+  const [translationCopied, setTranslationCopied] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -739,6 +740,16 @@ function App() {
     applyDiff();
   };
 
+  const handleCopyTranslation = async () => {
+    try {
+      await navigator.clipboard.writeText(correctedText);
+      setTranslationCopied(true);
+      window.setTimeout(() => setTranslationCopied(false), 1500);
+    } catch (error) {
+      console.error('Failed to copy translation:', error);
+    }
+  };
+
   const handleStop = async () => {
     try {
       if (docxFiles.length > 0) {
@@ -763,6 +774,42 @@ function App() {
       setIsSettingsOpen(false);
     } catch (error) {
       console.error('Failed to save settings:', error);
+      setError(String(error));
+    }
+  };
+
+  // Header quick-switch (mode / target language): persists immediately, unlike the
+  // Settings modal's draft-until-Save fields. save_settings resolves the active
+  // translation preset server-side (creating one if needed), so the settings are
+  // re-fetched afterwards rather than optimistically guessed on the client.
+  const handleModeChange = async (mode: OperationMode) => {
+    if (!settings) {
+      return;
+    }
+
+    try {
+      await invoke('save_settings', { settings: { ...settings, mode } });
+      const refreshed = await invoke<Settings>('load_settings', { locale: lang });
+      setSettings(refreshed);
+    } catch (error) {
+      console.error('Failed to save mode:', error);
+      setError(String(error));
+    }
+  };
+
+  const handleTargetLanguageChange = async (targetLanguage: string) => {
+    if (!settings) {
+      return;
+    }
+
+    try {
+      await invoke('save_settings', {
+        settings: { ...settings, translation: { ...settings.translation, target_language: targetLanguage } },
+      });
+      const refreshed = await invoke<Settings>('load_settings', { locale: lang });
+      setSettings(refreshed);
+    } catch (error) {
+      console.error('Failed to save target language:', error);
       setError(String(error));
     }
   };
@@ -849,6 +896,9 @@ function App() {
     if (message === t('docx.logs.compare_fallback_manual_hint.backend_source', 'en')) {
       return t('docx.logs.compare_fallback_manual_hint', lang);
     }
+    if (message === t('docx.logs.fields_not_translated_hint.backend_source', 'en')) {
+      return t('docx.logs.fields_not_translated_hint', lang);
+    }
     return message;
   }, [lang]);
 
@@ -911,6 +961,43 @@ function App() {
               </h1>
             </div>
             <div className="flex items-center gap-1">
+            {/* Mode + target language */}
+            <select
+              value={settings.mode}
+              onChange={(e) => void handleModeChange(e.target.value as OperationMode)}
+              aria-label={t('mode.label', lang)}
+              className={`text-sm font-medium rounded-lg px-2 py-1.5 border-transparent cursor-pointer ${
+                isDarkMode ? 'bg-surface-700 text-surface-200' : 'bg-surface-100 text-surface-700'
+              }`}
+            >
+              <option value="correction">{t('mode.correction', lang)}</option>
+              <option value="translation">{t('mode.translation', lang)}</option>
+            </select>
+
+            {settings.mode === 'translation' && (
+              <select
+                value={settings.translation.target_language}
+                onChange={(e) => void handleTargetLanguageChange(e.target.value)}
+                aria-label={t('mode.target_language', lang)}
+                className={`text-sm font-medium rounded-lg px-2 py-1.5 border-transparent cursor-pointer ${
+                  isDarkMode ? 'bg-surface-700 text-surface-200' : 'bg-surface-100 text-surface-700'
+                }`}
+              >
+                {!EU_LANGUAGE_CODES.includes(settings.translation.target_language as Language) && (
+                  <option value={settings.translation.target_language}>
+                    {settings.translation.target_language || t('mode.target_language.other', lang)}
+                  </option>
+                )}
+                {EU_LANGUAGE_CODES.map((code) => (
+                  <option key={code} value={code}>
+                    {LANGUAGE_LABELS[code]}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <div className={`w-px h-5 mx-1 ${isDarkMode ? 'bg-surface-700' : 'bg-surface-200'}`} />
+
             {/* Dark mode toggle */}
             <button
               onClick={handleToggleDarkMode}
@@ -1011,14 +1098,22 @@ function App() {
                 </div>
               ) : showDiff ? (
                 <div className="flex items-center gap-3">
-                  <span className="inline-flex items-center gap-1.5 text-base">
-                    <span className={`w-2.5 h-2.5 rounded-sm ${isDarkMode ? 'bg-red-900/40 border-red-800/60' : 'bg-red-100 border-red-200'} border`}></span>
-                    <span className={isDarkMode ? 'text-surface-300' : 'text-surface-600'}>{t('toolbar.deleted', lang)}</span>
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 text-base">
-                    <span className={`w-2.5 h-2.5 rounded-sm ${isDarkMode ? 'bg-green-900/40 border-green-800/60' : 'bg-green-100 border-green-200'} border`}></span>
-                    <span className={isDarkMode ? 'text-surface-300' : 'text-surface-600'}>{t('toolbar.added', lang)}</span>
-                  </span>
+                  {settings.mode === 'translation' ? (
+                    <span className="inline-flex items-center gap-1.5 text-base">
+                      <span className={isDarkMode ? 'text-surface-300' : 'text-surface-600'}>{t('translation.result_label', lang)}</span>
+                    </span>
+                  ) : (
+                    <>
+                      <span className="inline-flex items-center gap-1.5 text-base">
+                        <span className={`w-2.5 h-2.5 rounded-sm ${isDarkMode ? 'bg-red-900/40 border-red-800/60' : 'bg-red-100 border-red-200'} border`}></span>
+                        <span className={isDarkMode ? 'text-surface-300' : 'text-surface-600'}>{t('toolbar.deleted', lang)}</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 text-base">
+                        <span className={`w-2.5 h-2.5 rounded-sm ${isDarkMode ? 'bg-green-900/40 border-green-800/60' : 'bg-green-100 border-green-200'} border`}></span>
+                        <span className={isDarkMode ? 'text-surface-300' : 'text-surface-600'}>{t('toolbar.added', lang)}</span>
+                      </span>
+                    </>
+                  )}
                   {isStreaming && (
                     <span className={`inline-flex items-center gap-1.5 text-base ml-1 ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
                       <Loader2 className="animate-spin" size={14} />
@@ -1052,7 +1147,9 @@ function App() {
                   {text.trim().split(/\s+/).filter(w => w.length > 0).length} {t('stats.words', lang)}, {text.length} {t('stats.chars', lang)}
                 </span>
               ) : (
-                <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>{t('toolbar.placeholder', lang)}</span>
+                <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
+                  {settings.mode === 'translation' ? t('toolbar.placeholder.translate', lang) : t('toolbar.placeholder', lang)}
+                </span>
               )}
             </div>
 
@@ -1071,6 +1168,12 @@ function App() {
                     <Trash2 size={16} />
                     {t('button.clear', lang)}
                   </button>
+                  {settings.mode === 'translation' && (
+                    <button onClick={() => void handleCopyTranslation()} className="btn-secondary !py-2 !text-base">
+                      <Check size={16} strokeWidth={2.5} />
+                      {translationCopied ? t('translation.copied', lang) : t('translation.copy_button', lang)}
+                    </button>
+                  )}
                   <button onClick={handleReject} className="btn-secondary !py-2 !text-base">
                     <XCircle size={16} />
                     {t('button.reject', lang)}
@@ -1096,12 +1199,12 @@ function App() {
                     {isCorrecting ? (
                       <>
                         <Loader2 className="animate-spin" size={16} />
-                        {t('button.starting', lang)}
+                        {settings.mode === 'translation' ? t('button.translating', lang) : t('button.starting', lang)}
                       </>
                     ) : (
                       <>
                         <Sparkles size={16} />
-                        {t('button.correct', lang)}
+                        {settings.mode === 'translation' ? t('button.translate', lang) : t('button.correct', lang)}
                       </>
                     )}
                   </button>
@@ -1180,7 +1283,7 @@ function App() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className={`text-sm font-medium ${isDarkMode ? 'text-emerald-300' : 'text-emerald-800'}`}>
-                      {t('docx.complete', lang)}
+                      {settings.mode === 'translation' ? t('docx.translated', lang) : t('docx.complete', lang)}
                     </span>
                     {result.trackChanges && (
                       <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
@@ -1353,6 +1456,7 @@ function App() {
               docxFiles={docxFiles}
               onDocxFiles={handleDocxFiles}
               isCorrecting={isCorrecting}
+              mode={settings.mode}
             />
           </div>
         </div>

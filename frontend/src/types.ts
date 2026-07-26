@@ -116,6 +116,27 @@ export interface CustomPromptPreset {
   locale: string;
 }
 
+export const OPERATION_MODES = ['correction', 'translation'] as const;
+export type OperationMode = (typeof OPERATION_MODES)[number];
+
+// A translation preset carries both prompts as a pair, so they are always switched
+// together (see docs/plans/translation-mode.md Phase 4).
+export interface TranslationPromptPreset {
+  id: string;
+  name: string;
+  // Target-language slug (not a Language code): the target language can be free text.
+  locale: string;
+  main_prompt: string;
+  footnote_prompt: string;
+}
+
+export interface TranslationSettings {
+  target_language: string;
+  prompt_presets: TranslationPromptPreset[];
+  active_preset_ids: Record<string, string>;
+  footnote_prompt: string;
+}
+
 export interface Settings {
   provider: AnyProvider;
   api_url: string;
@@ -138,6 +159,8 @@ export interface Settings {
   docx: DocxSettings;
   font_size: FontSize;
   setup_completed?: boolean | null;
+  mode: OperationMode;
+  translation: TranslationSettings;
 }
 
 export interface DocxFile {

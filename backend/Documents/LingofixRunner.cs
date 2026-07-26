@@ -197,6 +197,15 @@ public static class LingofixRunner
                     logger.Info(isTranslation ? "Citation normalization disabled (translation mode)." : "Citation normalization disabled.");
                 }
 
+                if (isTranslation)
+                {
+                    // Field results (TOC entries, PAGEREF page numbers, ...) are never
+                    // rewritten (see ParagraphTextMapper) — surfaced here so the frontend
+                    // can localize it via localizeDocxLogMessage, matching the
+                    // compare_fallback_manual_hint pattern.
+                    logger.Info("Fields and table-of-contents entries are not translated; update them manually in Word.");
+                }
+
                 if (coverage.CommentCount > 0)
                 {
                     logger.Info($"Comments: {coverage.CommentCount} entries detected (preserved unchanged; excluded from correction).");

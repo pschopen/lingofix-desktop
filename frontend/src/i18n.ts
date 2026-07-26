@@ -106,6 +106,77 @@ export function defaultSystemPrompt(lang: Language): string {
   return defaultSystemPrompts[lang] ?? defaultSystemPrompts.en;
 }
 
+/* ================================================================
+   Translation-mode defaults (docs/plans/translation-mode.md Phase 4/5).
+   Mirrors tauri/src/main.rs (language_display_name_de,
+   target_language_slug, default_translation_main_prompt,
+   default_translation_footnote_prompt): the TS side needs the same
+   defaults so the Settings UI can show a fresh preset immediately when
+   the user picks a new target language, without a round trip to Rust
+   (the correction-language flow already works the same way via
+   defaultCustomPrompt/defaultSystemPrompt above).
+   ================================================================ */
+
+const LANGUAGE_DISPLAY_NAMES_DE: Partial<Record<Language, string>> = {
+  bg: 'Bulgarisch', cs: 'Tschechisch', da: 'Dänisch', de: 'Deutsch', el: 'Griechisch', en: 'Englisch',
+  es: 'Spanisch', et: 'Estnisch', fi: 'Finnisch', fr: 'Französisch', ga: 'Irisch', hr: 'Kroatisch',
+  hu: 'Ungarisch', it: 'Italienisch', lt: 'Litauisch', lv: 'Lettisch', mt: 'Maltesisch', nl: 'Niederländisch',
+  pl: 'Polnisch', pt: 'Portugiesisch', ro: 'Rumänisch', sk: 'Slowakisch', sl: 'Slowenisch', sv: 'Schwedisch',
+};
+
+/** Known code -> German display name; free text is returned exactly as typed. */
+function translationLanguageDisplayNameDe(targetLanguage: string): string {
+  const trimmed = targetLanguage.trim();
+  const lower = trimmed.toLowerCase();
+  return (LANGUAGE_DISPLAY_NAMES_DE as Record<string, string | undefined>)[lower] ?? trimmed;
+}
+
+/**
+ * Filesystem-safe, HashMap-key-safe slug for a target language: lowercase,
+ * non-alphanumeric runs collapsed to a single '-', max 24 chars. Mirrors
+ * target_language_slug in tauri/src/main.rs and BuildLanguageSlug in
+ * backend/Documents/LingofixRunner.cs.
+ */
+export function targetLanguageSlug(targetLanguage: string): string {
+  const trimmed = targetLanguage.trim();
+  if (!trimmed) {
+    return 'target';
+  }
+
+  const slug = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24)
+    .replace(/-+$/g, '');
+
+  return slug || 'target';
+}
+
+const DEFAULT_TRANSLATION_MAIN_PROMPT_TEMPLATE =
+  'Übersetze den folgenden Text vollständig ins {lang}. Gib ausschließlich die Übersetzung aus — keine ' +
+  'Kommentare, keine Erklärungen, keine Anführungszeichen um die Ausgabe. Übernimm die Absatz- und ' +
+  'Satzstruktur so weit wie möglich. Verwende die Typografie-Konventionen der Zielsprache ' +
+  '(Anführungszeichen, Gedankenstriche). Eigennamen, Zitate in Originalsprache und Aktenzeichen bleiben ' +
+  'unübersetzt.';
+const DEFAULT_TRANSLATION_FOOTNOTE_PROMPT_SUFFIX =
+  'Der Text ist eine Fußnote. Zitate und Literaturangaben (Autor, Titel, Zeitschrift, Verlag, Auflage, ' +
+  'Seitenzahlen) bleiben unverändert in der Originalsprache; übersetze nur erläuternden Fließtext. ' +
+  'Folgezitat-Konventionen (z. B. „Ebd.“) in die übliche Form der Zielsprache übertragen.';
+
+export function defaultTranslationMainPrompt(targetLanguage: string): string {
+  return DEFAULT_TRANSLATION_MAIN_PROMPT_TEMPLATE.replace('{lang}', translationLanguageDisplayNameDe(targetLanguage));
+}
+
+export function defaultTranslationFootnotePrompt(targetLanguage: string): string {
+  return `${defaultTranslationMainPrompt(targetLanguage)} ${DEFAULT_TRANSLATION_FOOTNOTE_PROMPT_SUFFIX}`;
+}
+
+export function defaultTranslationBatchPrompt(): string {
+  return 'Gib exakt die gleiche Anzahl Absätze zurück wie im Eingabetext, getrennt durch jeweils genau eine ' +
+    'Leerzeile. Füge keine zusätzlichen Leerzeilen innerhalb eines Absatzes ein.';
+}
+
 // Translation dictionary
 const translations: Record<string, Partial<Record<Language, string>> & Record<'en', string>> = {
   'app.title': {
@@ -4737,30 +4808,33 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     sv: 'Tillämpa batchbearbetning på',
   },
   'settings.docx.correction_scope_parts': {
-    bg: 'Обхват на корекцията',
-    cs: 'Rozsah opravy',
-    da: 'Rettelsesomfang',
-    de: 'Korrekturumfang',
-    el: 'Πεδίο διόρθωσης',
-    en: 'Correction scope',
-    es: 'Alcance de la corrección',
-    et: 'Paranduse ulatus',
-    fi: 'Korjauksen laajuus',
-    fr: 'Portée de la correction',
-    ga: 'Raon an cheartaithe',
-    hr: 'Opseg ispravka',
-    hu: 'Javítás hatóköre',
-    it: 'Ambito della correzione',
-    lt: 'Taisymo apimtis',
-    lv: 'Labošanas tvērums',
-    mt: 'Skop tal-korrezzjoni',
-    nl: 'Correctiebereik',
-    pl: 'Zakres korekty',
-    pt: 'Âmbito da correção',
-    ro: 'Domeniul corecturii',
-    sk: 'Rozsah opravy',
-    sl: 'Obseg popravka',
-    sv: 'Korrigeringens omfattning',
+    // Generalized wording (used in both Correction and Translation mode): this key's
+    // underlying settings field (docx.correction_scope_parts) is unchanged, only the
+    // label text was generalized when the mode dropdown was introduced.
+    bg: 'Обработвани части от документа',
+    cs: 'Zpracovávané části dokumentu',
+    da: 'Dokumentdele, der behandles',
+    de: 'Zu verarbeitende Dokumentteile',
+    el: 'Τμήματα εγγράφου για επεξεργασία',
+    en: 'Document parts to process',
+    es: 'Partes del documento a procesar',
+    et: 'Töödeldavad dokumendi osad',
+    fi: 'Käsiteltävät asiakirjan osat',
+    fr: 'Parties du document à traiter',
+    ga: 'Codanna den doiciméad le próiseáil',
+    hr: 'Dijelovi dokumenta za obradu',
+    hu: 'Feldolgozandó dokumentumrészek',
+    it: 'Parti del documento da elaborare',
+    lt: 'Apdorojami dokumento skyriai',
+    lv: 'Apstrādājamās dokumenta daļas',
+    mt: 'Partijiet tad-dokument li għandhom jiġu pproċessati',
+    nl: 'Te verwerken documentdelen',
+    pl: 'Przetwarzane części dokumentu',
+    pt: 'Partes do documento a processar',
+    ro: 'Părți ale documentului de procesat',
+    sk: 'Spracúvané časti dokumentu',
+    sl: 'Deli dokumenta za obdelavo',
+    sv: 'Dokumentdelar som ska bearbetas',
   },
   'settings.docx.batching_parts.main': {
     bg: 'Основен текст',
@@ -5979,6 +6053,153 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     sk: 'Kontrola aktualizácií momentálne nie je k dispozícii.',
     sl: 'Preverjanje posodobitev trenutno ni na voljo.',
     sv: 'Uppdateringskontroll är för närvarande inte tillgänglig.',
+  },
+
+  // ---- Translation mode (docs/plans/translation-mode.md, Phase 5e) ----
+
+  'mode.label': {
+    bg: 'Режим', cs: 'Režim', da: 'Tilstand', de: 'Modus', el: 'Λειτουργία', en: 'Mode',
+    es: 'Modo', et: 'Režiim', fi: 'Tila', fr: 'Mode', ga: 'Mód', hr: 'Način rada',
+    hu: 'Mód', it: 'Modalità', lt: 'Režimas', lv: 'Režīms', mt: 'Mod', nl: 'Modus',
+    pl: 'Tryb', pt: 'Modo', ro: 'Mod', sk: 'Režim', sl: 'Način', sv: 'Läge',
+  },
+  'mode.correction': {
+    bg: 'Коригирай', cs: 'Opravit', da: 'Ret', de: 'Korrigieren', el: 'Διόρθωση', en: 'Correct',
+    es: 'Corregir', et: 'Paranda', fi: 'Korjaa', fr: 'Corriger', ga: 'Ceartaigh', hr: 'Ispravi',
+    hu: 'Javítás', it: 'Correggi', lt: 'Taisyti', lv: 'Labot', mt: 'Ikkoreġi', nl: 'Corrigeren',
+    pl: 'Popraw', pt: 'Corrigir', ro: 'Corectează', sk: 'Opraviť', sl: 'Popravi', sv: 'Korrigera',
+  },
+  'mode.translation': {
+    bg: 'Преведи', cs: 'Přeložit', da: 'Oversæt', de: 'Übersetzen', el: 'Μετάφραση', en: 'Translate',
+    es: 'Traducir', et: 'Tõlgi', fi: 'Käännä', fr: 'Traduire', ga: 'Aistrigh', hr: 'Prevedi',
+    hu: 'Fordítás', it: 'Traduci', lt: 'Versti', lv: 'Tulkot', mt: 'Traduċi', nl: 'Vertalen',
+    pl: 'Przetłumacz', pt: 'Traduzir', ro: 'Tradu', sk: 'Preložiť', sl: 'Prevedi', sv: 'Översätt',
+  },
+  'mode.target_language': {
+    bg: 'Целеви език', cs: 'Cílový jazyk', da: 'Målsprog', de: 'Zielsprache', el: 'Γλώσσα προορισμού', en: 'Target language',
+    es: 'Idioma de destino', et: 'Sihtkeel', fi: 'Kohdekieli', fr: 'Langue cible', ga: 'Sprioctheanga', hr: 'Ciljni jezik',
+    hu: 'Célnyelv', it: 'Lingua di destinazione', lt: 'Tikslinė kalba', lv: 'Mērķvaloda', mt: 'Lingwa fil-mira', nl: 'Doeltaal',
+    pl: 'Język docelowy', pt: 'Idioma de destino', ro: 'Limba țintă', sk: 'Cieľový jazyk', sl: 'Ciljni jezik', sv: 'Målspråk',
+  },
+  'mode.target_language.other': {
+    bg: 'Друг език…', cs: 'Jiný jazyk…', da: 'Andet sprog…', de: 'Andere Sprache…', el: 'Άλλη γλώσσα…', en: 'Other language…',
+    es: 'Otro idioma…', et: 'Muu keel…', fi: 'Muu kieli…', fr: 'Autre langue…', ga: 'Teanga eile…', hr: 'Drugi jezik…',
+    hu: 'Egyéb nyelv…', it: 'Altra lingua…', lt: 'Kita kalba…', lv: 'Cita valoda…', mt: 'Lingwa oħra…', nl: 'Andere taal…',
+    pl: 'Inny język…', pt: 'Outro idioma…', ro: 'Altă limbă…', sk: 'Iný jazyk…', sl: 'Drug jezik…', sv: 'Annat språk…',
+  },
+  'mode.target_language.other_placeholder': {
+    bg: 'Въведете език…', cs: 'Zadejte jazyk…', da: 'Angiv sprog…', de: 'Sprache eingeben…', el: 'Εισαγάγετε γλώσσα…', en: 'Enter language…',
+    es: 'Introduzca el idioma…', et: 'Sisestage keel…', fi: 'Kirjoita kieli…', fr: 'Saisissez une langue…', ga: 'Cuir isteach teanga…', hr: 'Unesite jezik…',
+    hu: 'Adja meg a nyelvet…', it: 'Inserisci la lingua…', lt: 'Įveskite kalbą…', lv: 'Ievadiet valodu…', mt: 'Daħħal lingwa…', nl: 'Voer taal in…',
+    pl: 'Wpisz język…', pt: 'Introduza o idioma…', ro: 'Introduceți limba…', sk: 'Zadajte jazyk…', sl: 'Vnesite jezik…', sv: 'Ange språk…',
+  },
+  'button.translate': {
+    bg: 'Преведи', cs: 'Přeložit', da: 'Oversæt', de: 'Übersetzen', el: 'Μετάφραση', en: 'Translate',
+    es: 'Traducir', et: 'Tõlgi', fi: 'Käännä', fr: 'Traduire', ga: 'Aistrigh', hr: 'Prevedi',
+    hu: 'Fordítás', it: 'Traduci', lt: 'Versti', lv: 'Tulkot', mt: 'Traduċi', nl: 'Vertalen',
+    pl: 'Przetłumacz', pt: 'Traduzir', ro: 'Tradu', sk: 'Preložiť', sl: 'Prevedi', sv: 'Översätt',
+  },
+  'button.translating': {
+    bg: 'Превеждам…', cs: 'Překládám…', da: 'Oversætter…', de: 'Übersetze…', el: 'Μετάφραση σε εξέλιξη…', en: 'Translating…',
+    es: 'Traduciendo…', et: 'Tõlgin…', fi: 'Käännetään…', fr: 'Traduction…', ga: 'Ag aistriú…', hr: 'Prevođenje…',
+    hu: 'Fordítás…', it: 'Traduzione…', lt: 'Verčiama…', lv: 'Tulkoju…', mt: 'Qed nitraduċi…', nl: 'Vertalen…',
+    pl: 'Tłumaczenie…', pt: 'A traduzir…', ro: 'Se traduce…', sk: 'Prekladá sa…', sl: 'Prevajanje…', sv: 'Översätter…',
+  },
+  'settings.section.general': {
+    bg: 'Общи', cs: 'Obecné', da: 'Generelt', de: 'Allgemein', el: 'Γενικά', en: 'General',
+    es: 'General', et: 'Üldine', fi: 'Yleiset', fr: 'Général', ga: 'Ginearálta', hr: 'Općenito',
+    hu: 'Általános', it: 'Generale', lt: 'Bendra', lv: 'Vispārīgi', mt: 'Ġenerali', nl: 'Algemeen',
+    pl: 'Ogólne', pt: 'Geral', ro: 'General', sk: 'Všeobecné', sl: 'Splošno', sv: 'Allmänt',
+  },
+  'settings.section.correction': {
+    bg: 'Корекция', cs: 'Oprava', da: 'Rettelse', de: 'Korrektur', el: 'Διόρθωση', en: 'Correction',
+    es: 'Corrección', et: 'Parandus', fi: 'Korjaus', fr: 'Correction', ga: 'Ceartú', hr: 'Ispravak',
+    hu: 'Javítás', it: 'Correzione', lt: 'Taisymas', lv: 'Labošana', mt: 'Korrezzjoni', nl: 'Correctie',
+    pl: 'Korekta', pt: 'Correção', ro: 'Corectare', sk: 'Oprava', sl: 'Popravek', sv: 'Korrigering',
+  },
+  'settings.section.translation': {
+    bg: 'Превод', cs: 'Překlad', da: 'Oversættelse', de: 'Übersetzung', el: 'Μετάφραση', en: 'Translation',
+    es: 'Traducción', et: 'Tõlge', fi: 'Käännös', fr: 'Traduction', ga: 'Aistriúchán', hr: 'Prijevod',
+    hu: 'Fordítás', it: 'Traduzione', lt: 'Vertimas', lv: 'Tulkojums', mt: 'Traduzzjoni', nl: 'Vertaling',
+    pl: 'Tłumaczenie', pt: 'Tradução', ro: 'Traducere', sk: 'Preklad', sl: 'Prevod', sv: 'Översättning',
+  },
+  'settings.translation.prompt_presets': {
+    bg: 'Промптове за превод', cs: 'Prompty pro překlad', da: 'Oversættelsesprompter', de: 'Übersetzungs-Prompts', el: 'Προτροπές μετάφρασης', en: 'Translation prompts',
+    es: 'Instrucciones de traducción', et: 'Tõlkejuhised', fi: 'Käännöskehotteet', fr: 'Prompts de traduction', ga: 'Leideanna aistriúcháin', hr: 'Upiti za prijevod',
+    hu: 'Fordítási promptok', it: 'Prompt di traduzione', lt: 'Vertimo užklausos', lv: 'Tulkošanas uzvednes', mt: 'Prompts tat-traduzzjoni', nl: 'Vertaalprompts',
+    pl: 'Podpowiedzi tłumaczenia', pt: 'Prompts de tradução', ro: 'Prompturi de traducere', sk: 'Prompty na preklad', sl: 'Prevajalski pozivi', sv: 'Översättningsprompter',
+  },
+  'settings.translation.main_prompt.label': {
+    bg: 'Промпт за основния текст', cs: 'Prompt pro hlavní text', da: 'Prompt for hovedtekst', de: 'Haupttext-Prompt', el: 'Προτροπή κύριου κειμένου', en: 'Main text prompt',
+    es: 'Instrucción para el texto principal', et: 'Põhiteksti juhis', fi: 'Pääleipätekstin kehote', fr: 'Prompt pour le texte principal', ga: 'Leid don phríomhthéacs', hr: 'Upit za glavni tekst',
+    hu: 'Prompt a fő szöveghez', it: 'Prompt per il testo principale', lt: 'Pagrindinio teksto užklausa', lv: 'Pamatteksta uzvedne', mt: 'Prompt għat-test ewlieni', nl: 'Prompt voor hoofdtekst',
+    pl: 'Podpowiedź dla tekstu głównego', pt: 'Prompt para o texto principal', ro: 'Prompt pentru textul principal', sk: 'Prompt pre hlavný text', sl: 'Poziv za glavno besedilo', sv: 'Prompt för huvudtext',
+  },
+  'settings.translation.footnote_prompt.label': {
+    bg: 'Промпт за бележки под линия', cs: 'Prompt pro poznámky pod čarou', da: 'Prompt for fodnoter', de: 'Fußnoten-Prompt', el: 'Προτροπή υποσημειώσεων', en: 'Footnote prompt',
+    es: 'Instrucción para notas al pie', et: 'Joonealuste märkuste juhis', fi: 'Alaviitteiden kehote', fr: 'Prompt pour les notes de bas de page', ga: 'Leid do fhonótaí', hr: 'Upit za fusnote',
+    hu: 'Prompt a lábjegyzetekhez', it: 'Prompt per le note a piè di pagina', lt: 'Išnašų užklausa', lv: 'Vēres uzvedne', mt: "Prompt għan-noti f'qiegh il-paġna", nl: 'Prompt voor voetnoten',
+    pl: 'Podpowiedź dla przypisów', pt: 'Prompt para notas de rodapé', ro: 'Prompt pentru note de subsol', sk: 'Prompt pre poznámky pod čiarou', sl: 'Poziv za sprotne opombe', sv: 'Prompt för fotnoter',
+  },
+  'settings.translation.footnote_prompt.hint': {
+    bg: 'Празно = както промпта за основния текст.', cs: 'Prázdné = stejné jako prompt pro hlavní text.', da: 'Tom = samme som prompten for hovedtekst.', de: 'Leer = wie Haupttext-Prompt.', el: 'Κενό = ίδιο με την προτροπή κύριου κειμένου.', en: 'Empty = same as the main text prompt.',
+    es: 'Vacío = igual que la instrucción del texto principal.', et: 'Tühi = sama, mis põhiteksti juhis.', fi: 'Tyhjä = sama kuin pääleipätekstin kehote.', fr: 'Vide = identique au prompt du texte principal.', ga: 'Bán = mar an gcéanna leis an leid don phríomhthéacs.', hr: 'Prazno = isto kao upit za glavni tekst.',
+    hu: 'Üres = megegyezik a fő szöveg promptjával.', it: 'Vuoto = come il prompt del testo principale.', lt: 'Tuščia = kaip pagrindinio teksto užklausa.', lv: 'Tukšs = tāds pats kā pamatteksta uzvedne.', mt: "Vojt = bħall-prompt għat-test ewlieni.", nl: 'Leeg = zelfde als de prompt voor de hoofdtekst.',
+    pl: 'Puste = takie samo jak podpowiedź dla tekstu głównego.', pt: 'Vazio = igual ao prompt do texto principal.', ro: 'Gol = identic cu promptul textului principal.', sk: 'Prázdne = rovnaké ako prompt pre hlavný text.', sl: 'Prazno = enako kot poziv za glavno besedilo.', sv: 'Tom = samma som prompten för huvudtext.',
+  },
+  'settings.translation.context_hint': {
+    bg: 'Предишният параграф се изпраща автоматично на модела като контекст.', cs: 'Předchozí odstavec se automaticky odesílá modelu jako kontext.', da: 'Det foregående afsnit sendes automatisk til modellen som kontekst.', de: 'Der vorherige Absatz wird automatisch als Kontext an das Modell gesendet.', el: 'Η προηγούμενη παράγραφος αποστέλλεται αυτόματα στο μοντέλο ως πλαίσιο.', en: 'The previous paragraph is automatically sent to the model as context.',
+    es: 'El párrafo anterior se envía automáticamente al modelo como contexto.', et: 'Eelmine lõik saadetakse mudelile automaatselt kontekstina.', fi: 'Edellinen kappale lähetetään mallille automaattisesti kontekstina.', fr: 'Le paragraphe précédent est automatiquement envoyé au modèle en tant que contexte.', ga: 'Seoltar an t-alt roimhe seo go huathoibríoch chuig an tsamhail mar chomhthéacs.', hr: 'Prethodni odlomak automatski se šalje modelu kao kontekst.',
+    hu: 'Az előző bekezdés automatikusan elküldésre kerül a modellnek kontextusként.', it: 'Il paragrafo precedente viene inviato automaticamente al modello come contesto.', lt: 'Ankstesnė pastraipa automatiškai siunčiama modeliui kaip kontekstas.', lv: 'Iepriekšējā rindkopa automātiski tiek nosūtīta modelim kā kontekts.', mt: "Il-paragrafu ta' qabel jintbagħat awtomatikament lill-mudell bħala kuntest.", nl: 'De vorige paragraaf wordt automatisch als context naar het model gestuurd.',
+    pl: 'Poprzedni akapit jest automatycznie wysyłany do modelu jako kontekst.', pt: 'O parágrafo anterior é enviado automaticamente ao modelo como contexto.', ro: 'Paragraful anterior este trimis automat modelului drept context.', sk: 'Predchádzajúci odsek sa automaticky odosiela modelu ako kontext.', sl: 'Prejšnji odstavek se samodejno pošlje modelu kot kontekst.', sv: 'Föregående stycke skickas automatiskt till modellen som kontext.',
+  },
+  'docx.translated': {
+    bg: 'Преводът е завършен', cs: 'Překlad dokončen', da: 'Oversættelse afsluttet', de: 'Übersetzung abgeschlossen', el: 'Η μετάφραση ολοκληρώθηκε', en: 'Translation complete',
+    es: 'Traducción completada', et: 'Tõlge on valmis', fi: 'Kääntäminen valmis', fr: 'Traduction terminée', ga: 'Aistriúchán críochnaithe', hr: 'Prijevod dovršen',
+    hu: 'A fordítás elkészült', it: 'Traduzione completata', lt: 'Vertimas baigtas', lv: 'Tulkošana pabeigta', mt: 'It-traduzzjoni tlestiet', nl: 'Vertaling voltooid',
+    pl: 'Tłumaczenie zakończone', pt: 'Tradução concluída', ro: 'Traducere finalizată', sk: 'Preklad dokončený', sl: 'Prevod dokončan', sv: 'Översättning klar',
+  },
+  'toolbar.placeholder.translate': {
+    bg: 'Въведете текста си и щракнете върху „Преведи“', cs: 'Zadejte text a klikněte na „Přeložit“', da: 'Indtast din tekst og klik på „Oversæt“', de: 'Geben Sie Ihren Text ein und klicken Sie auf "Übersetzen"', el: 'Πληκτρολογήστε το κείμενό σας και κάντε κλικ στο «Μετάφραση»', en: 'Enter your text and click "Translate"',
+    es: 'Introduzca su texto y haga clic en «Traducir»', et: 'Sisestage tekst ja klõpsake „Tõlgi“', fi: 'Kirjoita teksti ja napsauta „Käännä“', fr: 'Saisissez votre texte et cliquez sur « Traduire »', ga: 'Cuir isteach do théacs agus cliceáil „Aistrigh“', hr: 'Unesite tekst i kliknite „Prevedi“',
+    hu: 'Írja be a szöveget, és kattintson a „Fordítás“ gombra', it: 'Inserisci il testo e fai clic su „Traduci“', lt: 'Įveskite tekstą ir spauskite „Versti“', lv: 'Ievadiet tekstu un noklikšķiniet „Tulkot“', mt: 'Daħħal it-test tiegħek u ikklikkja „Traduċi"', nl: 'Voer uw tekst in en klik op „Vertalen“',
+    pl: 'Wpisz tekst i kliknij „Przetłumacz“', pt: 'Introduza o seu texto e clique em „Traduzir“', ro: 'Introdu textul și fă clic pe „Tradu“', sk: 'Zadajte text a kliknite na „Preložiť“', sl: 'Vnesite besedilo in kliknite „Prevedi“', sv: 'Ange din text och klicka på „Översätt“',
+  },
+  'translation.copy_button': {
+    bg: 'Копирай превода', cs: 'Kopírovat překlad', da: 'Kopiér oversættelse', de: 'Übersetzung kopieren', el: 'Αντιγραφή μετάφρασης', en: 'Copy translation',
+    es: 'Copiar traducción', et: 'Kopeeri tõlge', fi: 'Kopioi käännös', fr: 'Copier la traduction', ga: 'Cóipeáil an aistriúchán', hr: 'Kopiraj prijevod',
+    hu: 'Fordítás másolása', it: 'Copia traduzione', lt: 'Kopijuoti vertimą', lv: 'Kopēt tulkojumu', mt: 'Ikkopja t-traduzzjoni', nl: 'Vertaling kopiëren',
+    pl: 'Kopiuj tłumaczenie', pt: 'Copiar tradução', ro: 'Copiază traducerea', sk: 'Kopírovať preklad', sl: 'Kopiraj prevod', sv: 'Kopiera översättning',
+  },
+  'translation.copied': {
+    bg: 'Копирано!', cs: 'Zkopírováno!', da: 'Kopieret!', de: 'Kopiert!', el: 'Αντιγράφηκε!', en: 'Copied!',
+    es: '¡Copiado!', et: 'Kopeeritud!', fi: 'Kopioitu!', fr: 'Copié !', ga: 'Cóipeáilte!', hr: 'Kopirano!',
+    hu: 'Másolva!', it: 'Copiato!', lt: 'Nukopijuota!', lv: 'Nokopēts!', mt: 'Ikkopjat!', nl: 'Gekopieerd!',
+    pl: 'Skopiowano!', pt: 'Copiado!', ro: 'Copiat!', sk: 'Skopírované!', sl: 'Kopirano!', sv: 'Kopierat!',
+  },
+  'translation.original_label': {
+    bg: 'Оригинал', cs: 'Originál', da: 'Original', de: 'Original', el: 'Πρωτότυπο', en: 'Original',
+    es: 'Original', et: 'Originaal', fi: 'Alkuperäinen', fr: 'Original', ga: 'Bunleagan', hr: 'Izvornik',
+    hu: 'Eredeti', it: 'Originale', lt: 'Originalas', lv: 'Oriģināls', mt: 'Oriġinali', nl: 'Origineel',
+    pl: 'Oryginał', pt: 'Original', ro: 'Original', sk: 'Originál', sl: 'Izvirnik', sv: 'Original',
+  },
+  'translation.result_label': {
+    bg: 'Превод', cs: 'Překlad', da: 'Oversættelse', de: 'Übersetzung', el: 'Μετάφραση', en: 'Translation',
+    es: 'Traducción', et: 'Tõlge', fi: 'Käännös', fr: 'Traduction', ga: 'Aistriúchán', hr: 'Prijevod',
+    hu: 'Fordítás', it: 'Traduzione', lt: 'Vertimas', lv: 'Tulkojums', mt: 'Traduzzjoni', nl: 'Vertaling',
+    pl: 'Tłumaczenie', pt: 'Tradução', ro: 'Traducere', sk: 'Preklad', sl: 'Prevod', sv: 'Översättning',
+  },
+  'docx.logs.fields_not_translated_hint': {
+    bg: 'Полетата и записите в съдържанието не се превеждат — актуализирайте ги ръчно в Word.', cs: 'Pole a položky obsahu se nepřekládají — aktualizujte je ručně ve Wordu.', da: 'Felter og indholdsfortegnelsens poster oversættes ikke — opdater dem manuelt i Word.', de: 'Felder und Inhaltsverzeichnis-Einträge werden nicht übersetzt — in Word manuell aktualisieren.', el: 'Τα πεδία και οι καταχωρήσεις πίνακα περιεχομένων δεν μεταφράζονται — ενημερώστε τα χειροκίνητα στο Word.', en: 'Fields and table-of-contents entries are not translated; update them manually in Word.',
+    es: 'Los campos y las entradas del índice no se traducen; actualícelos manualmente en Word.', et: 'Väljasid ja sisukorra kirjeid ei tõlgita — värskendage neid Wordis käsitsi.', fi: 'Kenttiä ja sisällysluettelon merkintöjä ei käännetä — päivitä ne manuaalisesti Wordissa.', fr: 'Les champs et les entrées de la table des matières ne sont pas traduits — mettez-les à jour manuellement dans Word.', ga: 'Ní aistrítear réimsí agus iontrálacha an chláir ábhair — nuashonraigh iad de láimh i Word.', hr: 'Polja i unosi sadržaja se ne prevode — ažurirajte ih ručno u Wordu.',
+    hu: 'A mezők és a tartalomjegyzék-bejegyzések nem kerülnek lefordításra — frissítse őket manuálisan a Wordben.', it: 'I campi e le voci del sommario non vengono tradotti; aggiornali manualmente in Word.', lt: 'Laukai ir turinio įrašai nėra verčiami — atnaujinkite juos rankiniu būdu Word programoje.', lv: 'Lauki un satura rādītāja ieraksti netiek tulkoti — atjauniniet tos manuāli Word programmā.', mt: "Il-kampi u l-elementi tal-werrej ma jiġux tradotti — aġġornahom manwalment f'Word.", nl: 'Velden en inhoudsopgave-items worden niet vertaald — werk ze handmatig bij in Word.',
+    pl: 'Pola i wpisy spisu treści nie są tłumaczone — zaktualizuj je ręcznie w Wordzie.', pt: 'Os campos e as entradas do índice não são traduzidos; atualize-os manualmente no Word.', ro: 'Câmpurile și intrările din cuprins nu sunt traduse — actualizați-le manual în Word.', sk: 'Polia a položky obsahu sa neprekladajú — aktualizujte ich manuálne vo Worde.', sl: 'Polja in vnosi kazala se ne prevajajo — posodobite jih ročno v Wordu.', sv: 'Fält och innehållsförteckningsposter översätts inte — uppdatera dem manuellt i Word.',
+  },
+  // Fixed EN string emitted by the backend logger (LingofixRunner.cs) when translating;
+  // matched verbatim (like docx.logs.compare_fallback_manual_hint.backend_source above)
+  // to swap in the localized text via localizeDocxLogMessage.
+  'docx.logs.fields_not_translated_hint.backend_source': {
+    en: 'Fields and table-of-contents entries are not translated; update them manually in Word.',
   },
 };
 
