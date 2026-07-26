@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke, listen } from './lib/bridge';
-import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal, ExternalLink } from 'lucide-react';
+import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Languages, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal, ExternalLink } from 'lucide-react';
 import { TextEditor } from './components/TextEditor';
 import { SettingsModal } from './components/SettingsModal';
 import Onboarding from './components/Onboarding';
@@ -1111,17 +1111,36 @@ function App() {
                 </span>
               ) : (
                 <div className="flex items-center gap-2 min-w-0">
-                  <select
-                    value={settings.mode}
-                    onChange={(e) => void handleModeChange(e.target.value as OperationMode)}
-                    aria-label={t('mode.label', lang)}
-                    className={`text-sm font-medium rounded-lg px-2 py-1.5 border-transparent cursor-pointer flex-shrink-0 ${
-                      isDarkMode ? 'bg-surface-700 text-surface-200' : 'bg-surface-100 text-surface-700'
-                    }`}
-                  >
-                    <option value="correction">{t('mode.correction', lang)}</option>
-                    <option value="translation">{t('mode.translation', lang)}</option>
-                  </select>
+                  {/* Mode toggle: visually prominent since it changes core functionality
+                      (correction vs. translation), not a subordinate setting. */}
+                  <div className={`inline-flex rounded-lg p-0.5 flex-shrink-0 ${isDarkMode ? 'bg-surface-700' : 'bg-surface-100'}`}>
+                    <button
+                      type="button"
+                      onClick={() => void handleModeChange('correction')}
+                      aria-pressed={settings.mode === 'correction'}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                        settings.mode === 'correction'
+                          ? 'bg-accent-600 text-white shadow-premium'
+                          : (isDarkMode ? 'text-surface-300 hover:text-surface-100' : 'text-surface-600 hover:text-surface-800')
+                      }`}
+                    >
+                      <Sparkles size={14} />
+                      {t('mode.correction', lang)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleModeChange('translation')}
+                      aria-pressed={settings.mode === 'translation'}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                        settings.mode === 'translation'
+                          ? 'bg-accent-600 text-white shadow-premium'
+                          : (isDarkMode ? 'text-surface-300 hover:text-surface-100' : 'text-surface-600 hover:text-surface-800')
+                      }`}
+                    >
+                      <Languages size={14} />
+                      {t('mode.translation', lang)}
+                    </button>
+                  </div>
 
                   {settings.mode === 'translation' && (
                     <select
@@ -1144,10 +1163,6 @@ function App() {
                       ))}
                     </select>
                   )}
-
-                  <span className={`text-base truncate ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
-                    {settings.mode === 'translation' ? t('toolbar.placeholder.translate', lang) : t('toolbar.placeholder', lang)}
-                  </span>
                 </div>
               )}
             </div>
@@ -1193,7 +1208,7 @@ function App() {
                   <button
                     onClick={handleCorrect}
                     disabled={isCorrecting || (!hasText && docxFiles.length === 0)}
-                    className="btn-primary !py-2 !text-base"
+                    className="btn-secondary !py-2 !text-base"
                   >
                     {isCorrecting ? (
                       <>
