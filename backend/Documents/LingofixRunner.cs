@@ -299,7 +299,7 @@ public static class LingofixRunner
                         };
                     }
 
-                    await ParagraphProcessor.ProcessAsync(item.Paragraphs, llmClient, partSettings, logger, (completedWork, totalWork, batchMsg) =>
+                    await ParagraphProcessor.ProcessAsync(item.Paragraphs, llmClient, partSettings, item.Kind, logger, (completedWork, totalWork, batchMsg) =>
                     {
                         if (totalWork <= 0)
                         {

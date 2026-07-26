@@ -16,7 +16,7 @@ internal static class EmbeddedTextProcessor
 
     public static async Task<EmbeddedTextProcessingResult> ProcessAsync(
         WordprocessingDocument doc,
-        LlmClient llmClient,
+        ILlmClient llmClient,
         IRunLogger? logger,
         CancellationToken cancellationToken)
     {

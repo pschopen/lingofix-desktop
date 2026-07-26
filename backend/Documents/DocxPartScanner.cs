@@ -3,7 +3,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace Lingofix.Backend.Documents;
 
-internal enum ProcessorWorkItemKind
+public enum ProcessorWorkItemKind
 {
     Main,
     Footnotes,

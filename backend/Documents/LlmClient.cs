@@ -8,7 +8,33 @@ using System.Threading;
 
 namespace Lingofix.Backend.Documents;
 
-public sealed class LlmClient
+/// <summary>
+/// The subset of <see cref="LlmClient"/> that <see cref="ParagraphProcessor"/> and
+/// <see cref="EmbeddedTextProcessor"/> depend on, so tests can substitute a fake client
+/// instead of making real HTTP calls.
+/// </summary>
+public interface ILlmClient
+{
+    double AverageLatencyMs { get; }
+    double CurrentPacingIntervalMs { get; }
+
+    Task<string> CorrectAsync(
+        string input,
+        string? promptOverride = null,
+        string? context = null,
+        IConcurrencyGate? gate = null,
+        CancellationToken cancellationToken = default);
+
+    Task<string> CorrectBatchAsync(
+        string input,
+        string batchPrompt,
+        string? promptOverride = null,
+        string? context = null,
+        IConcurrencyGate? gate = null,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class LlmClient : ILlmClient
 {
     private const string ReasoningUnsupportedErrorCode = "REASONING_UNSUPPORTED";
     private const int TemperatureSupportUnknown = 0;
@@ -167,9 +193,14 @@ public sealed class LlmClient
         return supported.Value ? TemperatureSupportSupported : TemperatureSupportUnsupported;
     }
 
-    public async Task<string> CorrectAsync(string input, IConcurrencyGate? gate = null, CancellationToken cancellationToken = default)
+    public async Task<string> CorrectAsync(
+        string input,
+        string? promptOverride = null,
+        string? context = null,
+        IConcurrencyGate? gate = null,
+        CancellationToken cancellationToken = default)
     {
-        var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, input);
+        var prompt = BuildSimplePrompt(promptOverride ?? _prompt, _systemPromptOverride, input, context);
         var baseRequest = new ChatCompletionsRequest
         {
             Model = _model,
@@ -188,9 +219,15 @@ public sealed class LlmClient
             cancellationToken: cancellationToken);
     }
 
-    public async Task<string> CorrectBatchAsync(string input, string _batchPrompt, IConcurrencyGate? gate = null, CancellationToken cancellationToken = default)
+    public async Task<string> CorrectBatchAsync(
+        string input,
+        string _batchPrompt,
+        string? promptOverride = null,
+        string? context = null,
+        IConcurrencyGate? gate = null,
+        CancellationToken cancellationToken = default)
     {
-        var prompt = BuildSimplePrompt(_prompt, _systemPromptOverride, input);
+        var prompt = BuildSimplePrompt(promptOverride ?? _prompt, _systemPromptOverride, input, context);
         var baseRequest = new ChatCompletionsRequest
         {
             Model = _model,
@@ -217,7 +254,13 @@ public sealed class LlmClient
         _apiKey = apiKey?.Trim() ?? string.Empty;
     }
 
-    private static string BuildSimplePrompt(string customPrompt, string systemPrompt, string text, string? extraPrompt = null)
+    // Meta-instructions for the LLM, not user-visible text, so they stay fixed backend
+    // strings rather than resolved/translated prompts (see docs/plans/translation-mode.md
+    // Phase 3a). Used for both the single-request and batch paths.
+    private const string ContextLabel = "Kontext (NUR zum Verständnis — NICHT übersetzen, NICHT in die Antwort aufnehmen):";
+    private const string ContextualTextLabel = "Zu übersetzender Text:";
+
+    internal static string BuildSimplePrompt(string customPrompt, string systemPrompt, string text, string? context = null, string? extraPrompt = null)
     {
         var parts = new List<string>();
         var promptLineParts = new List<string>();
@@ -240,7 +283,16 @@ public sealed class LlmClient
             parts.Add(extraPrompt.Trim());
         }
 
-        parts.Add($"Text:\n{text}");
+        if (!string.IsNullOrWhiteSpace(context))
+        {
+            parts.Add($"{ContextLabel}\n{context.Trim()}");
+            parts.Add($"{ContextualTextLabel}\n{text}");
+        }
+        else
+        {
+            parts.Add($"Text:\n{text}");
+        }
+
         return string.Join("\n\n", parts);
     }
 
