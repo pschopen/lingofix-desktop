@@ -1029,6 +1029,45 @@ fn lingofix_temp_root() -> PathBuf {
     std::env::temp_dir().join("Lingofix")
 }
 
+const DEFAULT_TRANSLATION_MAIN_PROMPT_TEMPLATE: &str = "Übersetze den folgenden Text vollständig ins {lang}. Gib ausschließlich die Übersetzung aus — keine Kommentare, keine Erklärungen, keine Anführungszeichen um die Ausgabe. Übernimm die Absatz- und Satzstruktur so weit wie möglich. Verwende die Typografie-Konventionen der Zielsprache (Anführungszeichen, Gedankenstriche). Eigennamen, Zitate in Originalsprache und Aktenzeichen bleiben unübersetzt.";
+const DEFAULT_TRANSLATION_FOOTNOTE_PROMPT_SUFFIX: &str = "Der Text ist eine Fußnote. Zitate und Literaturangaben (Autor, Titel, Zeitschrift, Verlag, Auflage, Seitenzahlen) bleiben unverändert in der Originalsprache; übersetze nur erläuternden Fließtext. Folgezitat-Konventionen (z. B. „Ebd.“) in die übliche Form der Zielsprache übertragen.";
+const DEFAULT_TRANSLATION_BATCH_PROMPT: &str = "Gib exakt die gleiche Anzahl Absätze zurück wie im Eingabetext, getrennt durch jeweils genau eine Leerzeile. Füge keine zusätzlichen Leerzeilen innerhalb eines Absatzes ein.";
+const DEFAULT_TRANSLATION_PRESET_NAME: &str = "Standard";
+
+/// The main (Haupttext) translation prompt. Unlike the correction prompts, this is a
+/// single fixed German template (the plan gives only a German wording) with the target
+/// language's display name substituted in.
+fn default_translation_main_prompt(target_language: &str) -> String {
+    let display = language_display_name_de(target_language);
+    DEFAULT_TRANSLATION_MAIN_PROMPT_TEMPLATE.replace("{lang}", &display)
+}
+
+/// The footnote-specific translation prompt: the main instruction plus an additional
+/// footnote-only rule (citations/bibliographic data stay in the source language).
+fn default_translation_footnote_prompt(target_language: &str) -> String {
+    format!(
+        "{} {}",
+        default_translation_main_prompt(target_language),
+        DEFAULT_TRANSLATION_FOOTNOTE_PROMPT_SUFFIX
+    )
+}
+
+fn default_translation_batch_prompt(target_language: &str) -> String {
+    let _ = target_language;
+    DEFAULT_TRANSLATION_BATCH_PROMPT.to_string()
+}
+
+fn default_translation_prompt_preset(target_language: &str) -> TranslationPromptPreset {
+    let slug = target_language_slug(target_language);
+    TranslationPromptPreset {
+        id: format!("default-{slug}"),
+        name: DEFAULT_TRANSLATION_PRESET_NAME.to_string(),
+        locale: slug,
+        main_prompt: default_translation_main_prompt(target_language),
+        footnote_prompt: default_translation_footnote_prompt(target_language),
+    }
+}
+
 fn default_custom_prompt_preset(locale: &str) -> CustomPromptPreset {
     let normalized_locale = normalize_locale(locale);
     let name = if normalized_locale == "de" {
@@ -1209,6 +1248,82 @@ const KNOWN_LANGUAGES: [&str; 24] = [
     "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "ga", "hr",
     "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "sk", "sl", "sv",
 ];
+
+// German display names for the known language codes, used to fill "{lang}" into the
+// (German-language) translation-mode default prompts. Free-text target languages are not
+// in this table and are used verbatim instead (see language_display_name_de).
+const LANGUAGE_DISPLAY_NAMES_DE: [(&str, &str); 24] = [
+    ("bg", "Bulgarisch"),
+    ("cs", "Tschechisch"),
+    ("da", "Dänisch"),
+    ("de", "Deutsch"),
+    ("el", "Griechisch"),
+    ("en", "Englisch"),
+    ("es", "Spanisch"),
+    ("et", "Estnisch"),
+    ("fi", "Finnisch"),
+    ("fr", "Französisch"),
+    ("ga", "Irisch"),
+    ("hr", "Kroatisch"),
+    ("hu", "Ungarisch"),
+    ("it", "Italienisch"),
+    ("lt", "Litauisch"),
+    ("lv", "Lettisch"),
+    ("mt", "Maltesisch"),
+    ("nl", "Niederländisch"),
+    ("pl", "Polnisch"),
+    ("pt", "Portugiesisch"),
+    ("ro", "Rumänisch"),
+    ("sk", "Slowakisch"),
+    ("sl", "Slowenisch"),
+    ("sv", "Schwedisch"),
+];
+
+/// Resolves a target-language display name for substitution into the (German) default
+/// translation prompts: a known ISO code maps to its German name; anything else (free
+/// text like "Schweizer Hochdeutsch") is used exactly as the user typed it.
+fn language_display_name_de(target_language: &str) -> String {
+    let trimmed = target_language.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    LANGUAGE_DISPLAY_NAMES_DE
+        .iter()
+        .find(|(code, _)| *code == lower)
+        .map(|(_, name)| name.to_string())
+        .unwrap_or_else(|| trimmed.to_string())
+}
+
+/// Filesystem-safe, HashMap-key-safe slug for a target language, mirroring the backend's
+/// output-filename slug rule (backend/Documents/LingofixRunner.cs::BuildLanguageSlug):
+/// lowercase, non-alphanumeric runs collapsed to a single '-', max 24 chars. Free text is
+/// fully supported since the target language is not restricted to KNOWN_LANGUAGES.
+fn target_language_slug(target_language: &str) -> String {
+    let trimmed = target_language.trim();
+    if trimmed.is_empty() {
+        return "target".to_string();
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+    for ch in lower.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash && !slug.is_empty() {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    let trimmed_slug: String = slug.trim_end_matches('-').chars().take(24).collect();
+    let trimmed_slug = trimmed_slug.trim_end_matches('-');
+
+    if trimmed_slug.is_empty() {
+        "target".to_string()
+    } else {
+        trimmed_slug.to_string()
+    }
+}
 const MIN_TEMPERATURE: f64 = 0.0;
 const MAX_TEMPERATURE: f64 = 2.0;
 const MIN_DOCX_CHUNK_SIZE: i32 = 500;
@@ -1400,6 +1515,60 @@ struct CustomPromptPreset {
     locale: String,
 }
 
+fn default_operation_mode() -> String {
+    "correction".to_string()
+}
+
+fn default_target_language() -> String {
+    "en".to_string()
+}
+
+/// One translation preset carries *both* the main-text and footnote prompt, so the two
+/// are always switched together as a consistent pair (see docs/plans/translation-mode.md
+/// Phase 4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TranslationPromptPreset {
+    id: String,
+    name: String,
+    // Target-language slug (target_language_slug), NOT a KNOWN_LANGUAGES entry: the
+    // target language can be free text.
+    locale: String,
+    main_prompt: String,
+    footnote_prompt: String,
+}
+
+/// Own namespace, deliberately separate from the correction preset system
+/// (custom_prompt_presets/active_custom_prompt_preset_ids): translation presets are
+/// keyed by target-language slug rather than by correction_language.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TranslationSettings {
+    #[serde(default = "default_target_language")]
+    target_language: String,
+    #[serde(default)]
+    prompt_presets: Vec<TranslationPromptPreset>,
+    #[serde(default)]
+    active_preset_ids: HashMap<String, String>,
+    // Resolved footnote prompt of the active preset; the backend reads this directly
+    // (mirrors how the top-level custom_prompt field carries the resolved main prompt).
+    #[serde(default)]
+    footnote_prompt: String,
+}
+
+impl Default for TranslationSettings {
+    fn default() -> Self {
+        let target_language = default_target_language();
+        let preset = default_translation_prompt_preset(&target_language);
+        let mut active_preset_ids = HashMap::new();
+        active_preset_ids.insert(preset.locale.clone(), preset.id.clone());
+        Self {
+            target_language,
+            footnote_prompt: preset.footnote_prompt.clone(),
+            prompt_presets: vec![preset],
+            active_preset_ids,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FrontendSettings {
     provider: String,
@@ -1429,6 +1598,10 @@ struct FrontendSettings {
     font_size: String,
     #[serde(default = "default_setup_completed_true")]
     setup_completed: Option<bool>,
+    #[serde(default = "default_operation_mode")]
+    mode: String,
+    #[serde(default)]
+    translation: TranslationSettings,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1480,6 +1653,8 @@ impl FrontendSettings {
             docx,
             font_size: "default".into(),
             setup_completed: None,
+            mode: default_operation_mode(),
+            translation: TranslationSettings::default(),
         }
     }
 }
@@ -1844,6 +2019,7 @@ async fn load_settings(app: AppHandle, locale: Option<String>) -> Result<Fronten
     settings.provider = canonical_provider(&settings.provider)?;
     normalize_language_settings(&mut settings, locale);
     sync_custom_prompt_with_active_preset(&mut settings)?;
+    sync_translation_prompt_with_active_preset(&mut settings);
     validate_settings(&settings)?;
 
     if settings
@@ -2123,6 +2299,47 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         }
     }
 
+    // Migration-safe: an absent "mode"/"translation" block already defaulted to
+    // Correction/TranslationSettings::default() during deserialization, so this only
+    // rejects a *present-but-garbage* mode value — same pattern as speed_mode above.
+    let mode = settings.mode.trim().to_ascii_lowercase();
+    if mode != "correction" && mode != "translation" {
+        return Err(format!(
+            "Invalid settings: mode must be 'correction' or 'translation'. {reset_hint}"
+        ));
+    }
+
+    if mode == "translation" && settings.translation.target_language.trim().is_empty() {
+        return Err(format!(
+            "Invalid settings: translation.target_language is missing. {reset_hint}"
+        ));
+    }
+
+    let mut seen_translation_preset_ids = HashSet::new();
+    for preset in &settings.translation.prompt_presets {
+        if preset.id.trim().is_empty() {
+            return Err(format!(
+                "Invalid settings: translation prompt preset id is missing. {reset_hint}"
+            ));
+        }
+        if !seen_translation_preset_ids.insert(preset.id.to_ascii_lowercase()) {
+            return Err(format!(
+                "Invalid settings: duplicate translation prompt preset ids. {reset_hint}"
+            ));
+        }
+        if preset.name.trim().is_empty() {
+            return Err(format!(
+                "Invalid settings: translation prompt preset name is missing. {reset_hint}"
+            ));
+        }
+        if preset.main_prompt.trim().is_empty() {
+            return Err(format!(
+                "Invalid settings: translation prompt preset main_prompt is missing. {reset_hint}"
+            ));
+        }
+        // footnote_prompt may legitimately be empty: it falls back to main_prompt.
+    }
+
     Ok(())
 }
 
@@ -2188,13 +2405,101 @@ fn sync_custom_prompt_with_active_preset(settings: &mut FrontendSettings) -> Res
     settings
         .active_custom_prompt_preset_ids
         .insert(correction_language, settings.active_custom_prompt_preset_id.clone());
-    settings.custom_prompt = active_preset.value.trim().to_string();
+    // Translation mode owns custom_prompt while active (see
+    // sync_translation_prompt_with_active_preset) — never clobber it back to the
+    // correction preset here, so switching modes doesn't lose either prompt.
+    if !settings.mode.eq_ignore_ascii_case("translation") {
+        settings.custom_prompt = active_preset.value.trim().to_string();
+    }
     if settings.system_prompt.trim().is_empty()
         || is_default_or_legacy_system_prompt(&settings.system_prompt)
     {
         settings.system_prompt = default_system_prompt(&settings.correction_language);
     }
     Ok(())
+}
+
+/// Translation-mode analogue of sync_custom_prompt_with_active_preset: resolves the
+/// active translation preset for the current target language, keeps its default preset
+/// content fresh, and — only while mode == "translation" — writes the resolved prompts
+/// into the fields the backend actually reads (custom_prompt, batch_prompt,
+/// translation.footnote_prompt). Runs unconditionally (like its correction counterpart)
+/// so the translation preset bookkeeping stays consistent even while mode ==
+/// "correction", ready for whenever the user switches back.
+fn sync_translation_prompt_with_active_preset(settings: &mut FrontendSettings) {
+    let target_language = settings.translation.target_language.trim().to_string();
+    if target_language.is_empty() {
+        // Not yet configured (e.g. pre-translation-feature settings.json); nothing to
+        // resolve. validate_settings rejects this only when mode == "translation".
+        return;
+    }
+    settings.translation.target_language = target_language.clone();
+    let slug = target_language_slug(&target_language);
+
+    for preset in &mut settings.translation.prompt_presets {
+        if preset.locale == slug && preset.id.eq_ignore_ascii_case(&format!("default-{slug}")) {
+            preset.name = DEFAULT_TRANSLATION_PRESET_NAME.to_string();
+            preset.main_prompt = default_translation_main_prompt(&target_language);
+            preset.footnote_prompt = default_translation_footnote_prompt(&target_language);
+        }
+    }
+
+    let active_id_for_language = settings
+        .translation
+        .active_preset_ids
+        .get(&slug)
+        .cloned()
+        .unwrap_or_default();
+    let active_id = active_id_for_language.trim();
+
+    let active_index = if active_id.is_empty() {
+        None
+    } else {
+        settings
+            .translation
+            .prompt_presets
+            .iter()
+            .position(|preset| preset.id.eq_ignore_ascii_case(active_id) && preset.locale == slug)
+    }
+    .or_else(|| {
+        settings.translation.prompt_presets.iter().position(|preset| {
+            preset.id.eq_ignore_ascii_case(&format!("default-{slug}")) && preset.locale == slug
+        })
+    })
+    .or_else(|| {
+        settings
+            .translation
+            .prompt_presets
+            .iter()
+            .position(|preset| preset.locale == slug)
+    });
+
+    let active_index = if let Some(index) = active_index {
+        index
+    } else {
+        settings
+            .translation
+            .prompt_presets
+            .push(default_translation_prompt_preset(&target_language));
+        settings.translation.prompt_presets.len() - 1
+    };
+
+    let active_preset = &mut settings.translation.prompt_presets[active_index];
+    active_preset.locale = slug.clone();
+    let active_preset_id = active_preset.id.trim().to_string();
+    let main_prompt = active_preset.main_prompt.trim().to_string();
+    let footnote_prompt = active_preset.footnote_prompt.trim().to_string();
+
+    settings
+        .translation
+        .active_preset_ids
+        .insert(slug, active_preset_id);
+    settings.translation.footnote_prompt = footnote_prompt;
+
+    if settings.mode.eq_ignore_ascii_case("translation") {
+        settings.custom_prompt = main_prompt;
+        settings.batch_prompt = default_translation_batch_prompt(&target_language);
+    }
 }
 
 fn normalize_language_settings(settings: &mut FrontendSettings, detected_locale: &str) {
@@ -2247,6 +2552,7 @@ async fn save_settings(app: AppHandle, settings: FrontendSettings) -> Result<(),
     normalized_settings.provider = normalized_provider.clone();
     normalize_language_settings(&mut normalized_settings, "en");
     sync_custom_prompt_with_active_preset(&mut normalized_settings)?;
+    sync_translation_prompt_with_active_preset(&mut normalized_settings);
     if let Some(active) = normalized_settings
         .api_key
         .as_ref()
@@ -3312,7 +3618,9 @@ async fn run_docx_processor(
             "speed_mode": settings.docx.speed_mode.as_str(),
             "manual_requests_per_minute": settings.docx.manual_requests_per_minute,
             "enable_reasoning": settings.enable_reasoning,
-            "reasoning_effort": &settings.reasoning_effort
+            "reasoning_effort": &settings.reasoning_effort,
+            "mode": settings.mode.as_str(),
+            "target_language": settings.translation.target_language.as_str()
         }),
     );
 
@@ -4967,5 +5275,86 @@ mod rate_hint_tests {
             "LLM rate update: key=x; interval_ms=1000"
         )
         .is_none());
+    }
+}
+
+#[cfg(test)]
+mod translation_mode_migration_tests {
+    use super::{
+        default_translation_prompt_preset, sync_translation_prompt_with_active_preset,
+        target_language_slug, validate_settings, FrontendSettings,
+    };
+
+    #[test]
+    fn settings_json_without_mode_or_translation_block_loads_as_correction() {
+        // Simulates an existing installation's settings.json, written before this
+        // feature existed: no "mode" and no "translation" key at all.
+        let defaults = FrontendSettings::default_for_locale("de");
+        let mut value = serde_json::to_value(&defaults).expect("serialize defaults");
+        let object = value.as_object_mut().expect("settings is a JSON object");
+        object.remove("mode");
+        object.remove("translation");
+
+        let migrated: FrontendSettings = serde_json::from_value(value)
+            .expect("old settings.json without mode/translation must still load");
+
+        assert_eq!(migrated.mode, "correction");
+        assert_eq!(migrated.translation.target_language, "en");
+        assert!(validate_settings(&migrated).is_ok());
+    }
+
+    #[test]
+    fn translation_mode_requires_target_language() {
+        let mut settings = FrontendSettings::default_for_locale("en");
+        settings.mode = "translation".to_string();
+        settings.translation.target_language = String::new();
+
+        assert!(validate_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn free_text_target_language_is_supported_end_to_end() {
+        let mut settings = FrontendSettings::default_for_locale("de");
+        settings.mode = "translation".to_string();
+        settings.translation.target_language = "Schweizer Hochdeutsch".to_string();
+        settings.translation.prompt_presets.clear();
+        settings.translation.active_preset_ids.clear();
+
+        sync_translation_prompt_with_active_preset(&mut settings);
+
+        assert!(validate_settings(&settings).is_ok());
+        assert!(settings.custom_prompt.contains("Schweizer Hochdeutsch"));
+        let slug = target_language_slug("Schweizer Hochdeutsch");
+        assert_eq!(slug, "schweizer-hochdeutsch");
+        assert!(settings
+            .translation
+            .prompt_presets
+            .iter()
+            .any(|preset| preset.locale == slug));
+    }
+
+    #[test]
+    fn known_language_code_gets_german_display_name_in_default_prompt() {
+        let preset = default_translation_prompt_preset("fr");
+        assert!(preset.main_prompt.contains("Französisch"));
+        assert!(!preset.main_prompt.contains("fr"));
+    }
+
+    #[test]
+    fn mode_switch_does_not_clobber_the_other_modes_prompt() {
+        let mut settings = FrontendSettings::default_for_locale("de");
+        let correction_prompt = settings.custom_prompt.clone();
+
+        settings.mode = "translation".to_string();
+        settings.translation.target_language = "en".to_string();
+        sync_translation_prompt_with_active_preset(&mut settings);
+        let translation_prompt = settings.custom_prompt.clone();
+        assert_ne!(correction_prompt, translation_prompt);
+
+        // Switching back to correction must restore the correction prompt, not leave the
+        // translation prompt sitting in custom_prompt.
+        settings.mode = "correction".to_string();
+        super::sync_custom_prompt_with_active_preset(&mut settings).expect("sync should succeed");
+        assert_eq!(settings.custom_prompt, correction_prompt);
     }
 }
