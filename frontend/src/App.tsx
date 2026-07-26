@@ -961,43 +961,6 @@ function App() {
               </h1>
             </div>
             <div className="flex items-center gap-1">
-            {/* Mode + target language */}
-            <select
-              value={settings.mode}
-              onChange={(e) => void handleModeChange(e.target.value as OperationMode)}
-              aria-label={t('mode.label', lang)}
-              className={`text-sm font-medium rounded-lg px-2 py-1.5 border-transparent cursor-pointer ${
-                isDarkMode ? 'bg-surface-700 text-surface-200' : 'bg-surface-100 text-surface-700'
-              }`}
-            >
-              <option value="correction">{t('mode.correction', lang)}</option>
-              <option value="translation">{t('mode.translation', lang)}</option>
-            </select>
-
-            {settings.mode === 'translation' && (
-              <select
-                value={settings.translation.target_language}
-                onChange={(e) => void handleTargetLanguageChange(e.target.value)}
-                aria-label={t('mode.target_language', lang)}
-                className={`text-sm font-medium rounded-lg px-2 py-1.5 border-transparent cursor-pointer ${
-                  isDarkMode ? 'bg-surface-700 text-surface-200' : 'bg-surface-100 text-surface-700'
-                }`}
-              >
-                {!EU_LANGUAGE_CODES.includes(settings.translation.target_language as Language) && (
-                  <option value={settings.translation.target_language}>
-                    {settings.translation.target_language || t('mode.target_language.other', lang)}
-                  </option>
-                )}
-                {EU_LANGUAGE_CODES.map((code) => (
-                  <option key={code} value={code}>
-                    {LANGUAGE_LABELS[code]}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            <div className={`w-px h-5 mx-1 ${isDarkMode ? 'bg-surface-700' : 'bg-surface-200'}`} />
-
             {/* Dark mode toggle */}
             <button
               onClick={handleToggleDarkMode}
@@ -1147,9 +1110,45 @@ function App() {
                   {text.trim().split(/\s+/).filter(w => w.length > 0).length} {t('stats.words', lang)}, {text.length} {t('stats.chars', lang)}
                 </span>
               ) : (
-                <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
-                  {settings.mode === 'translation' ? t('toolbar.placeholder.translate', lang) : t('toolbar.placeholder', lang)}
-                </span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <select
+                    value={settings.mode}
+                    onChange={(e) => void handleModeChange(e.target.value as OperationMode)}
+                    aria-label={t('mode.label', lang)}
+                    className={`text-sm font-medium rounded-lg px-2 py-1.5 border-transparent cursor-pointer flex-shrink-0 ${
+                      isDarkMode ? 'bg-surface-700 text-surface-200' : 'bg-surface-100 text-surface-700'
+                    }`}
+                  >
+                    <option value="correction">{t('mode.correction', lang)}</option>
+                    <option value="translation">{t('mode.translation', lang)}</option>
+                  </select>
+
+                  {settings.mode === 'translation' && (
+                    <select
+                      value={settings.translation.target_language}
+                      onChange={(e) => void handleTargetLanguageChange(e.target.value)}
+                      aria-label={t('mode.target_language', lang)}
+                      className={`text-sm font-medium rounded-lg px-2 py-1.5 border-transparent cursor-pointer flex-shrink-0 ${
+                        isDarkMode ? 'bg-surface-700 text-surface-200' : 'bg-surface-100 text-surface-700'
+                      }`}
+                    >
+                      {!EU_LANGUAGE_CODES.includes(settings.translation.target_language as Language) && (
+                        <option value={settings.translation.target_language}>
+                          {settings.translation.target_language || t('mode.target_language.other', lang)}
+                        </option>
+                      )}
+                      {EU_LANGUAGE_CODES.map((code) => (
+                        <option key={code} value={code}>
+                          {LANGUAGE_LABELS[code]}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <span className={`text-base truncate ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
+                    {settings.mode === 'translation' ? t('toolbar.placeholder.translate', lang) : t('toolbar.placeholder', lang)}
+                  </span>
+                </div>
               )}
             </div>
 

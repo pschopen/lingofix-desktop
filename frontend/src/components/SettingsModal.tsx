@@ -25,6 +25,7 @@ import {
 import { FieldGroup } from './settings/shared';
 import { PresetDialogMode } from './settings/PromptPresetEditor';
 import { GeneralSection } from './settings/GeneralSection';
+import { AdvancedSection } from './settings/AdvancedSection';
 import { CorrectionSection } from './settings/CorrectionSection';
 import { TranslationSection } from './settings/TranslationSection';
 
@@ -42,7 +43,7 @@ interface SettingsModalProps {
   isDarkMode?: boolean;
 }
 
-type SectionType = 'general' | 'correction' | 'translation';
+type SectionType = 'general' | 'correction' | 'translation' | 'advanced';
 const LEGACY_DEFAULT_PROMPTS = [
   'Correct the following text while maintaining the style and tone.',
   'Korrigiere den folgenden Text nach den Duden-Regeln. Korrigiere nur Fehler, alles andere lässt Du unverändert!',
@@ -1007,6 +1008,7 @@ export function SettingsModal({
     { id: 'general', label: t('settings.section.general', lang) },
     { id: 'correction', label: t('settings.section.correction', lang) },
     { id: 'translation', label: t('settings.section.translation', lang) },
+    { id: 'advanced', label: t('settings.tab.advanced', lang) },
   ];
 
   return (
@@ -1058,23 +1060,7 @@ export function SettingsModal({
                   onProviderChange={handleProviderChange}
                   onApiKeyChange={handleApiKeyChange}
                   onConfigureOllama={onConfigureOllama}
-                  onDocxSettingChange={handleDocxSettingChange}
-                  onEditorSettingChange={handleEditorSettingChange}
-                  onBatchingPartToggle={handleBatchingPartToggle}
                   onScopePartToggle={handleCorrectionScopePartToggle}
-                  onUiLanguageChange={handleUiLanguageChange}
-                  isCheckingUpdates={isCheckingUpdates}
-                  updateCheckMessage={updateCheckMessage}
-                  onCheckUpdates={handleCheckUpdates}
-                  isResettingApp={isResettingApp}
-                  resetMessage={resetMessage}
-                  resetMessageIsError={resetMessageIsError}
-                  onResetApp={handleResetApp}
-                  onRerunWizard={onRerunWizard}
-                  systemPathMessage={systemPathMessage}
-                  onOpenTempFolder={handleOpenTempFolder}
-                  onOpenSettingsJson={handleOpenSettingsJson}
-                  onOpenDebugLog={handleOpenDebugLog}
                 />
               ) : activeSection === 'correction' ? (
                 <CorrectionSection
@@ -1103,7 +1089,7 @@ export function SettingsModal({
                   onCustomPromptChange={handleCustomPromptChange}
                   activePresetName={getActivePreset(formData)?.name ?? ''}
                 />
-              ) : (
+              ) : activeSection === 'translation' ? (
                 <TranslationSection
                   formData={formData}
                   isDarkMode={isDarkMode}
@@ -1126,6 +1112,30 @@ export function SettingsModal({
                   onPresetDialogCancel={closeTranslationPresetDialog}
                   onMainPromptChange={handleMainPromptChange}
                   onFootnotePromptChange={handleFootnotePromptChange}
+                />
+              ) : (
+                <AdvancedSection
+                  formData={formData}
+                  setFormData={setFormData}
+                  isDarkMode={isDarkMode}
+                  lang={lang}
+                  menuBoundaryRef={modalPanelRef}
+                  onDocxSettingChange={handleDocxSettingChange}
+                  onEditorSettingChange={handleEditorSettingChange}
+                  onBatchingPartToggle={handleBatchingPartToggle}
+                  onUiLanguageChange={handleUiLanguageChange}
+                  isCheckingUpdates={isCheckingUpdates}
+                  updateCheckMessage={updateCheckMessage}
+                  onCheckUpdates={handleCheckUpdates}
+                  isResettingApp={isResettingApp}
+                  resetMessage={resetMessage}
+                  resetMessageIsError={resetMessageIsError}
+                  onResetApp={handleResetApp}
+                  onRerunWizard={onRerunWizard}
+                  systemPathMessage={systemPathMessage}
+                  onOpenTempFolder={handleOpenTempFolder}
+                  onOpenSettingsJson={handleOpenSettingsJson}
+                  onOpenDebugLog={handleOpenDebugLog}
                 />
               )}
             </div>
