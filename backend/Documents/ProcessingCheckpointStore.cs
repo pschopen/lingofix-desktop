@@ -9,11 +9,32 @@ internal sealed class ProcessingCheckpoint
     public required List<string> CompletedLabels { get; init; }
     public required Dictionary<string, int> CompletedBatchesByLabel { get; init; }
     public bool IsActive { get; init; }
+    // Null on checkpoints written before the fingerprint existed (old format).
+    public string? Fingerprint { get; init; }
 }
 
 internal static class ProcessingCheckpointStore
 {
-    public static ProcessingCheckpoint? Load(string inputPath, IRunLogger? logger)
+    /// <summary>
+    /// Fingerprints the run configuration that produced a checkpoint's corrected temp
+    /// file, so a resume never mixes e.g. a half-corrected file into a translation
+    /// run (or vice versa). Not a security hash — collisions only need to be
+    /// astronomically unlikely, not adversarially resistant.
+    /// </summary>
+    public static string ComputeFingerprint(Settings settings)
+    {
+        var raw = string.Join(
+            "\n",
+            settings.Mode.ToString(),
+            settings.TargetLanguage,
+            settings.Prompt,
+            settings.FootnotePrompt,
+            settings.Model);
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw));
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    public static ProcessingCheckpoint? Load(string inputPath, string fingerprint, IRunLogger? logger)
     {
         var checkpointPath = PathUtils.BuildCheckpointPath(inputPath);
         if (!File.Exists(checkpointPath))
@@ -46,6 +67,12 @@ internal static class ProcessingCheckpointStore
                 return null;
             }
 
+            if (string.IsNullOrEmpty(parsed.Fingerprint) || !string.Equals(parsed.Fingerprint, fingerprint, StringComparison.Ordinal))
+            {
+                logger?.Info("Checkpoint found, but run configuration (mode/language/prompt/model) changed. Starting fresh.");
+                return null;
+            }
+
             return parsed;
         }
         catch
@@ -59,6 +86,7 @@ internal static class ProcessingCheckpointStore
         string inputPath,
         string correctedPath,
         IEnumerable<string> completedLabels,
+        string fingerprint,
         IReadOnlyDictionary<string, int>? completedBatchesByLabel = null,
         bool isActive = true)
     {
@@ -73,7 +101,8 @@ internal static class ProcessingCheckpointStore
                 : completedBatchesByLabel
                     .Where(kvp => kvp.Value > 0)
                     .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal),
-            IsActive = isActive
+            IsActive = isActive,
+            Fingerprint = fingerprint
         };
 
         var json = JsonSerializer.Serialize(payload, JsonOptions.Default);

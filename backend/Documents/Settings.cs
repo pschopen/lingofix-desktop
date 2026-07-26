@@ -14,6 +14,12 @@ public enum SpeedMode
     Manual
 }
 
+public enum OperationMode
+{
+    Correction,
+    Translation
+}
+
 public sealed class Settings
 {
     public const double MinTemperature = 0.0;
@@ -76,6 +82,11 @@ public sealed class Settings
     public bool? TemperatureSupportedHint { get; set; }
     public bool? ReasoningEffortSupportedHint { get; set; }
     public double? RateHintIntervalMs { get; set; }
+    public OperationMode Mode { get; set; } = OperationMode.Correction;
+    // ISO code or free-text language name; only populated/required in Translation mode.
+    public string TargetLanguage { get; set; } = string.Empty;
+    // Empty means: main Prompt also applies to footnotes/endnotes in Translation mode.
+    public string FootnotePrompt { get; set; } = string.Empty;
 
     public static string ResolveApiKey(string raw)
     {
@@ -154,7 +165,10 @@ public sealed class Settings
             CitationNormalizationMode = CitationNormalizer.ParseMode(docx.CitationNormalization),
             TemperatureSupportedHint = payload.LlmCapabilityHint?.TemperatureSupported,
             ReasoningEffortSupportedHint = payload.LlmCapabilityHint?.ReasoningEffortSupported,
-            RateHintIntervalMs = payload.LlmRateHint?.IntervalMs
+            RateHintIntervalMs = payload.LlmRateHint?.IntervalMs,
+            Mode = ParseOperationMode(payload.Mode),
+            TargetLanguage = payload.Translation?.TargetLanguage?.Trim() ?? string.Empty,
+            FootnotePrompt = payload.Translation?.FootnotePrompt?.Trim() ?? string.Empty
         };
 
         if (double.IsNaN(normalized.Temperature) || double.IsInfinity(normalized.Temperature))
@@ -167,6 +181,12 @@ public sealed class Settings
         normalized.BatchMaxChars = Math.Clamp(normalized.BatchMaxChars, MinBatchMaxChars, MaxBatchMaxChars);
         normalized.BatchMaxParagraphs = Math.Clamp(normalized.BatchMaxParagraphs, MinBatchMaxParagraphs, MaxBatchMaxParagraphs);
         normalized.MaxParallelRequests = Math.Clamp(normalized.MaxParallelRequests, MinMaxParallelRequests, MaxMaxParallelRequests);
+
+        if (normalized.Mode == OperationMode.Translation && string.IsNullOrWhiteSpace(normalized.TargetLanguage))
+        {
+            throw InvalidSettings("translation.target_language is required in translation mode");
+        }
+
         return normalized;
     }
 
@@ -277,6 +297,15 @@ public sealed class Settings
         return result;
     }
 
+    private static OperationMode ParseOperationMode(string? raw)
+    {
+        // Missing/empty/unknown -> Correction. Migration intent: existing installs (which
+        // never wrote "mode") come up in Correction mode.
+        return string.Equals(raw?.Trim(), "translation", StringComparison.OrdinalIgnoreCase)
+            ? OperationMode.Translation
+            : OperationMode.Correction;
+    }
+
     private static SpeedMode ParseSpeedMode(string? raw)
     {
         // Missing/empty/unknown -> Auto. Migration intent: existing installs (which never
@@ -353,6 +382,21 @@ internal sealed class FrontendSettingsPayload
 
     [JsonPropertyName("llm_rate_hint")]
     public FrontendLlmRateHintPayload? LlmRateHint { get; set; }
+
+    [JsonPropertyName("mode")]
+    public string? Mode { get; set; }
+
+    [JsonPropertyName("translation")]
+    public FrontendTranslationSettingsPayload? Translation { get; set; }
+}
+
+internal sealed class FrontendTranslationSettingsPayload
+{
+    [JsonPropertyName("target_language")]
+    public string? TargetLanguage { get; set; }
+
+    [JsonPropertyName("footnote_prompt")]
+    public string? FootnotePrompt { get; set; }
 }
 
 internal sealed class FrontendLlmRateHintPayload

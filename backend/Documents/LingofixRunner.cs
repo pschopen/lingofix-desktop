@@ -50,9 +50,13 @@ public static class LingofixRunner
         }
 
         var settings = options.Settings ?? throw new ArgumentNullException(nameof(options.Settings));
+        var isTranslation = settings.Mode == OperationMode.Translation;
+        // CompareMode is deliberately not evaluated for branching in translation mode: there
+        // is no track-changes output at all (see the compare-generation block below), only
+        // the plain translated document.
         var compareMode = options.CompareModeOverride ?? Settings.NormalizeCompareMode(settings.CompareMode);
-        var isWordCompare = compareMode == CompareModeKind.Word;
-        var isLibreOfficeCompare = compareMode == CompareModeKind.LibreOffice;
+        var isWordCompare = !isTranslation && compareMode == CompareModeKind.Word;
+        var isLibreOfficeCompare = !isTranslation && compareMode == CompareModeKind.LibreOffice;
         var isSourceOdt = options.SourceKind == SourceInputKind.Odt;
         var useNativeOdtLibreOfficeCompare = isSourceOdt && isLibreOfficeCompare;
         var isExternalCompare = isWordCompare || isLibreOfficeCompare;
@@ -66,21 +70,22 @@ public static class LingofixRunner
 
         var trackOutputPath = PathUtils.BuildOutputPath(normalizedInputPath, "_lingofix");
         var correctedOutputPath = PathUtils.BuildOutputPath(normalizedInputPath, "_corrected");
-        var finalOutputPath = useNativeOdtLibreOfficeCompare
-            ? Path.ChangeExtension(trackOutputPath, ".odt")
-            : trackOutputPath;
+        var finalOutputPath = isTranslation
+            ? PathUtils.BuildOutputPath(normalizedInputPath, $"_translated_{BuildLanguageSlug(settings.TargetLanguage)}")
+            : (useNativeOdtLibreOfficeCompare ? Path.ChangeExtension(trackOutputPath, ".odt") : trackOutputPath);
         // Keep the external-compare working files in the same OOXML subtype as
         // the input (.docx/.docm/.dotx/.dotm) so the promoted output container
         // matches its file name. ODT sources reach here already converted to
         // .docx, so inputExtension is ".docx" for them.
         var tempOutputPath = isExternalCompare
             ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, useNativeOdtLibreOfficeCompare ? "output.odt" : $"output{inputExtension}")
-            : PathUtils.BuildTempOutputPath(trackOutputPath);
+            : PathUtils.BuildTempOutputPath(finalOutputPath);
         var tempOriginalPath = isExternalCompare
             ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, $"original{inputExtension}")
             : Path.Combine(PathUtils.GetLingofixTempRoot(), $"orig_{Guid.NewGuid():N}{Path.GetExtension(normalizedInputPath)}");
         CopyReadableSnapshot(normalizedInputPath, tempOriginalPath);
-        var checkpoint = ProcessingCheckpointStore.Load(normalizedInputPath, logger);
+        var fingerprint = ProcessingCheckpointStore.ComputeFingerprint(settings);
+        var checkpoint = ProcessingCheckpointStore.Load(normalizedInputPath, fingerprint, logger);
         var correctedPath = checkpoint?.CorrectedPath
             ?? (isExternalCompare
                 ? PathUtils.BuildWordCompareFilePath(normalizedInputPath, $"corrected{inputExtension}")
@@ -92,11 +97,11 @@ public static class LingofixRunner
         if (checkpoint is null)
         {
             File.Copy(tempOriginalPath, correctedPath, overwrite: true);
-            ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, completedBatchesByLabel);
+            ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, fingerprint, completedBatchesByLabel);
         }
         else
         {
-            logger.Info($"Resuming DOCX correction from checkpoint with {completedLabels.Count} completed parts.");
+            logger.Info($"Resuming DOCX {(isTranslation ? "translation" : "correction")} from checkpoint with {completedLabels.Count} completed parts.");
         }
 
         var llmClient = new LlmClient(
@@ -123,7 +128,10 @@ public static class LingofixRunner
         var completedSuccessfully = false;
         try
         {
-            if (compareMode == CompareModeKind.OpenXml)
+            // The pre-check stays active in translation mode too, even though translation
+            // never runs a compare step below: leftover track changes would otherwise get
+            // translated along with their (soon to be deleted) text.
+            if (isTranslation || compareMode == CompareModeKind.OpenXml)
             {
                 var hasTrackedChanges = TrackChangesGenerator.ContainsTrackedChanges(tempOriginalPath);
                 if (hasTrackedChanges)
@@ -166,13 +174,19 @@ public static class LingofixRunner
                     logger.Info($"Correction scope active: {scopedWorkItems.Count}/{coverage.WorkItems.Count} parts enabled.");
                 }
 
-                var citationInputTexts = scopedWorkItems
-                    .SelectMany(item => item.Paragraphs)
-                    .Select(ParagraphTextMapper.ExtractEditableText)
-                    .Where(text => !string.IsNullOrWhiteSpace(text));
-                var resolvedCitationStyle = CitationNormalizer.ResolveStyle(
-                    settings.CitationNormalizationMode,
-                    citationInputTexts);
+                // German quote-style heuristics are wrong for a translated target text, so
+                // translation mode never resolves a citation style.
+                CitationNormalizer.CitationStyle? resolvedCitationStyle = null;
+                if (!isTranslation)
+                {
+                    var citationInputTexts = scopedWorkItems
+                        .SelectMany(item => item.Paragraphs)
+                        .Select(ParagraphTextMapper.ExtractEditableText)
+                        .Where(text => !string.IsNullOrWhiteSpace(text));
+                    resolvedCitationStyle = CitationNormalizer.ResolveStyle(
+                        settings.CitationNormalizationMode,
+                        citationInputTexts);
+                }
                 settings.CitationStyle = resolvedCitationStyle;
                 if (resolvedCitationStyle is not null)
                 {
@@ -180,7 +194,7 @@ public static class LingofixRunner
                 }
                 else
                 {
-                    logger.Info("Citation normalization disabled.");
+                    logger.Info(isTranslation ? "Citation normalization disabled (translation mode)." : "Citation normalization disabled.");
                 }
 
                 if (coverage.CommentCount > 0)
@@ -278,7 +292,10 @@ public static class LingofixRunner
                             SpeedMode = settings.SpeedMode,
                             ManualRequestsPerMinute = settings.ManualRequestsPerMinute,
                             CitationNormalizationMode = settings.CitationNormalizationMode,
-                            CitationStyle = settings.CitationStyle
+                            CitationStyle = settings.CitationStyle,
+                            Mode = settings.Mode,
+                            TargetLanguage = settings.TargetLanguage,
+                            FootnotePrompt = settings.FootnotePrompt
                         };
                     }
 
@@ -299,13 +316,13 @@ public static class LingofixRunner
                     {
                         completedBatchesByLabel[item.Label] = doneBatches;
                         doc.Save();
-                        ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, completedBatchesByLabel);
+                        ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, fingerprint, completedBatchesByLabel);
                     }, resumeBatches, cancellationToken);
 
                     currentProgress += item.Weight;
                     completedLabels.Add(item.Label);
                     completedBatchesByLabel.Remove(item.Label);
-                    ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, completedBatchesByLabel);
+                    ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, fingerprint, completedBatchesByLabel);
                     logger.Info($"[{partNumber}/{scopedWorkItems.Count}] {item.Label} completed");
                 }
 
@@ -326,7 +343,15 @@ public static class LingofixRunner
             // it as session memory and seeds the next run of this provider/model.
             llmClient.EmitRateUpdateLog();
 
-            logger.Progress(85, "Generating comparison...");
+            logger.Progress(85, isTranslation ? "Finalizing translation..." : "Generating comparison...");
+            if (isTranslation)
+            {
+                // Translation output is never diffed against the source: a full-text
+                // replacement track-changes view is unreadable, and Word/LibreOffice
+                // compare can be slow or fail outright on entirely different text.
+                logger.Info("Skipping track-changes generation (translation mode).");
+            }
+            else
             try
             {
                 if (compareMode == CompareModeKind.Word)
@@ -399,9 +424,12 @@ public static class LingofixRunner
 
             if (!trackCreated)
             {
-                finalOutputPath = correctedOutputPath;
+                if (!isTranslation)
+                {
+                    finalOutputPath = correctedOutputPath;
+                }
                 File.Copy(correctedPath, tempOutputPath, overwrite: true);
-                logger.Info("Copied corrected file (no track changes)");
+                logger.Info(isTranslation ? "Translation finalized (no track changes)." : "Copied corrected file (no track changes)");
             }
 
             if (!isExternalCompare)
@@ -425,7 +453,10 @@ public static class LingofixRunner
                 }
             }
 
-            if (settings.IgnoreTrailingParagraphWhitespace && trackCreated)
+            // Language-neutral cleanup: unlike NBSP restoration (German-specific heuristics
+            // over the original), this stays active for translation even though it never
+            // sets trackCreated.
+            if (settings.IgnoreTrailingParagraphWhitespace && (trackCreated || isTranslation))
             {
                 try
                 {
@@ -481,17 +512,63 @@ public static class LingofixRunner
             {
                 if (completedSuccessfully)
                 {
-                    ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, completedBatchesByLabel, isActive: false);
+                    ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, fingerprint, completedBatchesByLabel, isActive: false);
                 }
                 else
                 {
-                    ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, completedBatchesByLabel);
+                    ProcessingCheckpointStore.Save(normalizedInputPath, correctedPath, completedLabels, fingerprint, completedBatchesByLabel);
                 }
             }
             catch
             {
             }
         }
+    }
+
+    // Target language can be a known code ("en") or free text ("Schweizer Hochdeutsch"),
+    // so the output-filename slug has to tolerate arbitrary user input.
+    private static string BuildLanguageSlug(string targetLanguage)
+    {
+        if (string.IsNullOrWhiteSpace(targetLanguage))
+        {
+            return "target";
+        }
+
+        var decomposed = targetLanguage.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        var ascii = new System.Text.StringBuilder();
+        foreach (var ch in decomposed)
+        {
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.NonSpacingMark)
+            {
+                continue;
+            }
+
+            ascii.Append(ch);
+        }
+
+        var slug = new System.Text.StringBuilder();
+        var lastWasDash = false;
+        foreach (var ch in ascii.ToString())
+        {
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+            {
+                slug.Append(ch);
+                lastWasDash = false;
+            }
+            else if (!lastWasDash && slug.Length > 0)
+            {
+                slug.Append('-');
+                lastWasDash = true;
+            }
+        }
+
+        var result = slug.ToString().Trim('-');
+        if (result.Length > 24)
+        {
+            result = result.Substring(0, 24).TrimEnd('-');
+        }
+
+        return string.IsNullOrEmpty(result) ? "target" : result;
     }
 
     private static void CopyReadableSnapshot(string sourcePath, string destinationPath)
