@@ -67,7 +67,7 @@ public static class ParagraphProcessor
             if (enableCache && cache is not null && cache.TryGetValue(original, out var cached))
             {
                 cacheHits++;
-                ParagraphTextMapper.ApplyCorrection(paragraph, original, cached);
+                ApplyResult(settings.Mode, paragraph, original, cached);
                 continue;
             }
 
@@ -166,7 +166,7 @@ public static class ParagraphProcessor
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, null, cancellationToken);
-                ApplyBatchResult(result, cache, logger, citationStyle);
+                ApplyBatchResult(result, settings.Mode, cache, logger, citationStyle);
                 completedBatches++;
                 processedParagraphs += batch.Items.Count;
                 completedChars += batch.Items.Sum(item => item.Original.Length);
@@ -209,7 +209,7 @@ public static class ParagraphProcessor
                 var result = await ExecuteWorkBatchAsync(batch, llmClient, settings, logger, cache, chunkSize, concurrency, cancellationToken);
                 lock (progressLock)
                 {
-                    ApplyBatchResult(result, cache, logger, citationStyle);
+                    ApplyBatchResult(result, settings.Mode, cache, logger, citationStyle);
                     completedBatches++;
                     processedParagraphs += batch.Items.Count;
                     completedChars += batch.Items.Sum(item => item.Original.Length);
@@ -483,7 +483,19 @@ public static class ParagraphProcessor
         return corrected;
     }
 
-    private static void ApplyBatchResult(BatchResult result, ConcurrentDictionary<string, string>? cache, IRunLogger? logger, CitationNormalizer.CitationStyle? citationStyle)
+    private static void ApplyResult(OperationMode mode, Paragraph paragraph, string original, string result)
+    {
+        if (mode == OperationMode.Translation)
+        {
+            ParagraphTextMapper.ApplyTranslation(paragraph, original, result);
+        }
+        else
+        {
+            ParagraphTextMapper.ApplyCorrection(paragraph, original, result);
+        }
+    }
+
+    private static void ApplyBatchResult(BatchResult result, OperationMode mode, ConcurrentDictionary<string, string>? cache, IRunLogger? logger, CitationNormalizer.CitationStyle? citationStyle)
     {
         foreach (var item in result.Batch.Items)
         {
@@ -508,7 +520,7 @@ public static class ParagraphProcessor
                 corrected = CitationNormalizer.Normalize(corrected, citationStyle.Value);
             }
 
-            ParagraphTextMapper.ApplyCorrection(item.Paragraph, item.Original, corrected);
+            ApplyResult(mode, item.Paragraph, item.Original, corrected);
 
             if (cache is not null)
             {

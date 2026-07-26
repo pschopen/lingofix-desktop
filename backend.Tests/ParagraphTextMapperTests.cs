@@ -178,4 +178,143 @@ public class ParagraphTextMapperTests
         Assert.Equal(corrected, ParagraphTextMapper.ExtractEditableText(p));
         Assert.Contains("Miramon,", ParagraphTextMapper.ExtractEditableText(p));
     }
+
+    // ---- ApplyTranslation: marker-free write-back (Phase 2) -------------------
+
+    [Fact]
+    public void ApplyTranslation_SingleRun_ReplacesFully()
+    {
+        var p = P("<w:r><w:t>Hallo Welt.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        ParagraphTextMapper.ApplyTranslation(p, original, "Hello world.");
+
+        Assert.Equal("Hello world.", ParagraphTextMapper.ExtractEditableText(p));
+        Assert.Single(p.Descendants<Run>());
+    }
+
+    [Fact]
+    public void ApplyTranslation_BoldWordInMiddle_TextInFirstNode_DominantNonBoldFormatting()
+    {
+        var p = P(
+            "<w:r><w:rPr><w:i/></w:rPr><w:t xml:space=\"preserve\">Der </w:t></w:r>" +
+            "<w:r><w:rPr><w:b/></w:rPr><w:t>wichtige</w:t></w:r>" +
+            "<w:r><w:t xml:space=\"preserve\"> Satz endet hier.</w:t></w:r>");
+
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        ParagraphTextMapper.ApplyTranslation(p, original, "The important sentence ends here.");
+
+        Assert.Equal("The important sentence ends here.", ParagraphTextMapper.ExtractEditableText(p));
+        var runs = p.Descendants<Run>().ToList();
+        Assert.Equal(3, runs.Count);
+        // All text lives in the first run's text node; the rest are emptied.
+        Assert.Equal("The important sentence ends here.", runs[0].Descendants<Text>().First().Text);
+        Assert.All(runs.Skip(1).SelectMany(r => r.Descendants<Text>()), t => Assert.Equal(string.Empty, t.Text));
+        // Dominant run (the longest original share, " Satz endet hier.") had no formatting,
+        // so the first run's italic must have been overwritten away.
+        Assert.Null(runs[0].RunProperties);
+    }
+
+    [Fact]
+    public void ApplyTranslation_PredominantlyItalicParagraph_StaysItalic()
+    {
+        var p = P(
+            "<w:r><w:rPr><w:i/></w:rPr><w:t xml:space=\"preserve\">Dies ist ein überwiegend kursiver Satz, </w:t></w:r>" +
+            "<w:r><w:t>kurz.</w:t></w:r>");
+
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        ParagraphTextMapper.ApplyTranslation(p, original, "This is a mostly italic sentence, short.");
+
+        var runs = p.Descendants<Run>().ToList();
+        Assert.NotNull(runs[0].RunProperties?.Italic);
+    }
+
+    [Fact]
+    public void ApplyTranslation_FootnoteReferenceMidParagraph_SplitsIntoTwoSegmentsAtWordBoundary()
+    {
+        var p = P(
+            "<w:r><w:t>AAAAAAAAAA</w:t></w:r>" +
+            "<w:r><w:footnoteReference w:id=\"1\"/></w:r>" +
+            "<w:r><w:t>BBBBBBBBBBBBBBBBBBBB</w:t></w:r>");
+
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        Assert.Equal(30, original.Length);
+
+        var translated = "one two three four five six seven eight nine ten";
+        ParagraphTextMapper.ApplyTranslation(p, original, translated);
+
+        Assert.Single(p.Descendants<FootnoteReference>());
+        var texts = p.Descendants<Text>().Select(t => t.Text).Where(t => !string.IsNullOrEmpty(t)).ToList();
+        Assert.Equal(2, texts.Count);
+        Assert.Equal(translated, string.Concat(texts));
+
+        // The cut point must fall on a word boundary, not mid-word.
+        var boundary = texts[0].Length;
+        if (boundary > 0 && boundary < translated.Length)
+        {
+            Assert.False(char.IsLetterOrDigit(translated[boundary - 1]) && char.IsLetterOrDigit(translated[boundary]));
+        }
+    }
+
+    [Fact]
+    public void ApplyTranslation_FootnoteReferenceAtEnd_PutsAllTextBeforeAnchor()
+    {
+        var p = P(
+            "<w:r><w:t>Text davor.</w:t></w:r>" +
+            "<w:r><w:footnoteReference w:id=\"1\"/></w:r>");
+
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        ParagraphTextMapper.ApplyTranslation(p, original, "Text before it.");
+
+        Assert.Single(p.Descendants<FootnoteReference>());
+        var texts = p.Descendants<Text>().Select(t => t.Text).ToList();
+        Assert.Equal("Text before it.", texts[0]);
+    }
+
+    [Fact]
+    public void ApplyTranslation_ShortHeading_AllowsExpansionBeyondRatioGuard()
+    {
+        var p = P("<w:r><w:t>TOC</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var translated = "Inhaltsverzeichnis"; // 6x expansion: would fail the 4.0x ratio guard.
+
+        ParagraphTextMapper.ApplyTranslation(p, original, translated);
+
+        Assert.Equal(translated, ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_EmptyResponse_LeavesParagraphUnchanged()
+    {
+        var p = P("<w:r><w:t>Unverändert.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        ParagraphTextMapper.ApplyTranslation(p, original, "   ");
+
+        Assert.Equal(original, ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_LongOriginal_ExcessiveExpansion_IsRejected()
+    {
+        var p = P($"<w:r><w:t>{new string('A', 100)}</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var tooLong = new string('B', 500); // 5x expansion, exceeds the 4.0x ratio guard.
+
+        ParagraphTextMapper.ApplyTranslation(p, original, tooLong);
+
+        Assert.Equal(original, ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_ShortOriginal_ExceedsAbsoluteCap_IsRejected()
+    {
+        var p = P("<w:r><w:t>Kurz</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var tooLong = new string('x', 401); // exceeds the 400-char absolute cap for short originals.
+
+        ParagraphTextMapper.ApplyTranslation(p, original, tooLong);
+
+        Assert.Equal(original, ParagraphTextMapper.ExtractEditableText(p));
+    }
 }

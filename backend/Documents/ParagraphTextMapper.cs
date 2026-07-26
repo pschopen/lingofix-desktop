@@ -11,6 +11,12 @@ internal static class ParagraphTextMapper
     private const int MaxSafeCorrectedLengthForEmptyOriginal = 5000;
     private const double MaxLengthExpansionFactor = 4.0;
     private const double MinLengthContractionFactor = 0.2;
+    // Below this original length, the ratio guard (4.0x/0.2x) would silently reject
+    // legitimate short-original expansions (e.g. "Inhaltsübersicht" -> "Contents" is a
+    // contraction, but "TOC" -> "Inhaltsverzeichnis" is a >4x expansion). An absolute cap
+    // is used instead for these.
+    private const int ShortOriginalLengthThreshold = 40;
+    private const int MaxSafeTranslatedLengthForShortOriginal = 400;
     public static string ExtractEditableText(Paragraph paragraph)
     {
         var runs = BuildEditableRuns(paragraph, out var originalText);
@@ -105,6 +111,234 @@ internal static class ParagraphTextMapper
 
         var runs = editableRuns.Select(r => new RunInfo(r.TextNodes, r.OriginalText)).ToList();
         ApplyTokenMappedUpdate(runs, corrected);
+    }
+
+    /// <summary>
+    /// Marker-free translation write-back (see docs/plans/translation-mode.md, Phase 2):
+    /// the LLM never sees or produces position markers, so run-level attribution is done
+    /// deterministically here instead of via the char-span/token diff used for corrections
+    /// (which assumes near-identical text and is unsuitable for a full-text replacement).
+    /// The paragraph is split into segments at non-text anchors (footnote/endnote refs,
+    /// fields, drawings, breaks); translated text is distributed across segments
+    /// proportionally to their original character share, and within each segment the
+    /// full text goes into the first text node with the dominant run's formatting.
+    /// </summary>
+    public static void ApplyTranslation(Paragraph paragraph, string original, string translated)
+    {
+        translated = XmlTextSanitizer.StripInvalidXmlChars(translated, out _);
+        if (string.IsNullOrWhiteSpace(translated))
+        {
+            return;
+        }
+
+        if (HasUnsafeStructure(paragraph))
+        {
+            return;
+        }
+
+        var editableRuns = BuildEditableRuns(paragraph, out var normalizedOriginal);
+        if (editableRuns.Count == 0)
+        {
+            return;
+        }
+
+        if (!string.Equals(normalizedOriginal, original, StringComparison.Ordinal))
+        {
+            original = normalizedOriginal;
+        }
+
+        if (!IsTranslationLengthChangeSafe(original, translated))
+        {
+            return;
+        }
+
+        var segments = BuildTranslationSegments(paragraph, editableRuns);
+        if (segments.Count == 0)
+        {
+            return;
+        }
+
+        var texts = segments.Count == 1
+            ? [translated]
+            : DistributeTranslationAcrossSegments(segments, translated);
+
+        for (var i = 0; i < segments.Count; i++)
+        {
+            ApplyTranslationSegmentText(segments[i], texts[i]);
+        }
+    }
+
+    private static bool IsTranslationLengthChangeSafe(string original, string translated)
+    {
+        if (original.Length < ShortOriginalLengthThreshold)
+        {
+            return translated.Length <= MaxSafeTranslatedLengthForShortOriginal;
+        }
+
+        return IsLengthChangeSafe(original, translated);
+    }
+
+    /// <summary>
+    /// Groups the paragraph's editable runs (already stripped of deletions/textbox
+    /// content by <see cref="BuildEditableRuns"/>) into segments, closing the current
+    /// segment whenever a significant non-text anchor is encountered between two
+    /// editable runs. Anchors themselves are never touched, so they stay exactly where
+    /// they were in the run sequence.
+    /// </summary>
+    private static List<TranslationSegment> BuildTranslationSegments(Paragraph paragraph, List<EditableRun> editableRuns)
+    {
+        var segments = new List<TranslationSegment>();
+        var current = new List<EditableRun>();
+        var nextEditableIndex = 0;
+
+        foreach (var run in paragraph.Descendants<Run>())
+        {
+            if (nextEditableIndex < editableRuns.Count && ReferenceEquals(editableRuns[nextEditableIndex].SourceRun, run))
+            {
+                current.Add(editableRuns[nextEditableIndex]);
+                nextEditableIndex++;
+                continue;
+            }
+
+            if (current.Count > 0 && IsSignificantAnchor(run))
+            {
+                segments.Add(new TranslationSegment(current));
+                current = [];
+            }
+        }
+
+        if (current.Count > 0)
+        {
+            segments.Add(new TranslationSegment(current));
+        }
+
+        return segments;
+    }
+
+    private static bool IsSignificantAnchor(Run run)
+    {
+        return run.Descendants<FootnoteReference>().Any()
+            || run.Descendants<EndnoteReference>().Any()
+            || run.Descendants<FootnoteReferenceMark>().Any()
+            || run.Descendants<EndnoteReferenceMark>().Any()
+            || run.Descendants<Drawing>().Any()
+            || run.Descendants<Break>().Any()
+            || run.Descendants<FieldChar>().Any();
+    }
+
+    /// <summary>
+    /// Splits the translated text across segments proportionally to each segment's
+    /// share of the original character count, snapping every internal cut point to the
+    /// nearest word boundary. Exact positional fidelity of anchors is impossible without
+    /// markers; this keeps them approximately in place, which is the accepted trade-off.
+    /// </summary>
+    private static List<string> DistributeTranslationAcrossSegments(List<TranslationSegment> segments, string translated)
+    {
+        var totalOriginalLength = segments.Sum(s => s.OriginalLength);
+        var boundaries = new int[segments.Count + 1];
+        boundaries[segments.Count] = translated.Length;
+
+        var cumulative = 0;
+        for (var i = 0; i < segments.Count - 1; i++)
+        {
+            cumulative += segments[i].OriginalLength;
+            var raw = totalOriginalLength == 0
+                ? 0
+                : (int)Math.Round(translated.Length * (double)cumulative / totalOriginalLength);
+            boundaries[i + 1] = SnapToNearestWordBoundary(translated, Math.Clamp(raw, 0, translated.Length));
+        }
+
+        // Word-boundary snapping can push a cut point before the previous one when two
+        // segments are very short; re-enforce monotonic order defensively.
+        for (var i = 1; i <= segments.Count; i++)
+        {
+            if (boundaries[i] < boundaries[i - 1])
+            {
+                boundaries[i] = boundaries[i - 1];
+            }
+        }
+
+        var texts = new List<string>(segments.Count);
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var start = boundaries[i];
+            var end = boundaries[i + 1];
+            texts.Add(translated.Substring(start, end - start));
+        }
+
+        return texts;
+    }
+
+    private static int SnapToNearestWordBoundary(string text, int pos)
+    {
+        if (pos <= 0)
+        {
+            return 0;
+        }
+
+        if (pos >= text.Length)
+        {
+            return text.Length;
+        }
+
+        if (!(IsWordChar(text[pos - 1]) && IsWordChar(text[pos])))
+        {
+            return pos;
+        }
+
+        var before = pos;
+        while (before > 0 && IsWordChar(text[before - 1]) && IsWordChar(text[before]))
+        {
+            before--;
+        }
+
+        var after = pos;
+        while (after < text.Length && IsWordChar(text[after - 1]) && IsWordChar(text[after]))
+        {
+            after++;
+        }
+
+        return (pos - before) <= (after - pos) ? before : after;
+    }
+
+    /// <summary>
+    /// Writes a segment's share of the translated text into its first text node
+    /// (clearing the rest) and clones the dominant run's (most original characters)
+    /// formatting onto that first node's run, so e.g. a mostly-italic paragraph stays
+    /// italic even though a single bold word inside it loses its bold formatting.
+    /// </summary>
+    private static void ApplyTranslationSegmentText(TranslationSegment segment, string text)
+    {
+        var textNodes = segment.Runs.SelectMany(r => r.TextNodes).ToList();
+        if (textNodes.Count == 0)
+        {
+            return;
+        }
+
+        var dominant = segment.Runs
+            .Select((run, index) => (run, index))
+            .OrderByDescending(x => x.run.OriginalText.Length)
+            .ThenBy(x => x.index)
+            .First().run;
+
+        var targetRun = segment.Runs[0].SourceRun;
+        if (!ReferenceEquals(targetRun, dominant.SourceRun))
+        {
+            targetRun.RunProperties?.Remove();
+            if (dominant.SourceRun.RunProperties is not null)
+            {
+                targetRun.RunProperties = (RunProperties)dominant.SourceRun.RunProperties.CloneNode(true);
+            }
+        }
+
+        textNodes[0].Text = text;
+        textNodes[0].Space = NeedsPreserveSpace(text) ? SpaceProcessingModeValues.Preserve : null;
+
+        for (var i = 1; i < textNodes.Count; i++)
+        {
+            textNodes[i].Text = string.Empty;
+            textNodes[i].Space = null;
+        }
     }
 
     private static void ApplyConservativeTextUpdate(List<Text> textNodes, string corrected)
@@ -558,7 +792,7 @@ internal static class ParagraphTextMapper
                 {
                     var start = builder.Length;
                     builder.Append(runText);
-                    runs.Add(new EditableRun(textNodes, runText, start, builder.Length, false));
+                    runs.Add(new EditableRun(textNodes, runText, start, builder.Length, false, run));
                 }
             }
 
@@ -709,7 +943,12 @@ internal static class ParagraphTextMapper
 
     private sealed record RunInfo(List<Text> TextNodes, string OriginalText);
 
-    private sealed record EditableRun(List<Text> TextNodes, string OriginalText, int StartChar, int EndChar, bool HadMidWordSplit);
+    private sealed record EditableRun(List<Text> TextNodes, string OriginalText, int StartChar, int EndChar, bool HadMidWordSplit, Run SourceRun);
+
+    private sealed record TranslationSegment(List<EditableRun> Runs)
+    {
+        public int OriginalLength => Runs.Sum(r => r.OriginalText.Length);
+    }
 
     private sealed record Opcode(OpcodeKind Kind, int OldStart, int OldEnd, int NewStart, int NewEnd)
     {
