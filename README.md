@@ -13,6 +13,7 @@ It is built for people who want fast proofreading help without using a browser-b
 ## What Lingofix Does
 
 - Corrects plain text with AI
+- Translates plain text and documents into another language (see [Translation Mode](#translation-mode))
 - Processes `.docx` and `.odt` files
 - Supports tracked-change style workflows for office documents
 - Lets you choose between multiple AI providers
@@ -180,6 +181,27 @@ Lingofix includes different compare modes for document correction.
 
 - Useful when working with LibreOffice or `.odt` files
 - Requires LibreOffice and the `soffice` command to be available
+
+## Translation Mode
+
+Besides correcting text, Lingofix can translate plain text and DOCX/ODT documents into another language, reusing the same document pipeline (formatting, footnotes, headers/footers are handled the same way as in correction).
+
+### Switching to translation mode
+
+- Use the mode dropdown next to the dark-mode toggle in the header (`Correct` / `Translate`).
+- When `Translate` is selected, a second dropdown lets you pick the target language.
+- Choose a language from the curated list, or pick `Other language…` to type a free-text target (e.g. a dialect or a language not in the list — the model is given the name exactly as typed).
+- Both dropdowns save immediately; no need to open `Settings` first.
+- `Settings` has its own `Translation` section (target language, and per-language prompt presets for the main text and for footnotes) alongside the existing `General` and `Correction` sections.
+
+### What happens during a translation run
+
+- The output is a plain translated file (`..._translated_<language>.docx`), never a tracked-changes/compare file — a full-text replacement is not something a change-tracking diff can show meaningfully.
+- Each paragraph is translated together with the *previous paragraph* as context, so the model has some continuity across a document (useful for footnote follow-citations like "ibid."). Only the original source paragraph is used as context, never an already-translated one.
+- Footnotes/endnotes use their own prompt (configurable in `Settings` > `Translation`), separate from the main-text prompt — useful for keeping bibliographic references untouched while translating the surrounding explanation.
+- **Fields and table-of-contents entries are not translated** (e.g. `TOC`, page-number fields). Update these manually in Word/LibreOffice after translation (`Update Field`/`Update Table` or similar).
+- **Inline formatting mixed within a paragraph can be lost.** Because the model only ever sees and returns plain text (no formatting markers), Lingofix cannot map bold/italic back to the exact same words after translation. A paragraph that is *predominantly* italic or bold stays that way; a single bold/italic word inside otherwise plain text will typically lose that formatting. Paragraph-level formatting (headings, indentation, list styles, etc.) is unaffected, since only the text content is rewritten.
+- Interrupted translation runs resume where they left off, the same way correction runs do — switching modes on the same file (e.g. correcting after translating) always starts a fresh run rather than resuming the other mode's progress.
 
 ## Updates
 
