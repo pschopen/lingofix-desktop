@@ -1,10 +1,9 @@
-import { useMemo, useEffect, useState, useCallback, type KeyboardEvent } from 'react';
+import { useMemo, useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react';
 import { diffWordsWithSpace } from 'diff';
 import { invoke, listen, open } from '../lib/bridge';
-import { FileText, Upload, X } from 'lucide-react';
+import { FileText, Loader2, Upload, X } from 'lucide-react';
 import { Language, t } from '../i18n';
 import { DocxFile, OperationMode } from '../types';
-import { TranslationResult } from './TranslationResult';
 
 interface TextEditorProps {
   text: string;
@@ -38,6 +37,13 @@ export function TextEditor({
   mode,
 }: TextEditorProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const translationResultRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isStreaming && translationResultRef.current) {
+      translationResultRef.current.scrollTop = translationResultRef.current.scrollHeight;
+    }
+  }, [correctedText, isStreaming]);
 
   const isSupportedOfficeFile = useCallback((nameOrPath: string): boolean => {
     const lower = nameOrPath.toLowerCase();
@@ -343,13 +349,86 @@ export function TextEditor({
       </p>
     </div>
   ) : null;
-  // Translation mode: a full-text replacement diff is unreadable, so show original and
-  // translation side by side instead of the inline word-diff view.
-  if (showDiff && correctedText && mode === 'translation') {
+  // Translation mode: original and translation side by side at all times (idle, streaming,
+  // and complete) rather than only once a result exists — a full-text replacement diff is
+  // unreadable, and switching layouts mid-flow would be jarring.
+  if (mode === 'translation' && docxFiles.length === 0) {
+    const borderClass = isDarkMode ? 'border-surface-700' : 'border-surface-100';
+    const labelClass = isDarkMode ? 'text-surface-400' : 'text-surface-500';
     return (
-      <div className={`relative w-full h-full transition-colors duration-200 ${dragContainerClass}`} style={{ padding: 0, margin: 0 }}>
+      <div
+        className={`relative w-full h-full grid grid-cols-1 md:grid-cols-2 transition-colors duration-200 ${
+          isDarkMode ? 'bg-surface-800 text-surface-100' : 'bg-white text-surface-800'
+        } ${dragContainerClass}`}
+        style={{ padding: 0, margin: 0 }}
+      >
         {dragOverlay}
-        <TranslationResult original={text} translated={correctedText} lang={lang} isDarkMode={isDarkMode} />
+
+        {!text.trim() && !isDragging && (
+          <div className="absolute inset-x-0 bottom-[22px] z-10 flex justify-center pointer-events-none transition-opacity duration-300">
+            <div className={`p-2.5 rounded-xl ${isDarkMode ? 'bg-surface-800' : 'bg-white'}`}>
+              <div
+                onClick={handlePickFile}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer pointer-events-auto transition-all duration-200 ${
+                  isDarkMode
+                    ? 'bg-surface-700/90 hover:bg-surface-700 text-surface-400 hover:text-surface-300'
+                    : 'bg-surface-100/95 hover:bg-surface-200/95 text-surface-500 hover:text-surface-700'
+                }`}
+              >
+                <Upload className="w-4 h-4" />
+                <span className="text-sm">
+                  {t('editor.browse', lang)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className={`flex flex-col h-full min-h-0 md:border-r ${borderClass}`}>
+          <div className="h-11 px-5 flex items-center flex-shrink-0">
+            <p className={`text-sm font-medium ${labelClass}`}>{t('translation.original_label', lang)}</p>
+          </div>
+          <textarea
+            value={text}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={handleEditorKeyDown}
+            placeholder={t('editor.placeholder', lang)}
+            disabled={readOnly || isCorrecting}
+            className={`flex-1 w-full font-sans text-base leading-relaxed
+                        resize-none border-0
+                        focus:outline-none focus:ring-0 focus:border-transparent
+                        px-5 pb-4
+                        transition-none disabled:opacity-60 ${
+                          isDarkMode
+                            ? 'bg-surface-800 text-surface-100 placeholder:text-surface-600 disabled:bg-surface-900 disabled:text-surface-500'
+                            : 'bg-white text-surface-800 placeholder:text-surface-400 disabled:bg-surface-100 disabled:text-surface-400'
+                        }`}
+            style={{ whiteSpace: 'pre-wrap', margin: 0 }}
+          />
+        </div>
+
+        <div className={`flex flex-col h-full min-h-0 border-t md:border-t-0 ${borderClass}`}>
+          <div className="h-11 px-5 flex items-center flex-shrink-0">
+            <p className={`text-sm font-medium ${labelClass}`}>{t('translation.result_label', lang)}</p>
+          </div>
+          <div
+            ref={translationResultRef}
+            className="flex-1 min-h-0 overflow-y-auto px-5 pb-4 font-sans text-base leading-relaxed whitespace-pre-wrap"
+          >
+            {showDiff && correctedText ? (
+              correctedText
+            ) : isCorrecting ? (
+              <span className={`inline-flex items-center gap-2 ${labelClass}`}>
+                <Loader2 className="animate-spin" size={16} />
+                {t('translation.translating_label', lang)}
+              </span>
+            ) : (
+              <span className={isDarkMode ? 'text-surface-600' : 'text-surface-400'}>
+                {t('translation.result_placeholder', lang)}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -466,10 +545,10 @@ export function TextEditor({
                     resize-none border-0
                     focus:outline-none focus:ring-0 focus:border-transparent
                     px-5 py-4
-                    transition-none ${
+                    transition-none disabled:opacity-60 ${
                       isDarkMode
                         ? 'bg-surface-800 text-surface-100 placeholder:text-surface-600 disabled:bg-surface-900 disabled:text-surface-500'
-                        : 'bg-white text-surface-800 placeholder:text-surface-400 disabled:bg-surface-50 disabled:text-surface-400'
+                        : 'bg-white text-surface-800 placeholder:text-surface-400 disabled:bg-surface-100 disabled:text-surface-400'
                     }`}
         style={{ whiteSpace: 'pre-wrap', margin: 0 }}
       />

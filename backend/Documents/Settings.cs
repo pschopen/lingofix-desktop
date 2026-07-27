@@ -135,6 +135,13 @@ public sealed class Settings
         var docx = payload.Docx ?? throw InvalidSettings("docx settings are missing");
         var batchingParts = ParseBatchingParts(docx.BatchingParts);
         var correctionScopeParts = ParseCorrectionScopeParts(docx.CorrectionScopeParts);
+        var mode = ParseOperationMode(payload.Mode);
+        // Correction and translation each carry their own system prompt (see
+        // FrontendTranslationSettingsPayload.SystemPrompt); only the one for the active
+        // mode is resolved onto Settings.SystemPrompt, which is what LlmClient reads.
+        var resolvedSystemPrompt = mode == OperationMode.Translation
+            ? RequireString(payload.Translation?.SystemPrompt, "translation.system_prompt")
+            : RequireString(payload.SystemPrompt, "system_prompt");
 
         var normalized = new Settings
         {
@@ -143,7 +150,7 @@ public sealed class Settings
             ApiKey = payload.ApiKey?.Trim() ?? string.Empty,
             Model = RequireString(payload.Model, "model"),
             Prompt = RequireString(payload.CustomPrompt, "custom_prompt"),
-            SystemPrompt = RequireString(payload.SystemPrompt, "system_prompt"),
+            SystemPrompt = resolvedSystemPrompt,
             BatchPrompt = payload.BatchPrompt?.Trim() ?? string.Empty,
             Temperature = payload.Temperature,
             EnableReasoning = payload.EnableReasoning,
@@ -166,7 +173,7 @@ public sealed class Settings
             TemperatureSupportedHint = payload.LlmCapabilityHint?.TemperatureSupported,
             ReasoningEffortSupportedHint = payload.LlmCapabilityHint?.ReasoningEffortSupported,
             RateHintIntervalMs = payload.LlmRateHint?.IntervalMs,
-            Mode = ParseOperationMode(payload.Mode),
+            Mode = mode,
             TargetLanguage = payload.Translation?.TargetLanguage?.Trim() ?? string.Empty,
             FootnotePrompt = payload.Translation?.FootnotePrompt?.Trim() ?? string.Empty
         };
@@ -397,6 +404,9 @@ internal sealed class FrontendTranslationSettingsPayload
 
     [JsonPropertyName("footnote_prompt")]
     public string? FootnotePrompt { get; set; }
+
+    [JsonPropertyName("system_prompt")]
+    public string? SystemPrompt { get; set; }
 }
 
 internal sealed class FrontendLlmRateHintPayload

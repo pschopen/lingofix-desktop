@@ -59,10 +59,6 @@ public static class ParagraphProcessor
         var totalParagraphs = paragraphList.Count;
         var totalChars = 0;
         var extractionGapWarnings = 0;
-        // Previous non-empty paragraph's *source* text within this part, used as
-        // translation context. Never the translated text (Vorgabe 4): that would create a
-        // sequential dependency and kill parallelism.
-        string? previousOriginal = null;
         foreach (var paragraph in paragraphList)
         {
             var original = ParagraphTextMapper.ExtractEditableText(paragraph);
@@ -74,12 +70,9 @@ public static class ParagraphProcessor
                 continue;
             }
 
-            var context = isTranslation ? previousOriginal : null;
-            previousOriginal = original;
-
             totalChars += original.Length;
 
-            var cacheKey = BuildCacheKey(isTranslation, original, context);
+            var cacheKey = BuildCacheKey(original);
             if (enableCache && cache is not null && cache.TryGetValue(cacheKey, out var cached))
             {
                 cacheHits++;
@@ -91,7 +84,7 @@ public static class ParagraphProcessor
 
             if (!enableBatching || original.Length > batchMaxChars)
             {
-                work.Add(new WorkBatch([new ParagraphItem(paragraph, original, context)], UseBatch: false));
+                work.Add(new WorkBatch([new ParagraphItem(paragraph, original)], UseBatch: false));
                 continue;
             }
 
@@ -103,7 +96,7 @@ public static class ParagraphProcessor
                 batchChars = 0;
             }
 
-            batchItems.Add(new ParagraphItem(paragraph, original, context));
+            batchItems.Add(new ParagraphItem(paragraph, original));
             batchChars += original.Length;
         }
 
@@ -312,47 +305,35 @@ public static class ParagraphProcessor
         }
     }
 
-    private static string BuildCacheKey(bool isTranslation, string original, string? context)
+    private static string BuildCacheKey(string original)
     {
-        // Correction: unchanged (bare original text). Translation: composite key, since
-        // the same source paragraph text can legitimately need different translations
-        // depending on what precedes it. Correctness over cache-hit rate (Vorgabe 3b).
-        return isTranslation ? $"{context}\0{original}" : original;
+        return original;
     }
 
     private static async Task<string> CorrectWithChunkingAsync(
         string original,
-        string? context,
         string prompt,
-        bool isTranslation,
         int chunkSize,
         ILlmClient llmClient,
         IConcurrencyGate? gate,
         CancellationToken cancellationToken)
     {
-        var effectiveContext = isTranslation ? context : null;
-
         if (original.Length <= chunkSize)
         {
-            return await llmClient.CorrectAsync(original, promptOverride: prompt, context: effectiveContext, gate: gate, cancellationToken: cancellationToken);
+            return await llmClient.CorrectAsync(original, promptOverride: prompt, gate: gate, cancellationToken: cancellationToken);
         }
 
         var chunks = SplitIntoChunks(original, chunkSize);
         if (chunks.Count == 1)
         {
-            return await llmClient.CorrectAsync(original, promptOverride: prompt, context: effectiveContext, gate: gate, cancellationToken: cancellationToken);
+            return await llmClient.CorrectAsync(original, promptOverride: prompt, gate: gate, cancellationToken: cancellationToken);
         }
 
         var builder = new StringBuilder(original.Length);
-        // Chunk 1 gets the paragraph-level context; chunk N>1 gets chunk N-1's *source*
-        // text (never the corrected/translated chunk — same no-sequential-dependency
-        // reasoning as the paragraph-level context). The paragraph-stays-whole invariant
-        // (Vorgabe 3) is untouched: this only affects what accompanies an already-split chunk.
-        var chunkContext = effectiveContext;
         foreach (var chunk in chunks)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var correctedChunk = await llmClient.CorrectAsync(chunk, promptOverride: prompt, context: chunkContext, gate: gate, cancellationToken: cancellationToken);
+            var correctedChunk = await llmClient.CorrectAsync(chunk, promptOverride: prompt, gate: gate, cancellationToken: cancellationToken);
             if (string.IsNullOrWhiteSpace(correctedChunk))
             {
                 builder.Append(chunk);
@@ -361,8 +342,6 @@ public static class ParagraphProcessor
             {
                 builder.Append(correctedChunk);
             }
-
-            chunkContext = isTranslation ? chunk : null;
         }
 
         return builder.ToString();
@@ -380,7 +359,6 @@ public static class ParagraphProcessor
         CancellationToken cancellationToken)
     {
         var results = new Dictionary<int, string>();
-        var isTranslation = settings.Mode == OperationMode.Translation;
 
         if (batch.Items.Count == 0)
         {
@@ -391,7 +369,7 @@ public static class ParagraphProcessor
         {
             foreach (var item in batch.Items)
             {
-                var corrected = await CorrectWithCacheAsync(item.Original, item.Context, prompt, isTranslation, chunkSize, llmClient, cache, concurrency, cancellationToken);
+                var corrected = await CorrectWithCacheAsync(item.Original, prompt, chunkSize, llmClient, cache, concurrency, cancellationToken);
                 if (string.IsNullOrWhiteSpace(corrected))
                 {
                     continue;
@@ -404,17 +382,13 @@ public static class ParagraphProcessor
         }
 
         var request = BuildBatchRequest(batch.Items);
-        // Explicit context block for the whole batch: only the first item's previous-
-        // paragraph context (Vorgabe 3b) — the other items' neighbors are already
-        // implicit context via the blank-line-separated payload itself.
-        var batchContext = isTranslation ? batch.Items[0].Context : null;
         string response;
         var rateLimitRetries = 0;
         while (true)
         {
             try
             {
-                response = await llmClient.CorrectBatchAsync(request, settings.BatchPrompt, promptOverride: prompt, context: batchContext, gate: concurrency, cancellationToken: cancellationToken);
+                response = await llmClient.CorrectBatchAsync(request, settings.BatchPrompt, promptOverride: prompt, gate: concurrency, cancellationToken: cancellationToken);
                 break;
             }
             catch (LlmRateLimitException) when (rateLimitRetries < MaxBatchRateLimitRetries)
@@ -437,14 +411,14 @@ public static class ParagraphProcessor
             catch
             {
                 logger?.Info($"Batching: LLM error, falling back to single requests (paragraphs: {batch.Items.Count}).");
-                return await ProcessBatchFallbackAsync(batch, llmClient, prompt, isTranslation, logger, cache, chunkSize, concurrency, cancellationToken);
+                return await ProcessBatchFallbackAsync(batch, llmClient, prompt, logger, cache, chunkSize, concurrency, cancellationToken);
             }
         }
 
         if (!TryParseBatchResponse(response, batch.Items, out var parsed, out var parseFailure))
         {
             logger?.Info($"Batching: invalid response ({parseFailure}), falling back to single requests (paragraphs: {batch.Items.Count}).");
-            return await ProcessBatchFallbackAsync(batch, llmClient, prompt, isTranslation, logger, cache, chunkSize, concurrency, cancellationToken);
+            return await ProcessBatchFallbackAsync(batch, llmClient, prompt, logger, cache, chunkSize, concurrency, cancellationToken);
         }
 
         if (parsed.Count < batch.Items.Count)
@@ -458,7 +432,6 @@ public static class ParagraphProcessor
                 partialBatch,
                 llmClient,
                 prompt,
-                isTranslation,
                 logger,
                 cache,
                 chunkSize,
@@ -481,7 +454,6 @@ public static class ParagraphProcessor
         WorkBatch batch,
         ILlmClient llmClient,
         string prompt,
-        bool isTranslation,
         IRunLogger? logger,
         ConcurrentDictionary<string, string>? cache,
         int chunkSize,
@@ -497,13 +469,13 @@ public static class ParagraphProcessor
             string corrected;
             try
             {
-                corrected = await CorrectWithCacheAsync(item.Original, item.Context, prompt, isTranslation, chunkSize, llmClient, cache, concurrency, cancellationToken);
+                corrected = await CorrectWithCacheAsync(item.Original, prompt, chunkSize, llmClient, cache, concurrency, cancellationToken);
             }
             catch (LlmRateLimitException)
             {
                 // The rate limiter already paced the next slot; retry the single item once
                 // more without touching parallelism (the limiter is the only 429 regulator).
-                corrected = await CorrectWithCacheAsync(item.Original, item.Context, prompt, isTranslation, chunkSize, llmClient, cache, concurrency, cancellationToken);
+                corrected = await CorrectWithCacheAsync(item.Original, prompt, chunkSize, llmClient, cache, concurrency, cancellationToken);
             }
 
             if (string.IsNullOrWhiteSpace(corrected))
@@ -520,22 +492,20 @@ public static class ParagraphProcessor
 
     private static async Task<string> CorrectWithCacheAsync(
         string original,
-        string? context,
         string prompt,
-        bool isTranslation,
         int chunkSize,
         ILlmClient llmClient,
         ConcurrentDictionary<string, string>? cache,
         IConcurrencyGate? gate,
         CancellationToken cancellationToken)
     {
-        var cacheKey = BuildCacheKey(isTranslation, original, context);
+        var cacheKey = BuildCacheKey(original);
         if (cache is not null && cache.TryGetValue(cacheKey, out var cached))
         {
             return cached;
         }
 
-        var corrected = await CorrectWithChunkingAsync(original, context, prompt, isTranslation, chunkSize, llmClient, gate, cancellationToken);
+        var corrected = await CorrectWithChunkingAsync(original, prompt, chunkSize, llmClient, gate, cancellationToken);
         if (cache is not null && !string.IsNullOrWhiteSpace(corrected))
         {
             cache.TryAdd(cacheKey, corrected);
@@ -892,7 +862,7 @@ public static class ParagraphProcessor
         return end;
     }
 
-    private sealed record ParagraphItem(Paragraph Paragraph, string Original, string? Context = null)
+    private sealed record ParagraphItem(Paragraph Paragraph, string Original)
     {
         public int Id { get; } = NextId();
         private static int _nextId;

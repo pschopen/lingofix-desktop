@@ -1,5 +1,6 @@
+import { useMemo, useState } from 'react';
 import { Settings, TranslationPromptPreset } from '../../types';
-import { EU_LANGUAGE_CODES, LANGUAGE_LABELS, Language, t } from '../../i18n';
+import { EU_LANGUAGE_CODES, Language, languageDisplayName, t } from '../../i18n';
 import { FieldGroup, SelectField } from './shared';
 import { PresetDialogMode, PromptPresetEditor } from './PromptPresetEditor';
 
@@ -11,6 +12,11 @@ interface TranslationSectionProps {
   lang: Language;
   menuBoundaryRef: React.RefObject<HTMLElement | null>;
   onTargetLanguageChange: (value: string) => void;
+  // Permanently adds a free-text language to translation.custom_languages and selects it
+  // (docs/plans/translation-polish.md AP 3 follow-up). Adding is only possible here in
+  // Settings; the main window can only pick from already-added languages.
+  onAddLanguage: (value: string) => void;
+  onRemoveLanguage: (value: string) => void;
   visiblePresets: TranslationPromptPreset[];
   activePresetId: string;
   activePresetName: string;
@@ -35,6 +41,8 @@ export function TranslationSection({
   lang,
   menuBoundaryRef,
   onTargetLanguageChange,
+  onAddLanguage,
+  onRemoveLanguage,
   visiblePresets,
   activePresetId,
   activePresetName,
@@ -53,40 +61,112 @@ export function TranslationSection({
   onFootnotePromptChange,
 }: TranslationSectionProps) {
   const targetLanguage = formData.translation.target_language;
+  const customLanguages = formData.translation.custom_languages;
   const isKnownLanguage = EU_LANGUAGE_CODES.includes(targetLanguage as Language);
+  const isRememberedCustomLanguage = customLanguages.some(
+    (entry) => entry.trim().toLowerCase() === targetLanguage.trim().toLowerCase(),
+  );
+  const isSelectableLanguage = isKnownLanguage || isRememberedCustomLanguage;
   const activePreset = visiblePresets.find((preset) => preset.id === activePresetId);
+
+  // "Add a new language" is its own explicit action, decoupled from the select's current
+  // value: opening it must not change the active target language, and typing must not
+  // either — only pressing the Add button (or Enter) does (docs/plans/translation-polish.md
+  // AP 3 follow-up). Lazily defaults to open, pre-filled, if the loaded target_language is
+  // itself neither a EU_LANGUAGE_CODES entry nor already remembered — a legacy/stray value
+  // that predates custom_languages tracking — so it isn't silently invisible.
+  const [isAddingLanguage, setIsAddingLanguage] = useState(!isSelectableLanguage);
+  const [newLanguageInput, setNewLanguageInput] = useState(isSelectableLanguage ? '' : targetLanguage);
+
+  const closeAddLanguage = () => {
+    setIsAddingLanguage(false);
+    setNewLanguageInput('');
+  };
+
+  const confirmAddLanguage = () => {
+    const trimmed = newLanguageInput.trim();
+    if (!trimmed) {
+      return;
+    }
+    onAddLanguage(trimmed);
+    closeAddLanguage();
+  };
+
+  // EU languages sorted by their name in the current UI language (see
+  // docs/plans/translation-polish.md AP 4).
+  const sortedEuLanguageCodes = useMemo(
+    () => [...EU_LANGUAGE_CODES].sort((a, b) => languageDisplayName(lang, a).localeCompare(languageDisplayName(lang, b), lang)),
+    [lang],
+  );
 
   return (
     <>
       <FieldGroup label={t('mode.target_language', lang)} isDarkMode={isDarkMode}>
         <SelectField
-          value={isKnownLanguage ? targetLanguage : OTHER_LANGUAGE_SENTINEL}
+          value={isSelectableLanguage ? targetLanguage : OTHER_LANGUAGE_SENTINEL}
           onChange={(nextValue) => {
             if (nextValue === OTHER_LANGUAGE_SENTINEL) {
-              onTargetLanguageChange('');
+              setIsAddingLanguage(true);
+              setNewLanguageInput('');
               return;
             }
+            closeAddLanguage();
             onTargetLanguageChange(nextValue);
           }}
           menuBoundaryRef={menuBoundaryRef}
           isDarkMode={isDarkMode}
+          removableValues={customLanguages}
+          onRemoveOption={onRemoveLanguage}
+          removeLabel={(value) => t('mode.target_language.remove', lang).replace('{lang}', value)}
         >
-          {EU_LANGUAGE_CODES.map((language) => (
+          {customLanguages.map((language) => (
             <option key={language} value={language}>
-              {LANGUAGE_LABELS[language]}
+              {language}
+            </option>
+          ))}
+          {sortedEuLanguageCodes.map((language) => (
+            <option key={language} value={language}>
+              {languageDisplayName(lang, language)}
             </option>
           ))}
           <option value={OTHER_LANGUAGE_SENTINEL}>{t('mode.target_language.other', lang)}</option>
         </SelectField>
 
-        {!isKnownLanguage && (
-          <input
-            type="text"
-            value={targetLanguage}
-            onChange={(e) => onTargetLanguageChange(e.target.value)}
-            placeholder={t('mode.target_language.other_placeholder', lang)}
-            className={`input !text-base mt-2 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
-          />
+        {isAddingLanguage && (
+          <div className="mt-2 flex gap-2">
+            <input
+              type="text"
+              value={newLanguageInput}
+              onChange={(e) => setNewLanguageInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  confirmAddLanguage();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  closeAddLanguage();
+                }
+              }}
+              placeholder={t('mode.target_language.other_placeholder', lang)}
+              autoFocus
+              className={`input flex-1 min-w-0 !text-base ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
+            />
+            <button
+              type="button"
+              onClick={confirmAddLanguage}
+              disabled={!newLanguageInput.trim()}
+              className="btn-secondary !text-sm !px-3 flex-shrink-0 disabled:opacity-50"
+            >
+              {t('mode.target_language.add', lang)}
+            </button>
+            <button
+              type="button"
+              onClick={closeAddLanguage}
+              className="btn-secondary !text-sm !px-3 flex-shrink-0"
+            >
+              {t('settings.cancel', lang)}
+            </button>
+          </div>
         )}
       </FieldGroup>
 
@@ -125,10 +205,6 @@ export function TranslationSection({
         lang={lang}
         menuBoundaryRef={menuBoundaryRef}
       />
-
-      <p className={`text-sm ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
-        {t('settings.translation.context_hint', lang)}
-      </p>
     </>
   );
 }

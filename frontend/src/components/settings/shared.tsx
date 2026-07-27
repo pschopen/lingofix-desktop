@@ -1,6 +1,6 @@
-import { Children, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
+import { Children, isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, X } from 'lucide-react';
 import { PROVIDER_SENTINEL_UNCONFIGURED } from '../../types';
 
 /* ================================================================
@@ -44,6 +44,9 @@ export function SelectField({
   children,
   className = '',
   isDarkMode = false,
+  removableValues,
+  onRemoveOption,
+  removeLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -52,6 +55,13 @@ export function SelectField({
   children: React.ReactNode;
   className?: string;
   isDarkMode?: boolean;
+  // Options whose value is in this list get a small red "x" to remove them (used for
+  // user-added "other language" entries — see docs/plans/translation-polish.md AP 3).
+  removableValues?: string[];
+  onRemoveOption?: (value: string) => void;
+  // aria-label for the remove button, given the option's value; falls back to a generic
+  // label if omitted.
+  removeLabel?: (value: string) => string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -231,18 +241,33 @@ export function SelectField({
           <div className="overflow-y-auto p-1" style={{ maxHeight: `${menuStyle.maxHeight}px` }}>
             {options.map((option) => {
               const active = option.value === value;
+              const removable = removableValues?.includes(option.value) ?? false;
               return (
-                <button
+                <div
                   key={option.value}
-                  type="button"
-                  onClick={() => handleSelect(option.value)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${active
+                  className={`w-full flex items-center gap-1 rounded-lg text-sm transition-colors ${active
                     ? (isDarkMode ? 'bg-accent-900/40 text-accent-300' : 'bg-accent-50 text-accent-700')
                     : (isDarkMode ? 'text-surface-200 hover:bg-surface-700' : 'text-surface-700 hover:bg-surface-50')
                   }`}
                 >
-                  {option.label}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(option.value)}
+                    className="flex-1 min-w-0 text-left px-3 py-2 truncate"
+                  >
+                    {option.label}
+                  </button>
+                  {removable && (
+                    <button
+                      type="button"
+                      aria-label={removeLabel?.(option.value) ?? `Remove ${option.label}`}
+                      onClick={(e) => { e.stopPropagation(); onRemoveOption?.(option.value); }}
+                      className="flex-shrink-0 p-1.5 mr-1 rounded text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                    >
+                      <X size={12} strokeWidth={2.5} />
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -275,5 +300,44 @@ export function ToggleRow({
         <span className={`toggle-thumb ${checked ? 'toggle-thumb-on' : 'toggle-thumb-off'}`} />
       </button>
     </div>
+  );
+}
+
+/**
+ * Textarea that grows to fit its content instead of scrolling internally (see
+ * docs/plans/translation-polish.md AP 9). Deliberately resizes via inline style + a
+ * ResizeObserver-free useLayoutEffect rather than CSS `field-sizing: content` — Tauri's
+ * macOS WKWebView doesn't support that property.
+ */
+export function AutoGrowTextarea({
+  value,
+  onChange,
+  placeholder,
+  className = '',
+}: {
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) {
+      return;
+    }
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      className={`overflow-hidden resize-none ${className}`}
+    />
   );
 }

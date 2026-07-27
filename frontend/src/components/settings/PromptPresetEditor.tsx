@@ -1,6 +1,6 @@
 import { Plus, Copy, Pencil, Trash2 } from 'lucide-react';
 import { Language, t } from '../../i18n';
-import { FieldGroup, SelectField } from './shared';
+import { AutoGrowTextarea, FieldGroup, SelectField } from './shared';
 
 export type PresetDialogMode = 'new' | 'rename' | 'delete' | null;
 
@@ -125,11 +125,11 @@ export function PromptPresetEditor({
                   {field.label}
                 </label>
               )}
-              <textarea
+              <AutoGrowTextarea
                 value={field.value}
                 onChange={(e) => field.onChange(e.target.value)}
                 placeholder={field.placeholder}
-                className={`textarea !text-base h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
+                className={`textarea !text-base min-h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
               />
               {field.hint && (
                 <p className={`text-sm ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>{field.hint}</p>
@@ -170,6 +170,15 @@ export function PromptPresetEditor({
                     type="text"
                     value={dialogValue}
                     onChange={(e) => onDialogValueChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && dialogValue.trim()) {
+                        e.preventDefault();
+                        onDialogConfirm();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        onDialogCancel();
+                      }
+                    }}
                     className={`input !text-base ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100' : ''}`}
                     autoFocus
                   />

@@ -1,5 +1,9 @@
 // Internationalization service
 
+import { languageDisplayName } from './languageNames';
+
+export { languageDisplayName } from './languageNames';
+
 export const EU_LANGUAGE_CODES = [
   'bg', 'cs', 'da', 'de', 'el', 'en', 'es', 'et', 'fi', 'fr', 'ga', 'hr',
   'hu', 'it', 'lt', 'lv', 'mt', 'nl', 'pl', 'pt', 'ro', 'sk', 'sl', 'sv',
@@ -107,29 +111,22 @@ export function defaultSystemPrompt(lang: Language): string {
 }
 
 /* ================================================================
-   Translation-mode defaults (docs/plans/translation-mode.md Phase 4/5).
-   Mirrors tauri/src/main.rs (language_display_name_de,
+   Translation-mode defaults (docs/plans/translation-mode.md Phase 4/5;
+   localized per UI language since docs/plans/translation-polish.md AP 2).
+   Mirrors tauri/src/main.rs (language_display_name in language_names.rs,
    target_language_slug, default_translation_main_prompt,
-   default_translation_footnote_prompt): the TS side needs the same
-   defaults so the Settings UI can show a fresh preset immediately when
-   the user picks a new target language, without a round trip to Rust
-   (the correction-language flow already works the same way via
-   defaultCustomPrompt/defaultSystemPrompt above).
+   default_translation_footnote_prompt, default_translation_system_prompt):
+   the TS side needs the same defaults so the Settings UI can show a fresh
+   preset immediately when the user picks a new target language, without a
+   round trip to Rust (the correction-language flow already works the same
+   way via defaultCustomPrompt/defaultSystemPrompt above). The four prompt
+   tables below must stay textually identical to their Rust counterparts in
+   main.rs (default_translation_system_prompt/default_translation_main_prompt/
+   default_translation_footnote_prompt/default_translation_batch_prompt) so
+   Rust's "is this still the default preset?" refresh in
+   sync_translation_prompt_with_active_preset matches what this client-side
+   preview shows.
    ================================================================ */
-
-const LANGUAGE_DISPLAY_NAMES_DE: Partial<Record<Language, string>> = {
-  bg: 'Bulgarisch', cs: 'Tschechisch', da: 'Dänisch', de: 'Deutsch', el: 'Griechisch', en: 'Englisch',
-  es: 'Spanisch', et: 'Estnisch', fi: 'Finnisch', fr: 'Französisch', ga: 'Irisch', hr: 'Kroatisch',
-  hu: 'Ungarisch', it: 'Italienisch', lt: 'Litauisch', lv: 'Lettisch', mt: 'Maltesisch', nl: 'Niederländisch',
-  pl: 'Polnisch', pt: 'Portugiesisch', ro: 'Rumänisch', sk: 'Slowakisch', sl: 'Slowenisch', sv: 'Schwedisch',
-};
-
-/** Known code -> German display name; free text is returned exactly as typed. */
-function translationLanguageDisplayNameDe(targetLanguage: string): string {
-  const trimmed = targetLanguage.trim();
-  const lower = trimmed.toLowerCase();
-  return (LANGUAGE_DISPLAY_NAMES_DE as Record<string, string | undefined>)[lower] ?? trimmed;
-}
 
 /**
  * Filesystem-safe, HashMap-key-safe slug for a target language: lowercase,
@@ -153,28 +150,145 @@ export function targetLanguageSlug(targetLanguage: string): string {
   return slug || 'target';
 }
 
-const DEFAULT_TRANSLATION_MAIN_PROMPT_TEMPLATE =
-  'Übersetze den folgenden Text vollständig ins {lang}. Gib ausschließlich die Übersetzung aus — keine ' +
-  'Kommentare, keine Erklärungen, keine Anführungszeichen um die Ausgabe. Übernimm die Absatz- und ' +
-  'Satzstruktur so weit wie möglich. Verwende die Typografie-Konventionen der Zielsprache ' +
-  '(Anführungszeichen, Gedankenstriche). Eigennamen, Zitate in Originalsprache und Aktenzeichen bleiben ' +
-  'unübersetzt.';
-const DEFAULT_TRANSLATION_FOOTNOTE_PROMPT_SUFFIX =
-  'Der Text ist eine Fußnote. Zitate und Literaturangaben (Autor, Titel, Zeitschrift, Verlag, Auflage, ' +
-  'Seitenzahlen) bleiben unverändert in der Originalsprache; übersetze nur erläuternden Fließtext. ' +
-  'Folgezitat-Konventionen (z. B. „Ebd.“) in die übliche Form der Zielsprache übertragen.';
+// General translation-quality rules, independent of the target language (the "how to
+// translate" instructions the user typically shouldn't need to touch — see
+// docs/plans/translation-polish.md AP 2). The per-preset main/footnote prompts below stay
+// deliberately short so users mostly edit register/tone or footnote scope there instead.
+const defaultTranslationSystemPrompts: Record<Language, string> = {
+  bg: 'Ти си професионален преводач. Изведи само превода — без коментари, без обяснения, без кавички около изхода. Запази абзацната и изреченската структура, доколкото е възможно. Използвай типографските конвенции на целевия език (кавички, тирета). Собствените имена, цитатите на оригиналния език и номерата на дела остават непреведени.',
+  cs: 'Jsi profesionální překladatel. Uveď pouze překlad — žádné komentáře, žádná vysvětlení, žádné uvozovky kolem výstupu. Zachovej strukturu odstavců a vět, pokud je to možné. Použij typografické konvence cílového jazyka (uvozovky, pomlčky). Vlastní jména, citace v původním jazyce a spisové značky zůstávají nepřeloženy.',
+  da: 'Du er en professionel oversætter. Angiv kun oversættelsen — ingen kommentarer, ingen forklaringer, ingen anførselstegn omkring outputtet. Bevar afsnits- og sætningsstrukturen så vidt muligt. Brug målsprogets typografiske konventioner (anførselstegn, tankestreger). Egennavne, citater på originalsproget og sagsnumre forbliver uoversatte.',
+  de: 'Du bist ein professioneller Übersetzer. Gib ausschließlich die Übersetzung aus — keine Kommentare, keine Erklärungen, keine Anführungszeichen um die Ausgabe. Übernimm die Absatz- und Satzstruktur so weit wie möglich. Verwende die Typografie-Konventionen der Zielsprache (Anführungszeichen, Gedankenstriche). Eigennamen, Zitate in Originalsprache und Aktenzeichen bleiben unübersetzt.',
+  el: 'Είσαι επαγγελματίας μεταφραστής. Δώσε μόνο τη μετάφραση — χωρίς σχόλια, χωρίς εξηγήσεις, χωρίς εισαγωγικά γύρω από το κείμενο εξόδου. Διατήρησε τη δομή παραγράφων και προτάσεων όσο το δυνατόν περισσότερο. Χρησιμοποίησε τις τυπογραφικές συμβάσεις της γλώσσας-στόχου (εισαγωγικά, παύλες). Τα κύρια ονόματα, τα αποσπάσματα στην πρωτότυπη γλώσσα και οι αριθμοί φακέλων παραμένουν αμετάφραστα.',
+  en: "You are a professional translator. Output only the translation — no comments, no explanations, no quotation marks around the output. Preserve the paragraph and sentence structure as closely as possible. Use the target language's typographic conventions (quotation marks, dashes). Proper names, quotations in their original language, and file/case numbers remain untranslated.",
+  es: 'Eres un traductor profesional. Devuelve únicamente la traducción — sin comentarios, sin explicaciones, sin comillas alrededor del resultado. Conserva en lo posible la estructura de párrafos y frases. Utiliza las convenciones tipográficas del idioma de destino (comillas, guiones). Los nombres propios, las citas en el idioma original y los números de expediente permanecen sin traducir.',
+  et: 'Sa oled professionaalne tõlkija. Väljasta ainult tõlge — ilma kommentaarideta, ilma selgitusteta, ilma jutumärkideta väljundi ümber. Säilita lõigu- ja lausestruktuur nii palju kui võimalik. Kasuta sihtkeele tüpograafiakonventsioone (jutumärgid, mõttekriipsud). Pärisnimed, originaalkeelsed tsitaadid ja toimikunumbrid jäävad tõlkimata.',
+  fi: 'Olet ammattikääntäjä. Anna vain käännös — ei kommentteja, ei selityksiä, ei lainausmerkkejä tulosteen ympärillä. Säilytä kappale- ja lauserakenne mahdollisimman tarkasti. Käytä kohdekielen typografisia käytäntöjä (lainausmerkit, ajatusviivat). Erisnimet, alkukielellä olevat lainaukset ja asianumerot jätetään kääntämättä.',
+  fr: "Tu es un traducteur professionnel. Ne donne que la traduction — sans commentaires, sans explications, sans guillemets autour du résultat. Conserve autant que possible la structure des paragraphes et des phrases. Utilise les conventions typographiques de la langue cible (guillemets, tirets). Les noms propres, les citations dans leur langue d'origine et les numéros de dossier restent non traduits.",
+  ga: 'Is aistritheoir gairmiúil thú. Ná tabhair ach an t-aistriúchán — gan nótaí tráchta, gan mhínithe, gan comharthaí athfhriotail timpeall an aschuir. Coinnigh struchtúr na n-ailt agus na n-abairtí chomh fada agus is féidir. Bain úsáid as coinbhinsiúin thipeagrafaíochta na sprioctheanga (comharthaí athfhriotail, dáiseanna). Fanann ainmneacha dílse, athfhriotail sa bhunteanga agus uimhreacha comhaid gan aistriú.',
+  hr: 'Ti si profesionalni prevoditelj. Iznesi samo prijevod — bez komentara, bez objašnjenja, bez navodnika oko izlaza. Zadrži strukturu odlomaka i rečenica koliko god je to moguće. Koristi tipografske konvencije ciljnog jezika (navodnici, crtice). Vlastita imena, citati na izvornom jeziku i brojevi predmeta ostaju neprevedeni.',
+  hu: 'Professzionális fordító vagy. Kizárólag a fordítást add meg — megjegyzések, magyarázatok és a kimenetet körülvevő idézőjelek nélkül. Amennyire lehetséges, tartsd meg a bekezdés- és mondatszerkezetet. Használd a célnyelv tipográfiai konvencióit (idézőjelek, gondolatjelek). A tulajdonnevek, az eredeti nyelvű idézetek és az ügyszámok fordítatlanul maradnak.',
+  it: 'Sei un traduttore professionista. Restituisci solo la traduzione — senza commenti, senza spiegazioni, senza virgolette attorno al risultato. Mantieni per quanto possibile la struttura di paragrafi e frasi. Usa le convenzioni tipografiche della lingua di destinazione (virgolette, trattini). I nomi propri, le citazioni nella lingua originale e i numeri di fascicolo restano non tradotti.',
+  lt: 'Tu esi profesionalus vertėjas. Pateik tik vertimą — be komentarų, be paaiškinimų, be kabučių aplink rezultatą. Kiek įmanoma išlaikyk pastraipų ir sakinių struktūrą. Naudok tikslinės kalbos tipografijos konvencijas (kabutes, brūkšnius). Tikriniai vardai, citatos originalo kalba ir bylų numeriai lieka neišversti.',
+  lv: 'Tu esi profesionāls tulkotājs. Sniedz tikai tulkojumu — bez komentāriem, bez paskaidrojumiem, bez pēdiņām ap izvadi. Cik vien iespējams, saglabā rindkopu un teikumu struktūru. Izmanto mērķvalodas tipogrāfijas konvencijas (pēdiņas, domuzīmes). Īpašvārdi, citāti oriģinālvalodā un lietu numuri paliek netulkoti.',
+  mt: "Int traduttur professjonali. Agħti biss it-traduzzjoni — mingħajr kummenti, mingħajr spjegazzjonijiet, mingħajr virgoletti madwar l-output. Żomm l-istruttura tal-paragrafi u tas-sentenzi kemm jista' jkun. Uża l-konvenzjonijiet tipografiċi tal-lingwa fil-mira (virgoletti, dashes). L-ismijiet proprji, il-kwotazzjonijiet fil-lingwa oriġinali u n-numri tal-fajls jibqgħu mhux tradotti.",
+  nl: 'Je bent een professionele vertaler. Geef uitsluitend de vertaling — geen commentaar, geen uitleg, geen aanhalingstekens rond de uitvoer. Behoud zoveel mogelijk de alinea- en zinsstructuur. Gebruik de typografische conventies van de doeltaal (aanhalingstekens, gedachtestreepjes). Eigennamen, citaten in de oorspronkelijke taal en dossiernummers blijven onvertaald.',
+  pl: 'Jesteś profesjonalnym tłumaczem. Podaj wyłącznie tłumaczenie — bez komentarzy, bez wyjaśnień, bez cudzysłowów wokół wyniku. Zachowaj strukturę akapitów i zdań w miarę możliwości. Stosuj konwencje typograficzne języka docelowego (cudzysłowy, myślniki). Nazwy własne, cytaty w języku oryginalnym oraz sygnatury akt pozostają nieprzetłumaczone.',
+  pt: 'És um tradutor profissional. Fornece apenas a tradução — sem comentários, sem explicações, sem aspas à volta do resultado. Mantém, tanto quanto possível, a estrutura de parágrafos e frases. Usa as convenções tipográficas da língua de destino (aspas, travessões). Nomes próprios, citações na língua original e números de processo permanecem por traduzir.',
+  ro: 'Ești un traducător profesionist. Oferă doar traducerea — fără comentarii, fără explicații, fără ghilimele în jurul rezultatului. Păstrează pe cât posibil structura paragrafelor și a propozițiilor. Folosește convențiile tipografice ale limbii țintă (ghilimele, liniuțe). Numele proprii, citatele în limba originală și numerele de dosar rămân netraduse.',
+  sk: 'Si profesionálny prekladateľ. Uveď iba preklad — žiadne komentáre, žiadne vysvetlenia, žiadne úvodzovky okolo výstupu. Zachovaj štruktúru odsekov a viet, pokiaľ je to možné. Použi typografické konvencie cieľového jazyka (úvodzovky, pomlčky). Vlastné mená, citácie v pôvodnom jazyku a spisové značky zostávajú nepreložené.',
+  sl: 'Si profesionalni prevajalec. Navedi samo prevod — brez komentarjev, brez razlag, brez narekovajev okoli izpisa. Ohrani strukturo odstavkov in stavkov, kolikor je mogoče. Uporabi tipografske konvencije ciljnega jezika (narekovaji, pomišljaji). Lastna imena, citati v izvirnem jeziku in številke zadev ostanejo neprevedeni.',
+  sv: 'Du är en professionell översättare. Ange endast översättningen — inga kommentarer, inga förklaringar, inga citattecken runt utdata. Behåll stycke- och meningsstrukturen så långt det är möjligt. Använd målspråkets typografiska konventioner (citattecken, tankstreck). Egennamn, citat på originalspråket och ärendenummer förblir oöversatta.',
+};
 
-export function defaultTranslationMainPrompt(targetLanguage: string): string {
-  return DEFAULT_TRANSLATION_MAIN_PROMPT_TEMPLATE.replace('{lang}', translationLanguageDisplayNameDe(targetLanguage));
+// Main-text translation prompt template, one per UI language, with "{lang}" substituted
+// with the target language's localized display name (languageDisplayName). Deliberately
+// short (see defaultTranslationSystemPrompts above for the general rules) — this is what
+// users are expected to actually edit (register, tone). The German entry intentionally
+// reads "nach {lang}" rather than "ins {lang}": the latter would need the target
+// language's declined adjective form (e.g. "ins Bulgarische"), which the plain display
+// name ("Bulgarisch") doesn't have; "nach" takes the undeclined form correctly. Several
+// other entries use the same trick (an invariant preposition/case) or fall back to a
+// "target language: {lang}" label where the target UI language would otherwise require
+// grammatical declension we can't compute generically (cs, fi, hu, sk, sl).
+const defaultTranslationMainPromptTemplates: Record<Language, string> = {
+  bg: 'Преведи изцяло следния текст на {lang} език.',
+  cs: 'Přelož následující text kompletně. Cílový jazyk: {lang}.',
+  da: 'Oversæt følgende tekst fuldstændigt til {lang}.',
+  de: 'Übersetze den folgenden Text vollständig nach {lang}.',
+  el: 'Μετάφρασε πλήρως το ακόλουθο κείμενο στα {lang}.',
+  en: 'Translate the following text completely into {lang}.',
+  es: 'Traduce completamente el siguiente texto al {lang}.',
+  et: 'Tõlgi järgnev tekst täielikult {lang} keelde.',
+  fi: 'Käännä seuraava teksti kokonaan. Kohdekieli: {lang}.',
+  fr: 'Traduis intégralement le texte suivant en {lang}.',
+  ga: 'Aistrigh an téacs seo a leanas go hiomlán go {lang}.',
+  hr: 'Prevedi sljedeći tekst u potpunosti na {lang}.',
+  hu: 'Fordítsd le a következő szöveget teljes egészében. Célnyelv: {lang}.',
+  it: 'Traduci integralmente il testo seguente in {lang}.',
+  lt: 'Išversk šį tekstą pilnai į {lang} kalbą.',
+  lv: 'Pilnībā iztulko šo tekstu {lang} valodā.',
+  mt: 'Traduċi bis-sħiħ dan it-test għal {lang}.',
+  nl: 'Vertaal de volgende tekst volledig naar het {lang}.',
+  pl: 'Przetłumacz w całości poniższy tekst na {lang}.',
+  pt: 'Traduz integralmente o texto seguinte para {lang}.',
+  ro: 'Tradu integral textul următor în {lang}.',
+  sk: 'Prelož nasledujúci text kompletne. Cieľový jazyk: {lang}.',
+  sl: 'Prevedi naslednje besedilo v celoti. Ciljni jezik: {lang}.',
+  sv: 'Översätt följande text fullständigt till {lang}.',
+};
+
+// Appended to the main prompt (space-joined) when translating a footnote/endnote part.
+const defaultTranslationFootnotePromptSuffixes: Record<Language, string> = {
+  bg: 'Текстът е бележка под линия. Цитатите и библиографските данни (автор, заглавие, списание, издателство, издание, номера на страници) остават непроменени на оригиналния език; превеждай само поясняващия текст. Конвенциите за последващо цитиране (напр. „Пак там“) се предават в обичайната форма на целевия език.',
+  cs: 'Tento text je poznámka pod čarou. Citace a bibliografické údaje (autor, název, časopis, nakladatel, vydání, čísla stran) zůstávají beze změny v původním jazyce; přelož pouze vysvětlující text. Konvence následného citování (např. „Tamtéž“) převeď do obvyklé podoby cílového jazyka.',
+  da: 'Denne tekst er en fodnote. Citater og bibliografiske oplysninger (forfatter, titel, tidsskrift, forlag, udgave, sidetal) forbliver uændrede på originalsproget; oversæt kun den forklarende tekst. Konventioner for efterfølgende citering (f.eks. „Ibid.“) overføres til målsprogets sædvanlige form.',
+  de: 'Der Text ist eine Fußnote. Zitate und Literaturangaben (Autor, Titel, Zeitschrift, Verlag, Auflage, Seitenzahlen) bleiben unverändert in der Originalsprache; übersetze nur erläuternden Fließtext. Folgezitat-Konventionen (z. B. „Ebd.“) in die übliche Form der Zielsprache übertragen.',
+  el: 'Το κείμενο αυτό είναι υποσημείωση. Οι παραπομπές και τα βιβλιογραφικά στοιχεία (συγγραφέας, τίτλος, περιοδικό, εκδότης, έκδοση, αριθμοί σελίδων) παραμένουν αμετάβλητα στην πρωτότυπη γλώσσα· μετάφρασε μόνο το επεξηγηματικό κείμενο. Οι συμβάσεις διαδοχικής παραπομπής (π.χ. «Ό.π.») να αποδίδονται στη συνήθη μορφή της γλώσσας-στόχου.',
+  en: 'This text is a footnote. Citations and bibliographic details (author, title, journal, publisher, edition, page numbers) remain unchanged in the original language; translate only the explanatory prose. Render subsequent-citation conventions (e.g. "ibid.") in the target language\'s usual form.',
+  es: 'Este texto es una nota al pie. Las citas y los datos bibliográficos (autor, título, revista, editorial, edición, números de página) permanecen sin cambios en el idioma original; traduce únicamente el texto explicativo. Las convenciones de citas subsiguientes (p. ej., «Ibid.») deben trasladarse a la forma habitual del idioma de destino.',
+  et: 'See tekst on joonealune märkus. Tsitaadid ja bibliograafilised andmed (autor, pealkiri, ajakiri, kirjastus, trükk, leheküljenumbrid) jäävad muutmata originaalkeelde; tõlgi ainult selgitav tekst. Järjestikuste viidete tavad (nt „Samas“) tuleb üle kanda sihtkeele tavapärasesse vormi.',
+  fi: 'Tämä teksti on alaviite. Lähdeviitteet ja bibliografiset tiedot (kirjoittaja, otsikko, lehti, kustantaja, painos, sivunumerot) pysyvät muuttumattomina alkuperäiskielellä; käännä vain selittävä teksti. Peräkkäisten viittausten käytännöt (esim. ”Sama”) muunnetaan kohdekielen tavanomaiseen muotoon.',
+  fr: "Ce texte est une note de bas de page. Les citations et les références bibliographiques (auteur, titre, revue, éditeur, édition, numéros de page) restent inchangées dans la langue d'origine ; traduis uniquement le texte explicatif. Les conventions de citation répétée (par ex. « Ibid. ») doivent être adaptées à la forme habituelle de la langue cible.",
+  ga: 'Is fonóta é an téacs seo. Fanann athfhriotail agus sonraí bibleagrafaíochta (údar, teideal, iris, foilsitheoir, eagrán, uimhreacha leathanaigh) gan athrú sa bhunteanga; ná haistrigh ach an téacs mínithe. Ba cheart coinbhinsiúin athfhriotal ina dhiaidh sin (m.sh. „Ibid.“) a chur i bhfoirm ghnáth na sprioctheanga.',
+  hr: 'Ovaj tekst je fusnota. Citati i bibliografski podaci (autor, naslov, časopis, izdavač, izdanje, brojevi stranica) ostaju nepromijenjeni na izvornom jeziku; prevedi samo objašnjavajući tekst. Konvencije uzastopnog citiranja (npr. „Isto“) prenesi u uobičajeni oblik ciljnog jezika.',
+  hu: 'Ez a szöveg egy lábjegyzet. Az idézetek és a bibliográfiai adatok (szerző, cím, folyóirat, kiadó, kiadás, oldalszámok) változatlanul maradnak az eredeti nyelven; csak a magyarázó szöveget fordítsd le. A további hivatkozási konvenciókat (pl. „Uo.”) alakítsd át a célnyelv szokásos formájára.',
+  it: 'Questo testo è una nota a piè di pagina. Le citazioni e i dati bibliografici (autore, titolo, rivista, editore, edizione, numeri di pagina) restano invariati nella lingua originale; traduci solo il testo esplicativo. Le convenzioni di citazione successiva (ad es. «Ibid.») vanno rese nella forma abituale della lingua di destinazione.',
+  lt: 'Šis tekstas yra išnaša. Citatos ir bibliografiniai duomenys (autorius, pavadinimas, žurnalas, leidykla, leidimas, puslapių numeriai) lieka nepakeisti originalo kalba; versk tik aiškinamąjį tekstą. Pakartotinio citavimo konvencijas (pvz., „Ten pat“) perkelk į įprastą tikslinės kalbos formą.',
+  lv: 'Šis teksts ir vēre. Citāti un bibliogrāfiskie dati (autors, nosaukums, žurnāls, izdevējs, izdevums, lappušu numuri) paliek nemainīti oriģinālvalodā; tulko tikai skaidrojošo tekstu. Atkārtotas citēšanas konvencijas (piem., „Turpat“) pārnes uz mērķvalodas ierasto formu.',
+  mt: 'Dan it-test huwa nota f\'qiegħ il-paġna. Il-kwotazzjonijiet u d-dettalji bibljografiċi (awtur, titlu, rivista, pubblikatur, edizzjoni, numri tal-paġni) jibqgħu mingħajr tibdil fil-lingwa oriġinali; traduċi biss it-test spjegattiv. Il-konvenzjonijiet ta\' kwotazzjoni sussegwenti (eż. "Ibid.") għandhom jinġiebu fil-forma tas-soltu tal-lingwa fil-mira.',
+  nl: 'Deze tekst is een voetnoot. Citaten en bibliografische gegevens (auteur, titel, tijdschrift, uitgever, editie, paginanummers) blijven ongewijzigd in de oorspronkelijke taal; vertaal alleen de toelichtende tekst. Conventies voor opeenvolgende verwijzingen (bijv. "Ibid.") moeten worden omgezet naar de gebruikelijke vorm van de doeltaal.',
+  pl: 'Ten tekst jest przypisem. Cytaty i dane bibliograficzne (autor, tytuł, czasopismo, wydawnictwo, wydanie, numery stron) pozostają niezmienione w języku oryginalnym; tłumacz wyłącznie tekst objaśniający. Konwencje cytowania powtórnego (np. „Tamże”) przekształć na zwyczajową formę języka docelowego.',
+  pt: 'Este texto é uma nota de rodapé. As citações e os dados bibliográficos (autor, título, revista, editora, edição, números de página) permanecem inalterados na língua original; traduz apenas o texto explicativo. As convenções de citação subsequente (p. ex., «Idem») devem ser convertidas para a forma habitual da língua de destino.',
+  ro: 'Acest text este o notă de subsol. Citatele și datele bibliografice (autor, titlu, revistă, editură, ediție, numere de pagină) rămân neschimbate în limba originală; tradu doar textul explicativ. Convențiile de citare ulterioară (de ex. „Ibidem”) trebuie redate în forma obișnuită a limbii țintă.',
+  sk: 'Tento text je poznámka pod čiarou. Citácie a bibliografické údaje (autor, názov, časopis, vydavateľ, vydanie, čísla strán) zostávajú nezmenené v pôvodnom jazyku; prelož iba vysvetľujúci text. Konvencie následného citovania (napr. „Tamtiež“) prenes do obvyklej podoby cieľového jazyka.',
+  sl: 'To besedilo je sprotna opomba. Citati in bibliografski podatki (avtor, naslov, revija, založnik, izdaja, številke strani) ostanejo nespremenjeni v izvirnem jeziku; prevedi samo pojasnjevalno besedilo. Konvencije zaporednega navajanja (npr. „Ibid.“) prenesi v običajno obliko ciljnega jezika.',
+  sv: 'Denna text är en fotnot. Citat och bibliografiska uppgifter (författare, titel, tidskrift, förlag, upplaga, sidnummer) förblir oförändrade på originalspråket; översätt endast den förklarande texten. Konventioner för efterföljande citering (t.ex. ”Ibid.”) ska överföras till målspråkets vanliga form.',
+};
+
+const defaultTranslationBatchPrompts: Record<Language, string> = {
+  bg: 'Върни точно същия брой абзаци, колкото са във входния текст, разделени точно с по един празен ред. Не добавяй допълнителни празни редове вътре в абзац.',
+  cs: 'Vrať přesně stejný počet odstavců jako ve vstupním textu, oddělených vždy přesně jedním prázdným řádkem. Nepřidávej žádné další prázdné řádky uvnitř odstavce.',
+  da: 'Returnér præcis samme antal afsnit som i inputteksten, adskilt af netop én tom linje hver. Tilføj ikke ekstra tomme linjer inden i et afsnit.',
+  de: 'Gib exakt die gleiche Anzahl Absätze zurück wie im Eingabetext, getrennt durch jeweils genau eine Leerzeile. Füge keine zusätzlichen Leerzeilen innerhalb eines Absatzes ein.',
+  el: 'Επίστρεψε ακριβώς τον ίδιο αριθμό παραγράφων όπως στο κείμενο εισόδου, χωρισμένες η καθεμία με ακριβώς μία κενή γραμμή. Μην προσθέτεις επιπλέον κενές γραμμές μέσα σε μια παράγραφο.',
+  en: 'Return exactly the same number of paragraphs as in the input text, separated by exactly one blank line each. Do not add extra blank lines within a paragraph.',
+  es: 'Devuelve exactamente el mismo número de párrafos que en el texto de entrada, separados cada uno por exactamente una línea en blanco. No añadas líneas en blanco adicionales dentro de un párrafo.',
+  et: 'Tagasta täpselt sama arv lõike kui sisendtekstis, iga lõik eraldatud täpselt ühe tühja reaga. Ära lisa lõigu sisse täiendavaid tühje ridu.',
+  fi: 'Palauta täsmälleen sama määrä kappaleita kuin syötetekstissä, kukin erotettuna täsmälleen yhdellä tyhjällä rivillä. Älä lisää ylimääräisiä tyhjiä rivejä kappaleen sisään.',
+  fr: "Renvoie exactement le même nombre de paragraphes que dans le texte source, séparés chacun par exactement une ligne vide. N'ajoute pas de lignes vides supplémentaires à l'intérieur d'un paragraphe.",
+  ga: "Cuir ar ais go díreach an líon céanna ailt agus atá sa téacs ionchuir, gach ceann scartha le díreach líne bhán amháin. Ná cuir línte bána breise laistigh d'alt.",
+  hr: 'Vrati točno isti broj odlomaka kao u ulaznom tekstu, svaki odvojen točno jednim praznim retkom. Ne dodaj dodatne prazne retke unutar odlomka.',
+  hu: 'Pontosan ugyanannyi bekezdést adj vissza, mint a bemeneti szövegben, mindegyiket pontosan egy üres sorral elválasztva. Ne adj hozzá extra üres sorokat egy bekezdésen belül.',
+  it: "Restituisci esattamente lo stesso numero di paragrafi del testo di input, ciascuno separato da esattamente una riga vuota. Non aggiungere righe vuote extra all'interno di un paragrafo.",
+  lt: 'Grąžink lygiai tiek pat pastraipų, kiek yra įvesties tekste, kiekvieną atskirdamas lygiai viena tuščia eilute. Nepridėk papildomų tuščių eilučių pastraipos viduje.',
+  lv: 'Atgriez tieši tik pat daudz rindkopu, cik ievades tekstā, katru atdalot ar tieši vienu tukšu rindiņu. Nepievieno papildu tukšas rindiņas rindkopas iekšpusē.',
+  mt: "Irritorna eżattament l-istess numru ta' paragrafi bħal fit-test tal-input, kull wieħed separat b'eżattament linja vojta waħda. Tżidx linji vojta addizzjonali ġewwa paragrafu.",
+  nl: "Geef precies hetzelfde aantal alinea's terug als in de invoertekst, elk gescheiden door precies één lege regel. Voeg geen extra lege regels toe binnen een alinea.",
+  pl: 'Zwróć dokładnie taką samą liczbę akapitów jak w tekście wejściowym, każdy oddzielony dokładnie jedną pustą linią. Nie dodawaj dodatkowych pustych linii wewnątrz akapitu.',
+  pt: 'Devolve exatamente o mesmo número de parágrafos que no texto de entrada, cada um separado por exatamente uma linha em branco. Não acrescentes linhas em branco extra dentro de um parágrafo.',
+  ro: 'Returnează exact același număr de paragrafe ca în textul de intrare, fiecare separat de exact un rând gol. Nu adăuga rânduri goale suplimentare în interiorul unui paragraf.',
+  sk: 'Vráť presne rovnaký počet odsekov ako vo vstupnom texte, každý oddelený presne jedným prázdnym riadkom. Nepridávaj ďalšie prázdne riadky vnútri odseku.',
+  sl: 'Vrni natanko toliko odstavkov, kot jih je v vhodnem besedilu, vsakega ločenega z natanko eno prazno vrstico. Ne dodajaj dodatnih praznih vrstic znotraj odstavka.',
+  sv: 'Returnera exakt samma antal stycken som i inmatningstexten, åtskilda av exakt en tom rad vardera. Lägg inte till extra tomma rader inuti ett stycke.',
+};
+
+export function defaultTranslationSystemPrompt(uiLang: Language): string {
+  return defaultTranslationSystemPrompts[uiLang] ?? defaultTranslationSystemPrompts.en;
 }
 
-export function defaultTranslationFootnotePrompt(targetLanguage: string): string {
-  return `${defaultTranslationMainPrompt(targetLanguage)} ${DEFAULT_TRANSLATION_FOOTNOTE_PROMPT_SUFFIX}`;
+export function defaultTranslationMainPrompt(uiLang: Language, targetLanguage: string): string {
+  const template = defaultTranslationMainPromptTemplates[uiLang] ?? defaultTranslationMainPromptTemplates.en;
+  return template.replace('{lang}', languageDisplayName(uiLang, targetLanguage));
 }
 
-export function defaultTranslationBatchPrompt(): string {
-  return 'Gib exakt die gleiche Anzahl Absätze zurück wie im Eingabetext, getrennt durch jeweils genau eine ' +
-    'Leerzeile. Füge keine zusätzlichen Leerzeilen innerhalb eines Absatzes ein.';
+export function defaultTranslationFootnotePrompt(uiLang: Language, targetLanguage: string): string {
+  const suffix = defaultTranslationFootnotePromptSuffixes[uiLang] ?? defaultTranslationFootnotePromptSuffixes.en;
+  return `${defaultTranslationMainPrompt(uiLang, targetLanguage)} ${suffix}`;
+}
+
+export function defaultTranslationBatchPrompt(uiLang: Language): string {
+  return defaultTranslationBatchPrompts[uiLang] ?? defaultTranslationBatchPrompts.en;
 }
 
 // Translation dictionary
@@ -4652,56 +4766,56 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     sv: 'Batchbearbetning',
   },
   'settings.docx.chunk_size': {
-    bg: 'Размер на фрагмент',
-    cs: 'Velikost části',
-    da: 'Chunk-størrelse',
-    de: 'Chunk-Größe',
-    el: 'Μέγεθος τμήματος',
-    en: 'Chunk size',
-    es: 'Tamaño del fragmento',
-    et: 'Tüki suurus',
-    fi: 'Palasen koko',
-    fr: 'Taille du segment',
-    ga: 'Méid an smutáin',
-    hr: 'Veličina dijela',
-    hu: 'Darabolás mérete',
-    it: 'Dimensione del chunk',
-    lt: 'Dalies dydis',
-    lv: 'Bloka izmērs',
-    mt: 'Daqs tal-chunk',
-    nl: 'Chunk-grootte',
-    pl: 'Rozmiar fragmentu',
-    pt: 'Tamanho do fragmento',
-    ro: 'Dimensiunea fragmentului',
-    sk: 'Veľkosť časti',
-    sl: 'Velikost kosa',
-    sv: 'Chunk-storlek',
+    bg: 'Размер на фрагмент (Word файлове)',
+    cs: 'Velikost části (soubory Word)',
+    da: 'Chunk-størrelse (Word-filer)',
+    de: 'Chunk-Größe (Word-Dateien)',
+    el: 'Μέγεθος τμήματος (αρχεία Word)',
+    en: 'Chunk size (Word files)',
+    es: 'Tamaño del fragmento (archivos Word)',
+    et: 'Tüki suurus (Wordi failid)',
+    fi: 'Palasen koko (Word-tiedostot)',
+    fr: 'Taille du segment (fichiers Word)',
+    ga: 'Méid an smutáin (comhaid Word)',
+    hr: 'Veličina dijela (Word datoteke)',
+    hu: 'Darabolás mérete (Word-fájlok)',
+    it: 'Dimensione del chunk (file Word)',
+    lt: 'Dalies dydis (Word failai)',
+    lv: 'Bloka izmērs (Word faili)',
+    mt: 'Daqs tal-chunk (fajls ta\' Word)',
+    nl: 'Chunk-grootte (Word-bestanden)',
+    pl: 'Rozmiar fragmentu (pliki Word)',
+    pt: 'Tamanho do fragmento (ficheiros Word)',
+    ro: 'Dimensiunea fragmentului (fișiere Word)',
+    sk: 'Veľkosť časti (súbory Word)',
+    sl: 'Velikost kosa (Word datoteke)',
+    sv: 'Chunk-storlek (Word-filer)',
   },
   'settings.editor.chunk_size': {
-    bg: 'Размер на фрагмент',
-    cs: 'Velikost části',
-    da: 'Chunk-størrelse',
-    de: 'Chunk-Größe',
-    el: 'Μέγεθος τμήματος',
-    en: 'Chunk size',
-    es: 'Tamaño del fragmento',
-    et: 'Tüki suurus',
-    fi: 'Palasen koko',
-    fr: 'Taille du segment',
-    ga: 'Méid an smutáin',
-    hr: 'Veličina dijela',
-    hu: 'Darabolás mérete',
-    it: 'Dimensione del chunk',
-    lt: 'Dalies dydis',
-    lv: 'Bloka izmērs',
-    mt: 'Daqs tal-chunk',
-    nl: 'Chunk-grootte',
-    pl: 'Rozmiar fragmentu',
-    pt: 'Tamanho do fragmento',
-    ro: 'Dimensiunea fragmentului',
-    sk: 'Veľkosť časti',
-    sl: 'Velikost kosa',
-    sv: 'Chunk-storlek',
+    bg: 'Размер на фрагмент (текстов редактор)',
+    cs: 'Velikost části (textový editor)',
+    da: 'Chunk-størrelse (teksteditor)',
+    de: 'Chunk-Größe (Text-Editor)',
+    el: 'Μέγεθος τμήματος (πρόγραμμα επεξεργασίας κειμένου)',
+    en: 'Chunk size (text editor)',
+    es: 'Tamaño del fragmento (editor de texto)',
+    et: 'Tüki suurus (tekstiredaktor)',
+    fi: 'Palasen koko (tekstieditori)',
+    fr: 'Taille du segment (éditeur de texte)',
+    ga: 'Méid an smutáin (eagarthóir téacs)',
+    hr: 'Veličina dijela (uređivač teksta)',
+    hu: 'Darabolás mérete (szövegszerkesztő)',
+    it: 'Dimensione del chunk (editor di testo)',
+    lt: 'Dalies dydis (teksto redaktorius)',
+    lv: 'Bloka izmērs (teksta redaktors)',
+    mt: 'Daqs tal-chunk (editur tat-test)',
+    nl: 'Chunk-grootte (teksteditor)',
+    pl: 'Rozmiar fragmentu (edytor tekstu)',
+    pt: 'Tamanho do fragmento (editor de texto)',
+    ro: 'Dimensiunea fragmentului (editor de text)',
+    sk: 'Veľkosť časti (textový editor)',
+    sl: 'Velikost kosa (urejevalnik besedila)',
+    sv: 'Chunk-storlek (texteditor)',
   },
   'settings.docx.batch_max_chars': {
     bg: 'Макс. знаци на пакет',
@@ -6067,6 +6181,18 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     hu: 'Adja meg a nyelvet…', it: 'Inserisci la lingua…', lt: 'Įveskite kalbą…', lv: 'Ievadiet valodu…', mt: 'Daħħal lingwa…', nl: 'Voer taal in…',
     pl: 'Wpisz język…', pt: 'Introduza o idioma…', ro: 'Introduceți limba…', sk: 'Zadajte jazyk…', sl: 'Vnesite jezik…', sv: 'Ange språk…',
   },
+  'mode.target_language.remove': {
+    bg: 'Премахни {lang}', cs: 'Odebrat {lang}', da: 'Fjern {lang}', de: '{lang} entfernen', el: 'Αφαίρεση {lang}', en: 'Remove {lang}',
+    es: 'Eliminar {lang}', et: 'Eemalda {lang}', fi: 'Poista {lang}', fr: 'Supprimer {lang}', ga: 'Bain {lang}', hr: 'Ukloni {lang}',
+    hu: '{lang} eltávolítása', it: 'Rimuovi {lang}', lt: 'Pašalinti {lang}', lv: 'Noņemt {lang}', mt: 'Neħħi {lang}', nl: '{lang} verwijderen',
+    pl: 'Usuń {lang}', pt: 'Remover {lang}', ro: 'Elimină {lang}', sk: 'Odstrániť {lang}', sl: 'Odstrani {lang}', sv: 'Ta bort {lang}',
+  },
+  'mode.target_language.add': {
+    bg: 'Добави', cs: 'Přidat', da: 'Tilføj', de: 'Hinzufügen', el: 'Προσθήκη', en: 'Add',
+    es: 'Añadir', et: 'Lisa', fi: 'Lisää', fr: 'Ajouter', ga: 'Cuir Leis', hr: 'Dodaj',
+    hu: 'Hozzáadás', it: 'Aggiungi', lt: 'Pridėti', lv: 'Pievienot', mt: 'Żid', nl: 'Toevoegen',
+    pl: 'Dodaj', pt: 'Adicionar', ro: 'Adaugă', sk: 'Pridať', sl: 'Dodaj', sv: 'Lägg till',
+  },
   'button.translate': {
     bg: 'Преведи', cs: 'Přeložit', da: 'Oversæt', de: 'Übersetzen', el: 'Μετάφραση', en: 'Translate',
     es: 'Traducir', et: 'Tõlgi', fi: 'Käännä', fr: 'Traduire', ga: 'Aistrigh', hr: 'Prevedi',
@@ -6121,12 +6247,6 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     hu: 'Üres = megegyezik a fő szöveg promptjával.', it: 'Vuoto = come il prompt del testo principale.', lt: 'Tuščia = kaip pagrindinio teksto užklausa.', lv: 'Tukšs = tāds pats kā pamatteksta uzvedne.', mt: "Vojt = bħall-prompt għat-test ewlieni.", nl: 'Leeg = zelfde als de prompt voor de hoofdtekst.',
     pl: 'Puste = takie samo jak podpowiedź dla tekstu głównego.', pt: 'Vazio = igual ao prompt do texto principal.', ro: 'Gol = identic cu promptul textului principal.', sk: 'Prázdne = rovnaké ako prompt pre hlavný text.', sl: 'Prazno = enako kot poziv za glavno besedilo.', sv: 'Tom = samma som prompten för huvudtext.',
   },
-  'settings.translation.context_hint': {
-    bg: 'Предишният параграф се изпраща автоматично на модела като контекст.', cs: 'Předchozí odstavec se automaticky odesílá modelu jako kontext.', da: 'Det foregående afsnit sendes automatisk til modellen som kontekst.', de: 'Der vorherige Absatz wird automatisch als Kontext an das Modell gesendet.', el: 'Η προηγούμενη παράγραφος αποστέλλεται αυτόματα στο μοντέλο ως πλαίσιο.', en: 'The previous paragraph is automatically sent to the model as context.',
-    es: 'El párrafo anterior se envía automáticamente al modelo como contexto.', et: 'Eelmine lõik saadetakse mudelile automaatselt kontekstina.', fi: 'Edellinen kappale lähetetään mallille automaattisesti kontekstina.', fr: 'Le paragraphe précédent est automatiquement envoyé au modèle en tant que contexte.', ga: 'Seoltar an t-alt roimhe seo go huathoibríoch chuig an tsamhail mar chomhthéacs.', hr: 'Prethodni odlomak automatski se šalje modelu kao kontekst.',
-    hu: 'Az előző bekezdés automatikusan elküldésre kerül a modellnek kontextusként.', it: 'Il paragrafo precedente viene inviato automaticamente al modello come contesto.', lt: 'Ankstesnė pastraipa automatiškai siunčiama modeliui kaip kontekstas.', lv: 'Iepriekšējā rindkopa automātiski tiek nosūtīta modelim kā kontekts.', mt: "Il-paragrafu ta' qabel jintbagħat awtomatikament lill-mudell bħala kuntest.", nl: 'De vorige paragraaf wordt automatisch als context naar het model gestuurd.',
-    pl: 'Poprzedni akapit jest automatycznie wysyłany do modelu jako kontekst.', pt: 'O parágrafo anterior é enviado automaticamente ao modelo como contexto.', ro: 'Paragraful anterior este trimis automat modelului drept context.', sk: 'Predchádzajúci odsek sa automaticky odosiela modelu ako kontext.', sl: 'Prejšnji odstavek se samodejno pošlje modelu kot kontekst.', sv: 'Föregående stycke skickas automatiskt till modellen som kontext.',
-  },
   'docx.translated': {
     bg: 'Преводът е завършен', cs: 'Překlad dokončen', da: 'Oversættelse afsluttet', de: 'Übersetzung abgeschlossen', el: 'Η μετάφραση ολοκληρώθηκε', en: 'Translation complete',
     es: 'Traducción completada', et: 'Tõlge on valmis', fi: 'Kääntäminen valmis', fr: 'Traduction terminée', ga: 'Aistriúchán críochnaithe', hr: 'Prijevod dovršen',
@@ -6156,6 +6276,18 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     es: 'Traducción', et: 'Tõlge', fi: 'Käännös', fr: 'Traduction', ga: 'Aistriúchán', hr: 'Prijevod',
     hu: 'Fordítás', it: 'Traduzione', lt: 'Vertimas', lv: 'Tulkojums', mt: 'Traduzzjoni', nl: 'Vertaling',
     pl: 'Tłumaczenie', pt: 'Tradução', ro: 'Traducere', sk: 'Preklad', sl: 'Prevod', sv: 'Översättning',
+  },
+  'translation.result_placeholder': {
+    bg: 'Преводът ще се появи тук.', cs: 'Překlad se zobrazí zde.', da: 'Oversættelsen vises her.', de: 'Die Übersetzung erscheint hier.', el: 'Η μετάφραση θα εμφανιστεί εδώ.', en: 'Translation will appear here.',
+    es: 'La traducción aparecerá aquí.', et: 'Tõlge ilmub siia.', fi: 'Käännös näkyy tässä.', fr: 'La traduction apparaîtra ici.', ga: 'Beidh an t-aistriúchán le feiceáil anseo.', hr: 'Prijevod će se pojaviti ovdje.',
+    hu: 'A fordítás itt fog megjelenni.', it: 'La traduzione apparirà qui.', lt: 'Vertimas bus rodomas čia.', lv: 'Tulkojums parādīsies šeit.', mt: 'It-traduzzjoni tidher hawn.', nl: 'De vertaling verschijnt hier.',
+    pl: 'Tłumaczenie pojawi się tutaj.', pt: 'A tradução aparecerá aqui.', ro: 'Traducerea va apărea aici.', sk: 'Preklad sa zobrazí tu.', sl: 'Prevod se bo prikazal tukaj.', sv: 'Översättningen visas här.',
+  },
+  'translation.translating_label': {
+    bg: 'Превежда се…', cs: 'Překládá se…', da: 'Oversætter…', de: 'Wird übersetzt …', el: 'Μετάφραση σε εξέλιξη…', en: 'Translating…',
+    es: 'Traduciendo…', et: 'Tõlkimine…', fi: 'Käännetään…', fr: 'Traduction en cours…', ga: 'Ag aistriú…', hr: 'Prevođenje…',
+    hu: 'Fordítás folyamatban…', it: 'Traduzione in corso…', lt: 'Verčiama…', lv: 'Notiek tulkošana…', mt: 'Qed tiġi tradotta…', nl: 'Bezig met vertalen…',
+    pl: 'Tłumaczenie…', pt: 'A traduzir…', ro: 'Se traduce…', sk: 'Prekladá sa…', sl: 'Prevajanje…', sv: 'Översätter…',
   },
   'docx.logs.fields_not_translated_hint': {
     bg: 'Полетата и записите в съдържанието не се превеждат — актуализирайте ги ръчно в Word.', cs: 'Pole a položky obsahu se nepřekládají — aktualizujte je ručně ve Wordu.', da: 'Felter og indholdsfortegnelsens poster oversættes ikke — opdater dem manuelt i Word.', de: 'Felder und Inhaltsverzeichnis-Einträge werden nicht übersetzt — in Word manuell aktualisieren.', el: 'Τα πεδία και οι καταχωρήσεις πίνακα περιεχομένων δεν μεταφράζονται — ενημερώστε τα χειροκίνητα στο Word.', en: 'Fields and table-of-contents entries are not translated; update them manually in Word.',

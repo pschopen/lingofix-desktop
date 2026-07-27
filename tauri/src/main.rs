@@ -2,6 +2,9 @@
 
 #[allow(dead_code)]
 mod citations;
+mod language_names;
+
+use language_names::language_display_name;
 
 use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
@@ -1015,6 +1018,16 @@ fn is_default_or_legacy_system_prompt(value: &str) -> bool {
     trimmed == DEFAULT_SYSTEM_PROMPT_DE || trimmed == DEFAULT_SYSTEM_PROMPT_EN
 }
 
+/// The system prompt for the currently active mode: translation.system_prompt while
+/// mode == "translation", the top-level (correction) system_prompt otherwise.
+fn active_system_prompt(settings: &FrontendSettings) -> &str {
+    if settings.mode.eq_ignore_ascii_case("translation") {
+        &settings.translation.system_prompt
+    } else {
+        &settings.system_prompt
+    }
+}
+
 fn lingofix_temp_root() -> PathBuf {
     if std::env::var_os("FLATPAK_ID").is_some() {
         if let Some(cache_home) = std::env::var_os("XDG_CACHE_HOME") {
@@ -1029,42 +1042,189 @@ fn lingofix_temp_root() -> PathBuf {
     std::env::temp_dir().join("Lingofix")
 }
 
-const DEFAULT_TRANSLATION_MAIN_PROMPT_TEMPLATE: &str = "Übersetze den folgenden Text vollständig ins {lang}. Gib ausschließlich die Übersetzung aus — keine Kommentare, keine Erklärungen, keine Anführungszeichen um die Ausgabe. Übernimm die Absatz- und Satzstruktur so weit wie möglich. Verwende die Typografie-Konventionen der Zielsprache (Anführungszeichen, Gedankenstriche). Eigennamen, Zitate in Originalsprache und Aktenzeichen bleiben unübersetzt.";
-const DEFAULT_TRANSLATION_FOOTNOTE_PROMPT_SUFFIX: &str = "Der Text ist eine Fußnote. Zitate und Literaturangaben (Autor, Titel, Zeitschrift, Verlag, Auflage, Seitenzahlen) bleiben unverändert in der Originalsprache; übersetze nur erläuternden Fließtext. Folgezitat-Konventionen (z. B. „Ebd.“) in die übliche Form der Zielsprache übertragen.";
-const DEFAULT_TRANSLATION_BATCH_PROMPT: &str = "Gib exakt die gleiche Anzahl Absätze zurück wie im Eingabetext, getrennt durch jeweils genau eine Leerzeile. Füge keine zusätzlichen Leerzeilen innerhalb eines Absatzes ein.";
 const DEFAULT_TRANSLATION_PRESET_NAME: &str = "Standard";
 
-/// The main (Haupttext) translation prompt. Unlike the correction prompts, this is a
-/// single fixed German template (the plan gives only a German wording) with the target
-/// language's display name substituted in.
-fn default_translation_main_prompt(target_language: &str) -> String {
-    let display = language_display_name_de(target_language);
-    DEFAULT_TRANSLATION_MAIN_PROMPT_TEMPLATE.replace("{lang}", &display)
+/// General translation-quality rules for the given UI language (docs/plans/translation-polish.md
+/// AP 2). Must stay textually identical to defaultTranslationSystemPrompts in i18n.ts.
+fn default_translation_system_prompt_for_locale(ui_lang: &str) -> String {
+    match normalize_locale(ui_lang) {
+        "bg" => "Ти си професионален преводач. Изведи само превода — без коментари, без обяснения, без кавички около изхода. Запази абзацната и изреченската структура, доколкото е възможно. Използвай типографските конвенции на целевия език (кавички, тирета). Собствените имена, цитатите на оригиналния език и номерата на дела остават непреведени.",
+        "cs" => "Jsi profesionální překladatel. Uveď pouze překlad — žádné komentáře, žádná vysvětlení, žádné uvozovky kolem výstupu. Zachovej strukturu odstavců a vět, pokud je to možné. Použij typografické konvence cílového jazyka (uvozovky, pomlčky). Vlastní jména, citace v původním jazyce a spisové značky zůstávají nepřeloženy.",
+        "da" => "Du er en professionel oversætter. Angiv kun oversættelsen — ingen kommentarer, ingen forklaringer, ingen anførselstegn omkring outputtet. Bevar afsnits- og sætningsstrukturen så vidt muligt. Brug målsprogets typografiske konventioner (anførselstegn, tankestreger). Egennavne, citater på originalsproget og sagsnumre forbliver uoversatte.",
+        "de" => "Du bist ein professioneller Übersetzer. Gib ausschließlich die Übersetzung aus — keine Kommentare, keine Erklärungen, keine Anführungszeichen um die Ausgabe. Übernimm die Absatz- und Satzstruktur so weit wie möglich. Verwende die Typografie-Konventionen der Zielsprache (Anführungszeichen, Gedankenstriche). Eigennamen, Zitate in Originalsprache und Aktenzeichen bleiben unübersetzt.",
+        "el" => "Είσαι επαγγελματίας μεταφραστής. Δώσε μόνο τη μετάφραση — χωρίς σχόλια, χωρίς εξηγήσεις, χωρίς εισαγωγικά γύρω από το κείμενο εξόδου. Διατήρησε τη δομή παραγράφων και προτάσεων όσο το δυνατόν περισσότερο. Χρησιμοποίησε τις τυπογραφικές συμβάσεις της γλώσσας-στόχου (εισαγωγικά, παύλες). Τα κύρια ονόματα, τα αποσπάσματα στην πρωτότυπη γλώσσα και οι αριθμοί φακέλων παραμένουν αμετάφραστα.",
+        "es" => "Eres un traductor profesional. Devuelve únicamente la traducción — sin comentarios, sin explicaciones, sin comillas alrededor del resultado. Conserva en lo posible la estructura de párrafos y frases. Utiliza las convenciones tipográficas del idioma de destino (comillas, guiones). Los nombres propios, las citas en el idioma original y los números de expediente permanecen sin traducir.",
+        "et" => "Sa oled professionaalne tõlkija. Väljasta ainult tõlge — ilma kommentaarideta, ilma selgitusteta, ilma jutumärkideta väljundi ümber. Säilita lõigu- ja lausestruktuur nii palju kui võimalik. Kasuta sihtkeele tüpograafiakonventsioone (jutumärgid, mõttekriipsud). Pärisnimed, originaalkeelsed tsitaadid ja toimikunumbrid jäävad tõlkimata.",
+        "fi" => "Olet ammattikääntäjä. Anna vain käännös — ei kommentteja, ei selityksiä, ei lainausmerkkejä tulosteen ympärillä. Säilytä kappale- ja lauserakenne mahdollisimman tarkasti. Käytä kohdekielen typografisia käytäntöjä (lainausmerkit, ajatusviivat). Erisnimet, alkukielellä olevat lainaukset ja asianumerot jätetään kääntämättä.",
+        "fr" => "Tu es un traducteur professionnel. Ne donne que la traduction — sans commentaires, sans explications, sans guillemets autour du résultat. Conserve autant que possible la structure des paragraphes et des phrases. Utilise les conventions typographiques de la langue cible (guillemets, tirets). Les noms propres, les citations dans leur langue d'origine et les numéros de dossier restent non traduits.",
+        "ga" => "Is aistritheoir gairmiúil thú. Ná tabhair ach an t-aistriúchán — gan nótaí tráchta, gan mhínithe, gan comharthaí athfhriotail timpeall an aschuir. Coinnigh struchtúr na n-ailt agus na n-abairtí chomh fada agus is féidir. Bain úsáid as coinbhinsiúin thipeagrafaíochta na sprioctheanga (comharthaí athfhriotail, dáiseanna). Fanann ainmneacha dílse, athfhriotail sa bhunteanga agus uimhreacha comhaid gan aistriú.",
+        "hr" => "Ti si profesionalni prevoditelj. Iznesi samo prijevod — bez komentara, bez objašnjenja, bez navodnika oko izlaza. Zadrži strukturu odlomaka i rečenica koliko god je to moguće. Koristi tipografske konvencije ciljnog jezika (navodnici, crtice). Vlastita imena, citati na izvornom jeziku i brojevi predmeta ostaju neprevedeni.",
+        "hu" => "Professzionális fordító vagy. Kizárólag a fordítást add meg — megjegyzések, magyarázatok és a kimenetet körülvevő idézőjelek nélkül. Amennyire lehetséges, tartsd meg a bekezdés- és mondatszerkezetet. Használd a célnyelv tipográfiai konvencióit (idézőjelek, gondolatjelek). A tulajdonnevek, az eredeti nyelvű idézetek és az ügyszámok fordítatlanul maradnak.",
+        "it" => "Sei un traduttore professionista. Restituisci solo la traduzione — senza commenti, senza spiegazioni, senza virgolette attorno al risultato. Mantieni per quanto possibile la struttura di paragrafi e frasi. Usa le convenzioni tipografiche della lingua di destinazione (virgolette, trattini). I nomi propri, le citazioni nella lingua originale e i numeri di fascicolo restano non tradotti.",
+        "lt" => "Tu esi profesionalus vertėjas. Pateik tik vertimą — be komentarų, be paaiškinimų, be kabučių aplink rezultatą. Kiek įmanoma išlaikyk pastraipų ir sakinių struktūrą. Naudok tikslinės kalbos tipografijos konvencijas (kabutes, brūkšnius). Tikriniai vardai, citatos originalo kalba ir bylų numeriai lieka neišversti.",
+        "lv" => "Tu esi profesionāls tulkotājs. Sniedz tikai tulkojumu — bez komentāriem, bez paskaidrojumiem, bez pēdiņām ap izvadi. Cik vien iespējams, saglabā rindkopu un teikumu struktūru. Izmanto mērķvalodas tipogrāfijas konvencijas (pēdiņas, domuzīmes). Īpašvārdi, citāti oriģinālvalodā un lietu numuri paliek netulkoti.",
+        "mt" => "Int traduttur professjonali. Agħti biss it-traduzzjoni — mingħajr kummenti, mingħajr spjegazzjonijiet, mingħajr virgoletti madwar l-output. Żomm l-istruttura tal-paragrafi u tas-sentenzi kemm jista' jkun. Uża l-konvenzjonijiet tipografiċi tal-lingwa fil-mira (virgoletti, dashes). L-ismijiet proprji, il-kwotazzjonijiet fil-lingwa oriġinali u n-numri tal-fajls jibqgħu mhux tradotti.",
+        "nl" => "Je bent een professionele vertaler. Geef uitsluitend de vertaling — geen commentaar, geen uitleg, geen aanhalingstekens rond de uitvoer. Behoud zoveel mogelijk de alinea- en zinsstructuur. Gebruik de typografische conventies van de doeltaal (aanhalingstekens, gedachtestreepjes). Eigennamen, citaten in de oorspronkelijke taal en dossiernummers blijven onvertaald.",
+        "pl" => "Jesteś profesjonalnym tłumaczem. Podaj wyłącznie tłumaczenie — bez komentarzy, bez wyjaśnień, bez cudzysłowów wokół wyniku. Zachowaj strukturę akapitów i zdań w miarę możliwości. Stosuj konwencje typograficzne języka docelowego (cudzysłowy, myślniki). Nazwy własne, cytaty w języku oryginalnym oraz sygnatury akt pozostają nieprzetłumaczone.",
+        "pt" => "És um tradutor profissional. Fornece apenas a tradução — sem comentários, sem explicações, sem aspas à volta do resultado. Mantém, tanto quanto possível, a estrutura de parágrafos e frases. Usa as convenções tipográficas da língua de destino (aspas, travessões). Nomes próprios, citações na língua original e números de processo permanecem por traduzir.",
+        "ro" => "Ești un traducător profesionist. Oferă doar traducerea — fără comentarii, fără explicații, fără ghilimele în jurul rezultatului. Păstrează pe cât posibil structura paragrafelor și a propozițiilor. Folosește convențiile tipografice ale limbii țintă (ghilimele, liniuțe). Numele proprii, citatele în limba originală și numerele de dosar rămân netraduse.",
+        "sk" => "Si profesionálny prekladateľ. Uveď iba preklad — žiadne komentáre, žiadne vysvetlenia, žiadne úvodzovky okolo výstupu. Zachovaj štruktúru odsekov a viet, pokiaľ je to možné. Použi typografické konvencie cieľového jazyka (úvodzovky, pomlčky). Vlastné mená, citácie v pôvodnom jazyku a spisové značky zostávajú nepreložené.",
+        "sl" => "Si profesionalni prevajalec. Navedi samo prevod — brez komentarjev, brez razlag, brez narekovajev okoli izpisa. Ohrani strukturo odstavkov in stavkov, kolikor je mogoče. Uporabi tipografske konvencije ciljnega jezika (narekovaji, pomišljaji). Lastna imena, citati v izvirnem jeziku in številke zadev ostanejo neprevedeni.",
+        "sv" => "Du är en professionell översättare. Ange endast översättningen — inga kommentarer, inga förklaringar, inga citattecken runt utdata. Behåll stycke- och meningsstrukturen så långt det är möjligt. Använd målspråkets typografiska konventioner (citattecken, tankstreck). Egennamn, citat på originalspråket och ärendenummer förblir oöversatta.",
+        _ => "You are a professional translator. Output only the translation — no comments, no explanations, no quotation marks around the output. Preserve the paragraph and sentence structure as closely as possible. Use the target language's typographic conventions (quotation marks, dashes). Proper names, quotations in their original language, and file/case numbers remain untranslated.",
+    }
+    .to_string()
+}
+
+/// Main-text translation prompt template (with a literal "{lang}" placeholder) for the
+/// given UI language. Must stay textually identical to defaultTranslationMainPromptTemplates
+/// in i18n.ts.
+fn default_translation_main_prompt_template(ui_lang: &str) -> String {
+    match normalize_locale(ui_lang) {
+        "bg" => "Преведи изцяло следния текст на {lang} език.",
+        "cs" => "Přelož následující text kompletně. Cílový jazyk: {lang}.",
+        "da" => "Oversæt følgende tekst fuldstændigt til {lang}.",
+        "de" => "Übersetze den folgenden Text vollständig nach {lang}.",
+        "el" => "Μετάφρασε πλήρως το ακόλουθο κείμενο στα {lang}.",
+        "es" => "Traduce completamente el siguiente texto al {lang}.",
+        "et" => "Tõlgi järgnev tekst täielikult {lang} keelde.",
+        "fi" => "Käännä seuraava teksti kokonaan. Kohdekieli: {lang}.",
+        "fr" => "Traduis intégralement le texte suivant en {lang}.",
+        "ga" => "Aistrigh an téacs seo a leanas go hiomlán go {lang}.",
+        "hr" => "Prevedi sljedeći tekst u potpunosti na {lang}.",
+        "hu" => "Fordítsd le a következő szöveget teljes egészében. Célnyelv: {lang}.",
+        "it" => "Traduci integralmente il testo seguente in {lang}.",
+        "lt" => "Išversk šį tekstą pilnai į {lang} kalbą.",
+        "lv" => "Pilnībā iztulko šo tekstu {lang} valodā.",
+        "mt" => "Traduċi bis-sħiħ dan it-test għal {lang}.",
+        "nl" => "Vertaal de volgende tekst volledig naar het {lang}.",
+        "pl" => "Przetłumacz w całości poniższy tekst na {lang}.",
+        "pt" => "Traduz integralmente o texto seguinte para {lang}.",
+        "ro" => "Tradu integral textul următor în {lang}.",
+        "sk" => "Prelož nasledujúci text kompletne. Cieľový jazyk: {lang}.",
+        "sl" => "Prevedi naslednje besedilo v celoti. Ciljni jezik: {lang}.",
+        "sv" => "Översätt följande text fullständigt till {lang}.",
+        _ => "Translate the following text completely into {lang}.",
+    }
+    .to_string()
+}
+
+/// Footnote-only addendum to the main prompt, for the given UI language. Must stay
+/// textually identical to defaultTranslationFootnotePromptSuffixes in i18n.ts.
+fn default_translation_footnote_prompt_suffix(ui_lang: &str) -> String {
+    match normalize_locale(ui_lang) {
+        "bg" => "Текстът е бележка под линия. Цитатите и библиографските данни (автор, заглавие, списание, издателство, издание, номера на страници) остават непроменени на оригиналния език; превеждай само поясняващия текст. Конвенциите за последващо цитиране (напр. „Пак там“) се предават в обичайната форма на целевия език.",
+        "cs" => "Tento text je poznámka pod čarou. Citace a bibliografické údaje (autor, název, časopis, nakladatel, vydání, čísla stran) zůstávají beze změny v původním jazyce; přelož pouze vysvětlující text. Konvence následného citování (např. „Tamtéž“) převeď do obvyklé podoby cílového jazyka.",
+        "da" => "Denne tekst er en fodnote. Citater og bibliografiske oplysninger (forfatter, titel, tidsskrift, forlag, udgave, sidetal) forbliver uændrede på originalsproget; oversæt kun den forklarende tekst. Konventioner for efterfølgende citering (f.eks. „Ibid.“) overføres til målsprogets sædvanlige form.",
+        "de" => "Der Text ist eine Fußnote. Zitate und Literaturangaben (Autor, Titel, Zeitschrift, Verlag, Auflage, Seitenzahlen) bleiben unverändert in der Originalsprache; übersetze nur erläuternden Fließtext. Folgezitat-Konventionen (z. B. „Ebd.“) in die übliche Form der Zielsprache übertragen.",
+        "el" => "Το κείμενο αυτό είναι υποσημείωση. Οι παραπομπές και τα βιβλιογραφικά στοιχεία (συγγραφέας, τίτλος, περιοδικό, εκδότης, έκδοση, αριθμοί σελίδων) παραμένουν αμετάβλητα στην πρωτότυπη γλώσσα· μετάφρασε μόνο το επεξηγηματικό κείμενο. Οι συμβάσεις διαδοχικής παραπομπής (π.χ. «Ό.π.») να αποδίδονται στη συνήθη μορφή της γλώσσας-στόχου.",
+        "es" => "Este texto es una nota al pie. Las citas y los datos bibliográficos (autor, título, revista, editorial, edición, números de página) permanecen sin cambios en el idioma original; traduce únicamente el texto explicativo. Las convenciones de citas subsiguientes (p. ej., «Ibid.») deben trasladarse a la forma habitual del idioma de destino.",
+        "et" => "See tekst on joonealune märkus. Tsitaadid ja bibliograafilised andmed (autor, pealkiri, ajakiri, kirjastus, trükk, leheküljenumbrid) jäävad muutmata originaalkeelde; tõlgi ainult selgitav tekst. Järjestikuste viidete tavad (nt „Samas“) tuleb üle kanda sihtkeele tavapärasesse vormi.",
+        "fi" => "Tämä teksti on alaviite. Lähdeviitteet ja bibliografiset tiedot (kirjoittaja, otsikko, lehti, kustantaja, painos, sivunumerot) pysyvät muuttumattomina alkuperäiskielellä; käännä vain selittävä teksti. Peräkkäisten viittausten käytännöt (esim. ”Sama”) muunnetaan kohdekielen tavanomaiseen muotoon.",
+        "fr" => "Ce texte est une note de bas de page. Les citations et les références bibliographiques (auteur, titre, revue, éditeur, édition, numéros de page) restent inchangées dans la langue d'origine ; traduis uniquement le texte explicatif. Les conventions de citation répétée (par ex. « Ibid. ») doivent être adaptées à la forme habituelle de la langue cible.",
+        "ga" => "Is fonóta é an téacs seo. Fanann athfhriotail agus sonraí bibleagrafaíochta (údar, teideal, iris, foilsitheoir, eagrán, uimhreacha leathanaigh) gan athrú sa bhunteanga; ná haistrigh ach an téacs mínithe. Ba cheart coinbhinsiúin athfhriotal ina dhiaidh sin (m.sh. „Ibid.“) a chur i bhfoirm ghnáth na sprioctheanga.",
+        "hr" => "Ovaj tekst je fusnota. Citati i bibliografski podaci (autor, naslov, časopis, izdavač, izdanje, brojevi stranica) ostaju nepromijenjeni na izvornom jeziku; prevedi samo objašnjavajući tekst. Konvencije uzastopnog citiranja (npr. „Isto“) prenesi u uobičajeni oblik ciljnog jezika.",
+        "hu" => "Ez a szöveg egy lábjegyzet. Az idézetek és a bibliográfiai adatok (szerző, cím, folyóirat, kiadó, kiadás, oldalszámok) változatlanul maradnak az eredeti nyelven; csak a magyarázó szöveget fordítsd le. A további hivatkozási konvenciókat (pl. „Uo.”) alakítsd át a célnyelv szokásos formájára.",
+        "it" => "Questo testo è una nota a piè di pagina. Le citazioni e i dati bibliografici (autore, titolo, rivista, editore, edizione, numeri di pagina) restano invariati nella lingua originale; traduci solo il testo esplicativo. Le convenzioni di citazione successiva (ad es. «Ibid.») vanno rese nella forma abituale della lingua di destinazione.",
+        "lt" => "Šis tekstas yra išnaša. Citatos ir bibliografiniai duomenys (autorius, pavadinimas, žurnalas, leidykla, leidimas, puslapių numeriai) lieka nepakeisti originalo kalba; versk tik aiškinamąjį tekstą. Pakartotinio citavimo konvencijas (pvz., „Ten pat“) perkelk į įprastą tikslinės kalbos formą.",
+        "lv" => "Šis teksts ir vēre. Citāti un bibliogrāfiskie dati (autors, nosaukums, žurnāls, izdevējs, izdevums, lappušu numuri) paliek nemainīti oriģinālvalodā; tulko tikai skaidrojošo tekstu. Atkārtotas citēšanas konvencijas (piem., „Turpat“) pārnes uz mērķvalodas ierasto formu.",
+        "mt" => "Dan it-test huwa nota f'qiegħ il-paġna. Il-kwotazzjonijiet u d-dettalji bibljografiċi (awtur, titlu, rivista, pubblikatur, edizzjoni, numri tal-paġni) jibqgħu mingħajr tibdil fil-lingwa oriġinali; traduċi biss it-test spjegattiv. Il-konvenzjonijiet ta' kwotazzjoni sussegwenti (eż. \"Ibid.\") għandhom jinġiebu fil-forma tas-soltu tal-lingwa fil-mira.",
+        "nl" => "Deze tekst is een voetnoot. Citaten en bibliografische gegevens (auteur, titel, tijdschrift, uitgever, editie, paginanummers) blijven ongewijzigd in de oorspronkelijke taal; vertaal alleen de toelichtende tekst. Conventies voor opeenvolgende verwijzingen (bijv. \"Ibid.\") moeten worden omgezet naar de gebruikelijke vorm van de doeltaal.",
+        "pl" => "Ten tekst jest przypisem. Cytaty i dane bibliograficzne (autor, tytuł, czasopismo, wydawnictwo, wydanie, numery stron) pozostają niezmienione w języku oryginalnym; tłumacz wyłącznie tekst objaśniający. Konwencje cytowania powtórnego (np. „Tamże”) przekształć na zwyczajową formę języka docelowego.",
+        "pt" => "Este texto é uma nota de rodapé. As citações e os dados bibliográficos (autor, título, revista, editora, edição, números de página) permanecem inalterados na língua original; traduz apenas o texto explicativo. As convenções de citação subsequente (p. ex., «Idem») devem ser convertidas para a forma habitual da língua de destino.",
+        "ro" => "Acest text este o notă de subsol. Citatele și datele bibliografice (autor, titlu, revistă, editură, ediție, numere de pagină) rămân neschimbate în limba originală; tradu doar textul explicativ. Convențiile de citare ulterioară (de ex. „Ibidem”) trebuie redate în forma obișnuită a limbii țintă.",
+        "sk" => "Tento text je poznámka pod čiarou. Citácie a bibliografické údaje (autor, názov, časopis, vydavateľ, vydanie, čísla strán) zostávajú nezmenené v pôvodnom jazyku; prelož iba vysvetľujúci text. Konvencie následného citovania (napr. „Tamtiež“) prenes do obvyklej podoby cieľového jazyka.",
+        "sl" => "To besedilo je sprotna opomba. Citati in bibliografski podatki (avtor, naslov, revija, založnik, izdaja, številke strani) ostanejo nespremenjeni v izvirnem jeziku; prevedi samo pojasnjevalno besedilo. Konvencije zaporednega navajanja (npr. „Ibid.“) prenesi v običajno obliko ciljnega jezika.",
+        "sv" => "Denna text är en fotnot. Citat och bibliografiska uppgifter (författare, titel, tidskrift, förlag, upplaga, sidnummer) förblir oförändrade på originalspråket; översätt endast den förklarande texten. Konventioner för efterföljande citering (t.ex. ”Ibid.”) ska överföras till målspråkets vanliga form.",
+        _ => "This text is a footnote. Citations and bibliographic details (author, title, journal, publisher, edition, page numbers) remain unchanged in the original language; translate only the explanatory prose. Render subsequent-citation conventions (e.g. \"ibid.\") in the target language's usual form.",
+    }
+    .to_string()
+}
+
+/// Batch-formatting instruction (paragraph count / blank-line rules), for the given UI
+/// language. Must stay textually identical to defaultTranslationBatchPrompts in i18n.ts.
+fn default_translation_batch_prompt_for_locale(ui_lang: &str) -> String {
+    match normalize_locale(ui_lang) {
+        "bg" => "Върни точно същия брой абзаци, колкото са във входния текст, разделени точно с по един празен ред. Не добавяй допълнителни празни редове вътре в абзац.",
+        "cs" => "Vrať přesně stejný počet odstavců jako ve vstupním textu, oddělených vždy přesně jedním prázdným řádkem. Nepřidávej žádné další prázdné řádky uvnitř odstavce.",
+        "da" => "Returnér præcis samme antal afsnit som i inputteksten, adskilt af netop én tom linje hver. Tilføj ikke ekstra tomme linjer inden i et afsnit.",
+        "de" => "Gib exakt die gleiche Anzahl Absätze zurück wie im Eingabetext, getrennt durch jeweils genau eine Leerzeile. Füge keine zusätzlichen Leerzeilen innerhalb eines Absatzes ein.",
+        "el" => "Επίστρεψε ακριβώς τον ίδιο αριθμό παραγράφων όπως στο κείμενο εισόδου, χωρισμένες η καθεμία με ακριβώς μία κενή γραμμή. Μην προσθέτεις επιπλέον κενές γραμμές μέσα σε μια παράγραφο.",
+        "es" => "Devuelve exactamente el mismo número de párrafos que en el texto de entrada, separados cada uno por exactamente una línea en blanco. No añadas líneas en blanco adicionales dentro de un párrafo.",
+        "et" => "Tagasta täpselt sama arv lõike kui sisendtekstis, iga lõik eraldatud täpselt ühe tühja reaga. Ära lisa lõigu sisse täiendavaid tühje ridu.",
+        "fi" => "Palauta täsmälleen sama määrä kappaleita kuin syötetekstissä, kukin erotettuna täsmälleen yhdellä tyhjällä rivillä. Älä lisää ylimääräisiä tyhjiä rivejä kappaleen sisään.",
+        "fr" => "Renvoie exactement le même nombre de paragraphes que dans le texte source, séparés chacun par exactement une ligne vide. N'ajoute pas de lignes vides supplémentaires à l'intérieur d'un paragraphe.",
+        "ga" => "Cuir ar ais go díreach an líon céanna ailt agus atá sa téacs ionchuir, gach ceann scartha le díreach líne bhán amháin. Ná cuir línte bána breise laistigh d'alt.",
+        "hr" => "Vrati točno isti broj odlomaka kao u ulaznom tekstu, svaki odvojen točno jednim praznim retkom. Ne dodaj dodatne prazne retke unutar odlomka.",
+        "hu" => "Pontosan ugyanannyi bekezdést adj vissza, mint a bemeneti szövegben, mindegyiket pontosan egy üres sorral elválasztva. Ne adj hozzá extra üres sorokat egy bekezdésen belül.",
+        "it" => "Restituisci esattamente lo stesso numero di paragrafi del testo di input, ciascuno separato da esattamente una riga vuota. Non aggiungere righe vuote extra all'interno di un paragrafo.",
+        "lt" => "Grąžink lygiai tiek pat pastraipų, kiek yra įvesties tekste, kiekvieną atskirdamas lygiai viena tuščia eilute. Nepridėk papildomų tuščių eilučių pastraipos viduje.",
+        "lv" => "Atgriez tieši tik pat daudz rindkopu, cik ievades tekstā, katru atdalot ar tieši vienu tukšu rindiņu. Nepievieno papildu tukšas rindiņas rindkopas iekšpusē.",
+        "mt" => "Irritorna eżattament l-istess numru ta' paragrafi bħal fit-test tal-input, kull wieħed separat b'eżattament linja vojta waħda. Tżidx linji vojta addizzjonali ġewwa paragrafu.",
+        "nl" => "Geef precies hetzelfde aantal alinea's terug als in de invoertekst, elk gescheiden door precies één lege regel. Voeg geen extra lege regels toe binnen een alinea.",
+        "pl" => "Zwróć dokładnie taką samą liczbę akapitów jak w tekście wejściowym, każdy oddzielony dokładnie jedną pustą linią. Nie dodawaj dodatkowych pustych linii wewnątrz akapitu.",
+        "pt" => "Devolve exatamente o mesmo número de parágrafos que no texto de entrada, cada um separado por exatamente uma linha em branco. Não acrescentes linhas em branco extra dentro de um parágrafo.",
+        "ro" => "Returnează exact același număr de paragrafe ca în textul de intrare, fiecare separat de exact un rând gol. Nu adăuga rânduri goale suplimentare în interiorul unui paragraf.",
+        "sk" => "Vráť presne rovnaký počet odsekov ako vo vstupnom texte, každý oddelený presne jedným prázdnym riadkom. Nepridávaj ďalšie prázdne riadky vnútri odseku.",
+        "sl" => "Vrni natanko toliko odstavkov, kot jih je v vhodnem besedilu, vsakega ločenega z natanko eno prazno vrstico. Ne dodajaj dodatnih praznih vrstic znotraj odstavka.",
+        "sv" => "Returnera exakt samma antal stycken som i inmatningstexten, åtskilda av exakt en tom rad vardera. Lägg inte till extra tomma rader inuti ett stycke.",
+        _ => "Return exactly the same number of paragraphs as in the input text, separated by exactly one blank line each. Do not add extra blank lines within a paragraph.",
+    }
+    .to_string()
+}
+
+/// The main (Haupttext) translation prompt for the given UI language: the localized
+/// template (default_translation_main_prompt_template) with "{lang}" substituted by the
+/// target language's UI-language-localized display name (language_display_name).
+fn default_translation_main_prompt(ui_lang: &str, target_language: &str) -> String {
+    let display = language_display_name(normalize_locale(ui_lang), target_language);
+    default_translation_main_prompt_template(ui_lang).replace("{lang}", &display)
 }
 
 /// The footnote-specific translation prompt: the main instruction plus an additional
-/// footnote-only rule (citations/bibliographic data stay in the source language).
-fn default_translation_footnote_prompt(target_language: &str) -> String {
+/// footnote-only rule (citations/bibliographic data stay in the source language), both in
+/// the given UI language.
+fn default_translation_footnote_prompt(ui_lang: &str, target_language: &str) -> String {
     format!(
         "{} {}",
-        default_translation_main_prompt(target_language),
-        DEFAULT_TRANSLATION_FOOTNOTE_PROMPT_SUFFIX
+        default_translation_main_prompt(ui_lang, target_language),
+        default_translation_footnote_prompt_suffix(ui_lang)
     )
 }
 
-fn default_translation_batch_prompt(target_language: &str) -> String {
-    let _ = target_language;
-    DEFAULT_TRANSLATION_BATCH_PROMPT.to_string()
+fn default_translation_batch_prompt(ui_lang: &str) -> String {
+    default_translation_batch_prompt_for_locale(ui_lang)
 }
 
-fn default_translation_prompt_preset(target_language: &str) -> TranslationPromptPreset {
+/// Used only as a serde field default / Default::default() fallback, where no UI-language
+/// context is available yet; sync_translation_prompt_with_active_preset refreshes this to
+/// the real UI language on the very next load/save, so the exact fallback language here
+/// only matters transiently.
+fn default_translation_system_prompt() -> String {
+    default_translation_system_prompt_for_locale("en")
+}
+
+/// True if `value` is any of the (24, one per UI language) default translation system
+/// prompts — current or from an earlier UI-language refresh — so
+/// sync_translation_prompt_with_active_preset knows it's safe to overwrite with the
+/// current UI language's variant rather than clobbering a user edit.
+fn is_default_or_legacy_translation_system_prompt(value: &str) -> bool {
+    let trimmed = value.trim();
+    KNOWN_LANGUAGES
+        .iter()
+        .any(|lang| trimmed == default_translation_system_prompt_for_locale(lang).trim())
+        // Pre-AP-2 fixed German wording, kept around from before per-UI-language prompts existed.
+        || trimmed == "Wichtig: Gib ausschließlich die Übersetzung aus. Keine Erklärungen, keine Notizen, keine zusätzlichen Sätze."
+}
+
+fn default_translation_prompt_preset(ui_lang: &str, target_language: &str) -> TranslationPromptPreset {
     let slug = target_language_slug(target_language);
     TranslationPromptPreset {
         id: format!("default-{slug}"),
         name: DEFAULT_TRANSLATION_PRESET_NAME.to_string(),
         locale: slug,
-        main_prompt: default_translation_main_prompt(target_language),
-        footnote_prompt: default_translation_footnote_prompt(target_language),
+        main_prompt: default_translation_main_prompt(ui_lang, target_language),
+        footnote_prompt: default_translation_footnote_prompt(ui_lang, target_language),
     }
 }
 
@@ -1249,48 +1409,9 @@ const KNOWN_LANGUAGES: [&str; 24] = [
     "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "sk", "sl", "sv",
 ];
 
-// German display names for the known language codes, used to fill "{lang}" into the
-// (German-language) translation-mode default prompts. Free-text target languages are not
-// in this table and are used verbatim instead (see language_display_name_de).
-const LANGUAGE_DISPLAY_NAMES_DE: [(&str, &str); 24] = [
-    ("bg", "Bulgarisch"),
-    ("cs", "Tschechisch"),
-    ("da", "Dänisch"),
-    ("de", "Deutsch"),
-    ("el", "Griechisch"),
-    ("en", "Englisch"),
-    ("es", "Spanisch"),
-    ("et", "Estnisch"),
-    ("fi", "Finnisch"),
-    ("fr", "Französisch"),
-    ("ga", "Irisch"),
-    ("hr", "Kroatisch"),
-    ("hu", "Ungarisch"),
-    ("it", "Italienisch"),
-    ("lt", "Litauisch"),
-    ("lv", "Lettisch"),
-    ("mt", "Maltesisch"),
-    ("nl", "Niederländisch"),
-    ("pl", "Polnisch"),
-    ("pt", "Portugiesisch"),
-    ("ro", "Rumänisch"),
-    ("sk", "Slowakisch"),
-    ("sl", "Slowenisch"),
-    ("sv", "Schwedisch"),
-];
-
-/// Resolves a target-language display name for substitution into the (German) default
-/// translation prompts: a known ISO code maps to its German name; anything else (free
-/// text like "Schweizer Hochdeutsch") is used exactly as the user typed it.
-fn language_display_name_de(target_language: &str) -> String {
-    let trimmed = target_language.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    LANGUAGE_DISPLAY_NAMES_DE
-        .iter()
-        .find(|(code, _)| *code == lower)
-        .map(|(_, name)| name.to_string())
-        .unwrap_or_else(|| trimmed.to_string())
-}
+// Localized target-language display names for filling "{lang}" into the per-UI-language
+// translation-mode default prompts now live in language_names.rs (generated by
+// scripts/generate-language-names.mjs, mirrored in frontend/src/languageNames.ts).
 
 /// Filesystem-safe, HashMap-key-safe slug for a target language, mirroring the backend's
 /// output-filename slug rule (backend/Documents/LingofixRunner.cs::BuildLanguageSlug):
@@ -1552,19 +1673,39 @@ struct TranslationSettings {
     // (mirrors how the top-level custom_prompt field carries the resolved main prompt).
     #[serde(default)]
     footnote_prompt: String,
+    // Translation's own system prompt (mirrors the top-level system_prompt field, which
+    // is correction-only now). Not preset/language-scoped, unlike main_prompt/
+    // footnote_prompt: it's a single fixed formatting instruction, freely editable.
+    #[serde(default = "default_translation_system_prompt")]
+    system_prompt: String,
+    // Free-text "other language" entries the user has typed in, remembered across target-
+    // language switches so they stay selectable (with a way to remove them) instead of
+    // disappearing the moment a different language is picked (docs/plans/translation-polish.md
+    // AP 3). Populated by sync_translation_prompt_with_active_preset; trimmed, deduplicated
+    // case-insensitively, and never contains a KNOWN_LANGUAGES code.
+    #[serde(default)]
+    custom_languages: Vec<String>,
 }
 
 impl Default for TranslationSettings {
     fn default() -> Self {
+        Self::default_for_locale("en")
+    }
+}
+
+impl TranslationSettings {
+    fn default_for_locale(ui_lang: &str) -> Self {
         let target_language = default_target_language();
-        let preset = default_translation_prompt_preset(&target_language);
+        let preset = default_translation_prompt_preset(ui_lang, &target_language);
         let mut active_preset_ids = HashMap::new();
         active_preset_ids.insert(preset.locale.clone(), preset.id.clone());
         Self {
             target_language,
             footnote_prompt: preset.footnote_prompt.clone(),
+            system_prompt: default_translation_system_prompt_for_locale(ui_lang),
             prompt_presets: vec![preset],
             active_preset_ids,
+            custom_languages: Vec::new(),
         }
     }
 }
@@ -1654,7 +1795,7 @@ impl FrontendSettings {
             font_size: "default".into(),
             setup_completed: None,
             mode: default_operation_mode(),
-            translation: TranslationSettings::default(),
+            translation: TranslationSettings::default_for_locale(normalized_locale),
         }
     }
 }
@@ -2315,6 +2456,12 @@ fn validate_settings(settings: &FrontendSettings) -> Result<(), String> {
         ));
     }
 
+    if settings.translation.system_prompt.trim().is_empty() {
+        return Err(format!(
+            "Invalid settings: translation.system_prompt is missing. {reset_hint}"
+        ));
+    }
+
     let mut seen_translation_preset_ids = HashSet::new();
     for preset in &settings.translation.prompt_presets {
         if preset.id.trim().is_empty() {
@@ -2435,12 +2582,45 @@ fn sync_translation_prompt_with_active_preset(settings: &mut FrontendSettings) {
     }
     settings.translation.target_language = target_language.clone();
     let slug = target_language_slug(&target_language);
+    // Prompts (default preset + system prompt) are worded in the UI language, not the
+    // target language — the target language only fills the "{lang}" placeholder (see
+    // docs/plans/translation-polish.md AP 2).
+    let ui_lang = normalize_language(&settings.ui_language).to_string();
+
+    // Free-text "other language" bookkeeping (AP 3): normalize whatever is already in the
+    // list (trim, drop anything that's become a KNOWN_LANGUAGES code or a duplicate — case-
+    // insensitively), then remember the current target language too, if it's free text.
+    let is_known_language_code = |value: &str| {
+        let lower = value.trim().to_ascii_lowercase();
+        KNOWN_LANGUAGES.iter().any(|known| *known == lower)
+    };
+    let mut normalized_custom_languages: Vec<String> = Vec::new();
+    for raw in &settings.translation.custom_languages {
+        let trimmed = raw.trim().to_string();
+        if trimmed.is_empty() || is_known_language_code(&trimmed) {
+            continue;
+        }
+        if !normalized_custom_languages
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&trimmed))
+        {
+            normalized_custom_languages.push(trimmed);
+        }
+    }
+    if !is_known_language_code(&target_language)
+        && !normalized_custom_languages
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&target_language))
+    {
+        normalized_custom_languages.push(target_language.clone());
+    }
+    settings.translation.custom_languages = normalized_custom_languages;
 
     for preset in &mut settings.translation.prompt_presets {
         if preset.locale == slug && preset.id.eq_ignore_ascii_case(&format!("default-{slug}")) {
             preset.name = DEFAULT_TRANSLATION_PRESET_NAME.to_string();
-            preset.main_prompt = default_translation_main_prompt(&target_language);
-            preset.footnote_prompt = default_translation_footnote_prompt(&target_language);
+            preset.main_prompt = default_translation_main_prompt(&ui_lang, &target_language);
+            preset.footnote_prompt = default_translation_footnote_prompt(&ui_lang, &target_language);
         }
     }
 
@@ -2480,7 +2660,7 @@ fn sync_translation_prompt_with_active_preset(settings: &mut FrontendSettings) {
         settings
             .translation
             .prompt_presets
-            .push(default_translation_prompt_preset(&target_language));
+            .push(default_translation_prompt_preset(&ui_lang, &target_language));
         settings.translation.prompt_presets.len() - 1
     };
 
@@ -2498,7 +2678,16 @@ fn sync_translation_prompt_with_active_preset(settings: &mut FrontendSettings) {
 
     if settings.mode.eq_ignore_ascii_case("translation") {
         settings.custom_prompt = main_prompt;
-        settings.batch_prompt = default_translation_batch_prompt(&target_language);
+        settings.batch_prompt = default_translation_batch_prompt(&ui_lang);
+    }
+
+    // Refresh the translation system prompt to the current UI language, but only while it
+    // still holds a known default wording (any UI language) or is empty — never clobber a
+    // user's own edit.
+    if settings.translation.system_prompt.trim().is_empty()
+        || is_default_or_legacy_translation_system_prompt(&settings.translation.system_prompt)
+    {
+        settings.translation.system_prompt = default_translation_system_prompt_for_locale(&ui_lang);
     }
 }
 
@@ -2858,7 +3047,7 @@ async fn stream_ollama_chunk(
     let prompt = format!(
         "{} {}\n\nText:\n{}",
         settings.custom_prompt.trim(),
-        settings.system_prompt.trim(),
+        active_system_prompt(settings).trim(),
         text
     );
     let body = json!({
@@ -2986,7 +3175,7 @@ async fn stream_openai_like_chunk(
     let prompt = format!(
         "{} {}\n\nText:\n{}",
         settings.custom_prompt.trim(),
-        settings.system_prompt.trim(),
+        active_system_prompt(settings).trim(),
         text
     );
     let cache_key = temperature_capability_key(settings);
@@ -5281,8 +5470,9 @@ mod rate_hint_tests {
 #[cfg(test)]
 mod translation_mode_migration_tests {
     use super::{
-        default_translation_prompt_preset, sync_translation_prompt_with_active_preset,
-        target_language_slug, validate_settings, FrontendSettings,
+        default_translation_prompt_preset, default_translation_system_prompt_for_locale,
+        sync_translation_prompt_with_active_preset, target_language_slug, validate_settings,
+        FrontendSettings,
     };
 
     #[test]
@@ -5334,10 +5524,57 @@ mod translation_mode_migration_tests {
     }
 
     #[test]
-    fn known_language_code_gets_german_display_name_in_default_prompt() {
-        let preset = default_translation_prompt_preset("fr");
-        assert!(preset.main_prompt.contains("Französisch"));
-        assert!(!preset.main_prompt.contains("fr"));
+    fn known_language_code_gets_localized_display_name_in_default_prompt() {
+        let preset_de = default_translation_prompt_preset("de", "fr");
+        assert!(preset_de.main_prompt.contains("Französisch"));
+        assert!(preset_de.main_prompt.contains("nach Französisch"));
+        assert!(!preset_de.main_prompt.contains("ins Französisch"));
+
+        let preset_en = default_translation_prompt_preset("en", "fr");
+        assert!(preset_en.main_prompt.contains("French"));
+        assert!(preset_en.main_prompt.contains("into French"));
+    }
+
+    #[test]
+    fn default_preset_is_worded_in_the_ui_language_not_the_target_language() {
+        // ui_lang == "en", target_language == "de": the prompt wording must be English
+        // ("Translate ... into German"), not German — the target language only fills the
+        // "{lang}" placeholder (docs/plans/translation-polish.md AP 2).
+        let mut settings = FrontendSettings::default_for_locale("en");
+        settings.mode = "translation".to_string();
+        settings.translation.target_language = "de".to_string();
+
+        sync_translation_prompt_with_active_preset(&mut settings);
+
+        assert!(settings.custom_prompt.contains("Translate"));
+        assert!(settings.custom_prompt.contains("German"));
+        assert!(!settings.custom_prompt.contains("Übersetze"));
+    }
+
+    #[test]
+    fn switching_ui_language_refreshes_default_translation_system_prompt_but_not_user_edit() {
+        let mut settings = FrontendSettings::default_for_locale("de");
+        settings.mode = "translation".to_string();
+        settings.translation.target_language = "fr".to_string();
+        sync_translation_prompt_with_active_preset(&mut settings);
+        assert_eq!(
+            settings.translation.system_prompt,
+            default_translation_system_prompt_for_locale("de")
+        );
+
+        // UI language switches to English: still the (untouched) default, so it refreshes.
+        settings.ui_language = "en".to_string();
+        sync_translation_prompt_with_active_preset(&mut settings);
+        assert_eq!(
+            settings.translation.system_prompt,
+            default_translation_system_prompt_for_locale("en")
+        );
+
+        // A user edit must survive further UI-language switches.
+        settings.translation.system_prompt = "My own custom system prompt".to_string();
+        settings.ui_language = "fr".to_string();
+        sync_translation_prompt_with_active_preset(&mut settings);
+        assert_eq!(settings.translation.system_prompt, "My own custom system prompt");
     }
 
     #[test]
@@ -5356,5 +5593,36 @@ mod translation_mode_migration_tests {
         settings.mode = "correction".to_string();
         super::sync_custom_prompt_with_active_preset(&mut settings).expect("sync should succeed");
         assert_eq!(settings.custom_prompt, correction_prompt);
+    }
+
+    #[test]
+    fn free_text_target_language_is_remembered_across_language_switches() {
+        let mut settings = FrontendSettings::default_for_locale("de");
+        settings.mode = "translation".to_string();
+        settings.translation.target_language = "Schweizer Hochdeutsch".to_string();
+        sync_translation_prompt_with_active_preset(&mut settings);
+
+        assert_eq!(settings.translation.custom_languages, vec!["Schweizer Hochdeutsch".to_string()]);
+
+        // Switching to a known EU language keeps the remembered custom language around.
+        settings.translation.target_language = "fr".to_string();
+        sync_translation_prompt_with_active_preset(&mut settings);
+        assert_eq!(settings.translation.custom_languages, vec!["Schweizer Hochdeutsch".to_string()]);
+    }
+
+    #[test]
+    fn free_text_target_language_is_not_duplicated_or_kept_as_known_code() {
+        let mut settings = FrontendSettings::default_for_locale("en");
+        settings.mode = "translation".to_string();
+        settings.translation.target_language = "Klingon".to_string();
+        sync_translation_prompt_with_active_preset(&mut settings);
+        sync_translation_prompt_with_active_preset(&mut settings);
+        assert_eq!(settings.translation.custom_languages, vec!["Klingon".to_string()]);
+
+        // A stray KNOWN_LANGUAGES entry hand-edited into custom_languages gets dropped.
+        settings.translation.custom_languages.push("de".to_string());
+        settings.translation.target_language = "fr".to_string();
+        sync_translation_prompt_with_active_preset(&mut settings);
+        assert_eq!(settings.translation.custom_languages, vec!["Klingon".to_string()]);
     }
 }

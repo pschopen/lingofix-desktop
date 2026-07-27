@@ -3,14 +3,14 @@ using Lingofix.Backend.Documents;
 namespace Lingofix.Backend.Tests;
 
 /// <summary>
-/// Records every call made through <see cref="ILlmClient"/> so Phase 3 context/prompt
-/// routing can be asserted without making real HTTP requests. Not thread-safe by
-/// design: tests that use it force serial execution (SpeedMode.Manual, MaxParallelRequests
-/// = 1) so call order is deterministic.
+/// Records every call made through <see cref="ILlmClient"/> so prompt routing can be
+/// asserted without making real HTTP requests. Not thread-safe by design: tests that use
+/// it force serial execution (SpeedMode.Manual, MaxParallelRequests = 1) so call order is
+/// deterministic.
 /// </summary>
 internal sealed class FakeLlmClient : ILlmClient
 {
-    public sealed record Call(string Input, string? PromptOverride, string? Context, bool IsBatch);
+    public sealed record Call(string Input, string? PromptOverride, bool IsBatch);
 
     public List<Call> Calls { get; } = [];
 
@@ -24,11 +24,10 @@ internal sealed class FakeLlmClient : ILlmClient
     public Task<string> CorrectAsync(
         string input,
         string? promptOverride = null,
-        string? context = null,
         IConcurrencyGate? gate = null,
         CancellationToken cancellationToken = default)
     {
-        var call = new Call(input, promptOverride, context, IsBatch: false);
+        var call = new Call(input, promptOverride, IsBatch: false);
         Calls.Add(call);
         return Task.FromResult(ResponseFactory?.Invoke(call) ?? input);
     }
@@ -37,11 +36,10 @@ internal sealed class FakeLlmClient : ILlmClient
         string input,
         string batchPrompt,
         string? promptOverride = null,
-        string? context = null,
         IConcurrencyGate? gate = null,
         CancellationToken cancellationToken = default)
     {
-        var call = new Call(input, promptOverride, context, IsBatch: true);
+        var call = new Call(input, promptOverride, IsBatch: true);
         Calls.Add(call);
         return Task.FromResult(ResponseFactory?.Invoke(call) ?? input);
     }

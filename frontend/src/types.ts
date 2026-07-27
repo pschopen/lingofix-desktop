@@ -135,6 +135,13 @@ export interface TranslationSettings {
   prompt_presets: TranslationPromptPreset[];
   active_preset_ids: Record<string, string>;
   footnote_prompt: string;
+  // Translation's own system prompt, separate from the top-level system_prompt (which is
+  // correction-only) — see AdvancedSection's "Übersetzung" heading.
+  system_prompt: string;
+  // Free-text "other language" entries the user has typed in, remembered across target-
+  // language switches (see docs/plans/translation-polish.md AP 3). Never contains a
+  // EU_LANGUAGE_CODES entry; kept in sync by the Rust backend.
+  custom_languages: string[];
 }
 
 export interface Settings {

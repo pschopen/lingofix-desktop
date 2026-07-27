@@ -14,7 +14,7 @@ import {
   ReasoningEffort,
 } from '../../types';
 import { EU_LANGUAGE_CODES, LANGUAGE_LABELS, Language, t } from '../../i18n';
-import { FieldGroup, SelectField, ToggleRow } from './shared';
+import { AutoGrowTextarea, FieldGroup, SelectField, ToggleRow } from './shared';
 
 interface AdvancedSectionProps {
   formData: Settings;
@@ -67,9 +67,44 @@ export function AdvancedSection({
   onOpenDebugLog,
 }: AdvancedSectionProps) {
   const isOllama = formData.provider === 'ollama';
+  const headingClass = `text-sm font-semibold uppercase tracking-wide ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`;
 
   return (
     <>
+      <div>
+        <h3 className={headingClass}>{t('settings.section.correction', lang)}</h3>
+        <div className="mt-3">
+          <FieldGroup label={t('settings.system_prompt', lang)} hint={t('settings.system_prompt.hint', lang)} isDarkMode={isDarkMode}>
+            <AutoGrowTextarea
+              value={formData.system_prompt}
+              onChange={(e) => setFormData((prev) => ({ ...prev, system_prompt: e.target.value }))}
+              placeholder={t('settings.system_prompt.placeholder', lang)}
+              className={`textarea !text-base min-h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
+            />
+          </FieldGroup>
+        </div>
+      </div>
+
+      <div className={`pt-3 border-t ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
+        <h3 className={headingClass}>{t('settings.section.translation', lang)}</h3>
+        <div className="mt-3">
+          <FieldGroup label={t('settings.system_prompt', lang)} hint={t('settings.system_prompt.hint', lang)} isDarkMode={isDarkMode}>
+            <AutoGrowTextarea
+              value={formData.translation.system_prompt}
+              onChange={(e) => setFormData((prev) => ({
+                ...prev,
+                translation: { ...prev.translation, system_prompt: e.target.value },
+              }))}
+              placeholder={t('settings.system_prompt.placeholder', lang)}
+              className={`textarea !text-base min-h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
+            />
+          </FieldGroup>
+        </div>
+      </div>
+
+      <div className={`pt-3 border-t space-y-4 ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
+        <h3 className={headingClass}>{t('settings.section.general', lang)}</h3>
+
       <FieldGroup label={`${t('settings.temperature', lang)}: ${formData.temperature}`} isDarkMode={isDarkMode}>
         <input
           type="range"
@@ -107,15 +142,6 @@ export function AdvancedSection({
           </FieldGroup>
         </div>
       )}
-
-      <FieldGroup label={t('settings.system_prompt', lang)} hint={t('settings.system_prompt.hint', lang)} isDarkMode={isDarkMode}>
-        <textarea
-          value={formData.system_prompt}
-          onChange={(e) => setFormData((prev) => ({ ...prev, system_prompt: e.target.value }))}
-          placeholder={t('settings.system_prompt.placeholder', lang)}
-          className={`textarea !text-base h-28 ${isDarkMode ? '!bg-surface-700 !border-surface-600 !text-surface-100 placeholder:!text-surface-500' : ''}`}
-        />
-      </FieldGroup>
 
       <FieldGroup label={`${t('settings.docx.chunk_size', lang)}: ${formData.docx.chunk_size}`} isDarkMode={isDarkMode}>
         <input
@@ -379,6 +405,7 @@ export function AdvancedSection({
             </p>
           )}
         </FieldGroup>
+      </div>
       </div>
     </>
   );

@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke, listen } from './lib/bridge';
-import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Languages, Moon, Sun, XCircle, Check, ChevronDown, ChevronUp, Terminal, ExternalLink } from 'lucide-react';
+import { Settings as SettingsIcon, Loader2, Trash2, AlertCircle, AlertTriangle, X, FileText, CheckCircle2, FolderOpen, Sparkles, Languages, Moon, Sun, XCircle, Check, Copy, ChevronDown, ChevronUp, Terminal, ExternalLink } from 'lucide-react';
 import { TextEditor } from './components/TextEditor';
 import { SettingsModal } from './components/SettingsModal';
 import Onboarding from './components/Onboarding';
 import { Settings, FontSize, FONT_SIZE_PX, DocxFile, PROVIDER_SENTINEL_UNCONFIGURED, OperationMode } from './types';
-import { Language, t, detectLanguage, EU_LANGUAGE_CODES, LANGUAGE_LABELS } from './i18n';
+import { Language, t, detectLanguage, EU_LANGUAGE_CODES, languageDisplayName } from './i18n';
 import { useDocxState } from './hooks/useDocxState';
 import { useCorrectionState } from './hooks/useCorrectionState';
 
@@ -147,6 +147,8 @@ function App() {
     appendDocxLog,
   } = useDocxState();
   const [translationCopied, setTranslationCopied] = useState(false);
+  const [showLanguageMenu, setShowLanguageMenu] = useState(false);
+  const languageMenuRef = useRef<HTMLDivElement>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -508,6 +510,39 @@ function App() {
       logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [docxLogs, showLogs]);
+
+  // Close the target-language dropdown once a translation run starts, so it doesn't
+  // reappear stale the next time the idle toolbar re-renders.
+  useEffect(() => {
+    if (isCorrecting) {
+      setShowLanguageMenu(false);
+    }
+  }, [isCorrecting]);
+
+  // Close the target-language dropdown on outside click or Escape
+  useEffect(() => {
+    if (!showLanguageMenu) {
+      return;
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (languageMenuRef.current && !languageMenuRef.current.contains(event.target as Node)) {
+        setShowLanguageMenu(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowLanguageMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showLanguageMenu]);
 
   const handleTextChange = (newText: string) => {
     setText(newText);
@@ -881,10 +916,39 @@ function App() {
 
   const isDocxMode = docxFiles.length > 0;
   const hasText = text.trim().length > 0;
+  const translateDisabled = isCorrecting || (!hasText && docxFiles.length === 0);
+  const targetLanguageCode = settings?.translation.target_language ?? '';
+  const targetLanguageLabel = targetLanguageCode
+    ? languageDisplayName(lang, targetLanguageCode)
+    : t('mode.target_language.other', lang);
+  // EU languages sorted by their name in the current UI language (not alphabetically by
+  // code), so e.g. "Tschechisch" sits where a German speaker expects it — see
+  // docs/plans/translation-polish.md AP 4.
+  const sortedEuLanguageCodes = useMemo(
+    () => [...EU_LANGUAGE_CODES].sort((a, b) => languageDisplayName(lang, a).localeCompare(languageDisplayName(lang, b), lang)),
+    [lang],
+  );
+  // custom_languages is kept in sync by the Rust backend (see sync_translation_prompt_with_
+  // active_preset), but defensively also include the currently active target language here
+  // in case it hasn't round-tripped through a save yet.
+  const customTargetLanguages = useMemo(() => {
+    const remembered = settings?.translation.custom_languages ?? [];
+    const active = settings?.translation.target_language ?? '';
+    if (!active || EU_LANGUAGE_CODES.includes(active as Language)) {
+      return remembered;
+    }
+    return remembered.some((entry) => entry.toLowerCase() === active.toLowerCase())
+      ? remembered
+      : [...remembered, active];
+  }, [settings?.translation.custom_languages, settings?.translation.target_language]);
 
   const handleToggleDarkMode = () => {
     document.documentElement.classList.add('theme-switch-no-transition');
-    setIsDarkMode((v) => !v);
+    setIsDarkMode((v) => {
+      const next = !v;
+      document.documentElement.classList.toggle('dark', next);
+      return next;
+    });
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         document.documentElement.classList.remove('theme-switch-no-transition');
@@ -1048,7 +1112,7 @@ function App() {
                   {/* Log Toggle Button */}
                   <button
                     onClick={() => setShowLogs(!showLogs)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm font-medium transition-colors ${
+                    className={`btn-sm ${
                       showLogs 
                         ? (isDarkMode ? 'bg-surface-700 text-accent-400' : 'bg-surface-200 text-accent-600')
                         : (isDarkMode ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-800' : 'text-surface-500 hover:text-surface-700 hover:bg-surface-100')
@@ -1061,11 +1125,7 @@ function App() {
                 </div>
               ) : showDiff ? (
                 <div className="flex items-center gap-3">
-                  {settings.mode === 'translation' ? (
-                    <span className="inline-flex items-center gap-1.5 text-base">
-                      <span className={isDarkMode ? 'text-surface-300' : 'text-surface-600'}>{t('translation.result_label', lang)}</span>
-                    </span>
-                  ) : (
+                  {settings.mode !== 'translation' && (
                     <>
                       <span className="inline-flex items-center gap-1.5 text-base">
                         <span className={`w-2.5 h-2.5 rounded-sm ${isDarkMode ? 'bg-red-900/40 border-red-800/60' : 'bg-red-100 border-red-200'} border`}></span>
@@ -1084,85 +1144,71 @@ function App() {
                     </span>
                   )}
                 </div>
-              ) : isDocxMode ? (
-                <div className="flex items-center gap-3">
-                  <span className={`inline-flex items-center gap-2 text-base font-medium ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
-                    <FileText size={16} />
-                    {isCorrecting && docxFile
-                      ? `${docxFile.name} (${activeDocxFileIndex + 1}/${docxFiles.length})`
-                      : t('editor.files_selected', lang).replace('{count}', String(docxFiles.length))}
-                  </span>
-                  <button
-                    onClick={() => setShowLogs(!showLogs)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm font-medium transition-colors ${
-                      showLogs
-                        ? (isDarkMode ? 'bg-surface-700 text-accent-400' : 'bg-surface-200 text-accent-600')
-                        : (isDarkMode ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-800' : 'text-surface-500 hover:text-surface-700 hover:bg-surface-100')
-                    }`}
-                  >
-                    <Terminal size={14} />
-                    <span>{docxLogs.length}</span>
-                    {showLogs ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  </button>
-                </div>
-              ) : hasText ? (
-                <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
-                  {text.trim().split(/\s+/).filter(w => w.length > 0).length} {t('stats.words', lang)}, {text.length} {t('stats.chars', lang)}
-                </span>
               ) : (
-                <div className="flex items-center gap-2 min-w-0">
-                  {/* Mode toggle: visually prominent since it changes core functionality
-                      (correction vs. translation), not a subordinate setting. */}
-                  <div className={`inline-flex rounded-lg p-0.5 flex-shrink-0 ${isDarkMode ? 'bg-surface-700' : 'bg-surface-100'}`}>
+                <div className="flex items-center gap-3 min-w-0">
+                  {/* Mode toggle: always visible (not just in the empty state) so switching
+                      correction/translation never requires clearing the input first.
+                      Styled as a neutral segmented control (not a filled accent pill) so the
+                      accent color stays reserved for primary action buttons. */}
+                  <div className={`inline-flex rounded-lg p-1 gap-1 flex-shrink-0 ${isDarkMode ? 'bg-surface-900' : 'bg-surface-100'}`}>
                     <button
                       type="button"
                       onClick={() => void handleModeChange('correction')}
                       aria-pressed={settings.mode === 'correction'}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      aria-label={t('mode.correction', lang)}
+                      title={t('mode.correction', lang)}
+                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${
                         settings.mode === 'correction'
-                          ? 'bg-accent-600 text-white shadow-premium'
-                          : (isDarkMode ? 'text-surface-300 hover:text-surface-100' : 'text-surface-600 hover:text-surface-800')
+                          ? (isDarkMode ? 'bg-surface-700 text-accent-400 shadow-sm' : 'bg-white text-accent-600 shadow-sm')
+                          : (isDarkMode ? 'text-surface-400 hover:text-surface-200' : 'text-surface-500 hover:text-surface-800')
                       }`}
                     >
-                      <Sparkles size={14} />
+                      <Sparkles size={15} />
                       {t('mode.correction', lang)}
                     </button>
                     <button
                       type="button"
                       onClick={() => void handleModeChange('translation')}
                       aria-pressed={settings.mode === 'translation'}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      aria-label={t('mode.translation', lang)}
+                      title={t('mode.translation', lang)}
+                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${
                         settings.mode === 'translation'
-                          ? 'bg-accent-600 text-white shadow-premium'
-                          : (isDarkMode ? 'text-surface-300 hover:text-surface-100' : 'text-surface-600 hover:text-surface-800')
+                          ? (isDarkMode ? 'bg-surface-700 text-accent-400 shadow-sm' : 'bg-white text-accent-600 shadow-sm')
+                          : (isDarkMode ? 'text-surface-400 hover:text-surface-200' : 'text-surface-500 hover:text-surface-800')
                       }`}
                     >
-                      <Languages size={14} />
+                      <Languages size={15} />
                       {t('mode.translation', lang)}
                     </button>
                   </div>
 
-                  {settings.mode === 'translation' && (
-                    <select
-                      value={settings.translation.target_language}
-                      onChange={(e) => void handleTargetLanguageChange(e.target.value)}
-                      aria-label={t('mode.target_language', lang)}
-                      className={`text-sm font-medium rounded-lg px-2 py-1.5 border-transparent cursor-pointer flex-shrink-0 ${
-                        isDarkMode ? 'bg-surface-700 text-surface-200' : 'bg-surface-100 text-surface-700'
-                      }`}
-                    >
-                      {!EU_LANGUAGE_CODES.includes(settings.translation.target_language as Language) && (
-                        <option value={settings.translation.target_language}>
-                          {settings.translation.target_language || t('mode.target_language.other', lang)}
-                        </option>
-                      )}
-                      {EU_LANGUAGE_CODES.map((code) => (
-                        <option key={code} value={code}>
-                          {LANGUAGE_LABELS[code]}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                  {isDocxMode ? (
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className={`inline-flex items-center gap-2 text-base font-medium ${isDarkMode ? 'text-accent-400' : 'text-accent-600'}`}>
+                        <FileText size={16} />
+                        {isCorrecting && docxFile
+                          ? `${docxFile.name} (${activeDocxFileIndex + 1}/${docxFiles.length})`
+                          : t('editor.files_selected', lang).replace('{count}', String(docxFiles.length))}
+                      </span>
+                      <button
+                        onClick={() => setShowLogs(!showLogs)}
+                        className={`btn-sm ${
+                          showLogs
+                            ? (isDarkMode ? 'bg-surface-700 text-accent-400' : 'bg-surface-200 text-accent-600')
+                            : (isDarkMode ? 'text-surface-400 hover:text-surface-200 hover:bg-surface-800' : 'text-surface-500 hover:text-surface-700 hover:bg-surface-100')
+                        }`}
+                      >
+                        <Terminal size={14} />
+                        <span>{docxLogs.length}</span>
+                        {showLogs ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </button>
+                    </div>
+                  ) : hasText ? (
+                    <span className={`text-base ${isDarkMode ? 'text-surface-400' : 'text-surface-500'}`}>
+                      {text.trim().split(/\s+/).filter(w => w.length > 0).length} {t('stats.words', lang)}, {text.length} {t('stats.chars', lang)}
+                    </span>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -1171,57 +1217,139 @@ function App() {
             <div className="flex items-center gap-2 ml-4 flex-shrink-0">
               {isStreaming || (isCorrecting && docxProgress) ? (
                 <>
-                  <button onClick={handleStop} className="btn-danger !py-2 !text-base">
+                  <button onClick={handleStop} className="btn-danger">
                     <X size={16} strokeWidth={2.5} />
                     {t('button.stop', lang)}
                   </button>
                 </>
               ) : showDiff ? (
                 <>
-                  <button onClick={handleNew} className="btn-secondary !py-2 !text-base">
+                  <button onClick={handleNew} className="btn-secondary">
                     <Trash2 size={16} />
                     {t('button.clear', lang)}
                   </button>
-                  {settings.mode === 'translation' && (
-                    <button onClick={() => void handleCopyTranslation()} className="btn-secondary !py-2 !text-base">
-                      <Check size={16} strokeWidth={2.5} />
-                      {translationCopied ? t('translation.copied', lang) : t('translation.copy_button', lang)}
-                    </button>
+                  {settings.mode === 'translation' ? (
+                    correctedText && (
+                      <button onClick={() => void handleCopyTranslation()} className="btn-secondary">
+                        {translationCopied ? <Check size={16} strokeWidth={2.5} /> : <Copy size={16} />}
+                        {translationCopied ? t('translation.copied', lang) : t('translation.copy_button', lang)}
+                      </button>
+                    )
+                  ) : (
+                    <>
+                      <button onClick={handleReject} className="btn-secondary">
+                        <XCircle size={16} />
+                        {t('button.reject', lang)}
+                      </button>
+                      <button onClick={handleApply} className="btn-success">
+                        <Check size={16} strokeWidth={2.5} />
+                        {t('button.apply', lang)}
+                      </button>
+                    </>
                   )}
-                  <button onClick={handleReject} className="btn-secondary !py-2 !text-base">
-                    <XCircle size={16} />
-                    {t('button.reject', lang)}
-                  </button>
-                  <button onClick={handleApply} className="btn-success !py-2 !text-base">
-                    <Check size={16} strokeWidth={2.5} />
-                    {t('button.apply', lang)}
-                  </button>
                 </>
               ) : (
                 <>
                   {(hasText || docxFiles.length > 0) && (
-                  <button onClick={handleNew} className="btn-secondary !py-2 !text-base">
+                  <button onClick={handleNew} className="btn-secondary">
                       <Trash2 size={16} />
                       {t('button.clear', lang)}
                     </button>
                   )}
-                  <button
-                    onClick={handleCorrect}
-                    disabled={isCorrecting || (!hasText && docxFiles.length === 0)}
-                    className="btn-secondary !py-2 !text-base"
-                  >
-                    {isCorrecting ? (
-                      <>
-                        <Loader2 className="animate-spin" size={16} />
-                        {settings.mode === 'translation' ? t('button.translating', lang) : t('button.starting', lang)}
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} />
-                        {settings.mode === 'translation' ? t('button.translate', lang) : t('button.correct', lang)}
-                      </>
-                    )}
-                  </button>
+                  {settings.mode === 'translation' ? (
+                    <div className="relative inline-flex" ref={languageMenuRef}>
+                      <div className="inline-flex rounded-lg shadow-premium-md">
+                        <button
+                          onClick={handleCorrect}
+                          disabled={translateDisabled}
+                          className="btn-primary !rounded-r-none !shadow-none hover:!translate-y-0 border-r border-white/20"
+                        >
+                          {isCorrecting ? (
+                            <>
+                              <Loader2 className="animate-spin" size={16} />
+                              {t('button.translating', lang)}
+                            </>
+                          ) : (
+                            <>
+                              <Languages size={16} />
+                              <span>→ {targetLanguageLabel}</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowLanguageMenu((v) => !v)}
+                          disabled={isCorrecting}
+                          aria-label={t('mode.target_language', lang)}
+                          aria-haspopup="listbox"
+                          aria-expanded={showLanguageMenu}
+                          className={`btn-primary !rounded-l-none !shadow-none hover:!translate-y-0 !px-2 ${translateDisabled ? 'opacity-50' : ''}`}
+                        >
+                          <ChevronDown size={14} className={`transition-transform duration-150 ${showLanguageMenu ? 'rotate-180' : ''}`} />
+                        </button>
+                      </div>
+                      {showLanguageMenu && (
+                        <div
+                          role="listbox"
+                          aria-label={t('mode.target_language', lang)}
+                          className={`absolute right-0 top-full mt-1 z-20 w-44 rounded-lg border shadow-premium-lg py-1 max-h-64 overflow-y-auto ${
+                            isDarkMode ? 'bg-surface-800 border-surface-700' : 'bg-white border-surface-200'
+                          }`}
+                        >
+                          {customTargetLanguages.map((customLanguage) => (
+                            <button
+                              key={customLanguage}
+                              type="button"
+                              role="option"
+                              aria-selected={customLanguage === settings.translation.target_language}
+                              onClick={() => { void handleTargetLanguageChange(customLanguage); setShowLanguageMenu(false); }}
+                              className={`w-full text-left px-3 py-1.5 text-sm truncate ${
+                                customLanguage === settings.translation.target_language
+                                  ? (isDarkMode ? 'bg-surface-700 text-accent-400' : 'bg-accent-50 text-accent-600')
+                                  : (isDarkMode ? 'text-surface-200 hover:bg-surface-700' : 'text-surface-700 hover:bg-surface-50')
+                              }`}
+                            >
+                              {customLanguage}
+                            </button>
+                          ))}
+                          {sortedEuLanguageCodes.map((code) => (
+                            <button
+                              key={code}
+                              type="button"
+                              role="option"
+                              aria-selected={code === settings.translation.target_language}
+                              onClick={() => { void handleTargetLanguageChange(code); setShowLanguageMenu(false); }}
+                              className={`w-full text-left px-3 py-1.5 text-sm ${
+                                code === settings.translation.target_language
+                                  ? (isDarkMode ? 'bg-surface-700 text-accent-400' : 'bg-accent-50 text-accent-600')
+                                  : (isDarkMode ? 'text-surface-200 hover:bg-surface-700' : 'text-surface-700 hover:bg-surface-50')
+                              }`}
+                            >
+                              {languageDisplayName(lang, code)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={handleCorrect}
+                      disabled={isCorrecting || (!hasText && docxFiles.length === 0)}
+                      className="btn-primary"
+                    >
+                      {isCorrecting ? (
+                        <>
+                          <Loader2 className="animate-spin" size={16} />
+                          {t('button.starting', lang)}
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={16} />
+                          {t('button.correct', lang)}
+                        </>
+                      )}
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -1321,7 +1449,7 @@ function App() {
               </div>
               <button
                 onClick={() => invoke('open_folder', { path: result.outputPath })}
-                className={`btn-ghost !py-2 !px-3 !text-base flex-shrink-0 ${
+                className={`btn-ghost !px-3 flex-shrink-0 ${
                   isDarkMode
                     ? '!text-emerald-300 hover:!bg-emerald-900/30'
                     : '!text-emerald-700 hover:!bg-emerald-100'
@@ -1375,7 +1503,7 @@ function App() {
                 </p>
                 <button
                   onClick={() => handleOpenUpdateUrl(updateNotice.url)}
-                  className={`btn-ghost !px-2.5 !py-1.5 !mt-2 !text-sm ${
+                  className={`btn-sm !mt-2 ${
                     isDarkMode
                       ? '!text-sky-300 hover:!bg-sky-900/30'
                       : '!text-sky-700 hover:!bg-sky-100'
@@ -1387,7 +1515,7 @@ function App() {
               </div>
               <button
                 onClick={() => setUpdateNotice(null)}
-                className="btn-ghost !p-1.5 !rounded-lg flex-shrink-0"
+                className="btn-ghost !p-1.5 flex-shrink-0"
               >
                 <X size={16} />
               </button>
@@ -1415,7 +1543,7 @@ function App() {
               </div>
               <button
                 onClick={() => setInfoMessage(null)}
-                className="btn-ghost !p-1.5 !rounded-lg flex-shrink-0"
+                className="btn-ghost !p-1.5 flex-shrink-0"
               >
                 <X size={16} />
               </button>
@@ -1442,7 +1570,7 @@ function App() {
                 </p>
                 <button
                   onClick={() => setIsSettingsOpen(true)}
-                  className={`btn-ghost !px-2.5 !py-1.5 !mt-2 !text-sm ${
+                  className={`btn-sm !mt-2 ${
                     isDarkMode
                       ? '!text-amber-300 hover:!bg-amber-900/30'
                       : '!text-amber-700 hover:!bg-amber-100'
@@ -1521,13 +1649,13 @@ function App() {
             }`}>
               <button
                 onClick={handleOpenXmlConsentCancel}
-                className="btn-secondary !text-base"
+                className="btn-secondary"
               >
                 {t('docx.openxml.accept_existing.cancel', lang)}
               </button>
               <button
                 onClick={handleOpenXmlConsentContinue}
-                className="btn-primary !text-base"
+                className="btn-primary"
               >
                 {t('docx.openxml.accept_existing.continue', lang)}
               </button>
@@ -1570,13 +1698,13 @@ function App() {
             }`}>
               <button
                 onClick={handleReasoningUnsupportedCancel}
-                className="btn-secondary !text-base"
+                className="btn-secondary"
               >
                 {t('reasoning.unsupported.cancel', lang)}
               </button>
               <button
                 onClick={handleReasoningUnsupportedContinue}
-                className="btn-primary !text-base"
+                className="btn-primary"
               >
                 {t('reasoning.unsupported.continue', lang)}
               </button>
@@ -1609,7 +1737,7 @@ function App() {
               </div>
               <button
                 onClick={() => setError(null)}
-                className="btn-ghost !p-1.5 !rounded-lg flex-shrink-0"
+                className="btn-ghost !p-1.5 flex-shrink-0"
               >
                 <X size={16} />
               </button>
@@ -1621,7 +1749,7 @@ function App() {
             }`}>
               <button
                 onClick={() => setError(null)}
-                className="btn-primary !text-base"
+                className="btn-primary"
               >
                 {t('error.close', lang)}
               </button>

@@ -13,6 +13,7 @@ import {
   DocxCorrectionScopePart,
 } from '../types';
 import {
+  EU_LANGUAGE_CODES,
   Language,
   defaultCustomPrompt,
   defaultSystemPrompt,
@@ -578,8 +579,8 @@ export function SettingsModal({
     id: `default-${targetLanguageSlug(targetLanguage)}`,
     name: 'Standard',
     locale: targetLanguageSlug(targetLanguage),
-    main_prompt: defaultTranslationMainPrompt(targetLanguage),
-    footnote_prompt: defaultTranslationFootnotePrompt(targetLanguage),
+    main_prompt: defaultTranslationMainPrompt(lang, targetLanguage),
+    footnote_prompt: defaultTranslationFootnotePrompt(lang, targetLanguage),
   });
 
   const translationPresetsForLanguage = (
@@ -625,6 +626,60 @@ export function SettingsModal({
 
     setTranslationPresetMessage('');
     setFormData(ensureTranslationLanguagePreset(formData, targetLanguage));
+  };
+
+  // Permanently remembers a free-text "other language" and makes it the active target
+  // language (docs/plans/translation-polish.md AP 3 follow-up: adding a custom language is
+  // an explicit action here in Settings, not a side effect of typing — the main window can
+  // only select an already-added language, never add or remove one).
+  const handleAddTranslationLanguage = (rawLanguage: string) => {
+    if (!formData) {
+      return;
+    }
+
+    const trimmed = rawLanguage.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const isKnownCode = EU_LANGUAGE_CODES.includes(trimmed.toLowerCase() as Language);
+    const targetLanguage = isKnownCode ? trimmed.toLowerCase() : trimmed;
+    const nextCustomLanguages = isKnownCode || formData.translation.custom_languages.some(
+      (existing) => existing.trim().toLowerCase() === trimmed.toLowerCase(),
+    )
+      ? formData.translation.custom_languages
+      : [...formData.translation.custom_languages, trimmed];
+
+    setTranslationPresetMessage('');
+    setFormData(ensureTranslationLanguagePreset(
+      { ...formData, translation: { ...formData.translation, custom_languages: nextCustomLanguages } },
+      targetLanguage,
+    ));
+  };
+
+  // Removes a remembered "other language" entry (docs/plans/translation-polish.md AP 3).
+  // If it's the currently selected target language, falls back to English first so the
+  // Rust-side sync doesn't just re-add it on save.
+  const handleRemoveTranslationLanguage = (language: string) => {
+    if (!formData) {
+      return;
+    }
+
+    const nextCustomLanguages = formData.translation.custom_languages.filter(
+      (existing) => existing.trim().toLowerCase() !== language.trim().toLowerCase(),
+    );
+    const withoutLanguage: Settings = {
+      ...formData,
+      translation: { ...formData.translation, custom_languages: nextCustomLanguages },
+    };
+
+    const isActive = formData.translation.target_language.trim().toLowerCase() === language.trim().toLowerCase();
+    if (isActive) {
+      setTranslationPresetMessage('');
+      setFormData(ensureTranslationLanguagePreset(withoutLanguage, 'en'));
+    } else {
+      setFormData(withoutLanguage);
+    }
   };
 
   const handleSelectTranslationPreset = (presetId: string) => {
@@ -778,8 +833,8 @@ export function SettingsModal({
         id: createPresetId(),
         name: trimmedName,
         locale: slug,
-        main_prompt: activeNow?.main_prompt ?? defaultTranslationMainPrompt(formData.translation.target_language),
-        footnote_prompt: activeNow?.footnote_prompt ?? defaultTranslationFootnotePrompt(formData.translation.target_language),
+        main_prompt: activeNow?.main_prompt ?? defaultTranslationMainPrompt(lang, formData.translation.target_language),
+        footnote_prompt: activeNow?.footnote_prompt ?? defaultTranslationFootnotePrompt(lang, formData.translation.target_language),
       };
 
       setTranslationPresetMessage('');
@@ -1096,6 +1151,8 @@ export function SettingsModal({
                   lang={lang}
                   menuBoundaryRef={modalPanelRef}
                   onTargetLanguageChange={handleTargetLanguageChange}
+                  onAddLanguage={handleAddTranslationLanguage}
+                  onRemoveLanguage={handleRemoveTranslationLanguage}
                   visiblePresets={visibleTranslationPresets}
                   activePresetId={activeTranslationPresetId}
                   activePresetName={getActiveTranslationPreset(formData)?.name ?? ''}
