@@ -619,6 +619,23 @@ export function SettingsModal({
     };
   };
 
+  // Flips the experimental-feature gate; turning it off also forces mode back to
+  // "correction" so the (now-hidden) main-window mode switch can't leave the app stuck
+  // showing translation UI (mirrors the Rust-side safeguard in
+  // sync_translation_prompt_with_active_preset).
+  const handleToggleTranslationEnabled = () => {
+    if (!formData) {
+      return;
+    }
+
+    const nextEnabled = !formData.translation_enabled;
+    setFormData({
+      ...formData,
+      translation_enabled: nextEnabled,
+      mode: nextEnabled ? formData.mode : 'correction',
+    });
+  };
+
   const handleTargetLanguageChange = (targetLanguage: string) => {
     if (!formData) {
       return;
@@ -1068,7 +1085,10 @@ export function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop animate-fade-in">
-      <div ref={modalPanelRef} className={`card w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in mx-4 ${isDarkMode ? '!bg-surface-800 !border-surface-700' : ''}`}>
+      {/* Fixed height (not just max-height) so switching between sections of very different
+          length (e.g. General vs. Advanced) doesn't resize the dialog — it always uses the
+          height that was previously only the cap. */}
+      <div ref={modalPanelRef} className={`card w-full max-w-4xl h-[90vh] overflow-hidden flex flex-col animate-scale-in mx-4 ${isDarkMode ? '!bg-surface-800 !border-surface-700' : ''}`}>
         {/* Header */}
         <div className={`flex items-center justify-between px-6 py-4 border-b ${isDarkMode ? 'border-surface-700' : 'border-surface-100'}`}>
           <h2 className={`text-base font-semibold ${isDarkMode ? 'text-surface-100' : 'text-surface-900'}`}>
@@ -1150,6 +1170,7 @@ export function SettingsModal({
                   isDarkMode={isDarkMode}
                   lang={lang}
                   menuBoundaryRef={modalPanelRef}
+                  onToggleEnabled={handleToggleTranslationEnabled}
                   onTargetLanguageChange={handleTargetLanguageChange}
                   onAddLanguage={handleAddTranslationLanguage}
                   onRemoveLanguage={handleRemoveTranslationLanguage}

@@ -1048,30 +1048,30 @@ const DEFAULT_TRANSLATION_PRESET_NAME: &str = "Standard";
 /// AP 2). Must stay textually identical to defaultTranslationSystemPrompts in i18n.ts.
 fn default_translation_system_prompt_for_locale(ui_lang: &str) -> String {
     match normalize_locale(ui_lang) {
-        "bg" => "Ти си професионален преводач. Изведи само превода — без коментари, без обяснения, без кавички около изхода. Запази абзацната и изреченската структура, доколкото е възможно. Използвай типографските конвенции на целевия език (кавички, тирета). Собствените имена, цитатите на оригиналния език и номерата на дела остават непреведени.",
-        "cs" => "Jsi profesionální překladatel. Uveď pouze překlad — žádné komentáře, žádná vysvětlení, žádné uvozovky kolem výstupu. Zachovej strukturu odstavců a vět, pokud je to možné. Použij typografické konvence cílového jazyka (uvozovky, pomlčky). Vlastní jména, citace v původním jazyce a spisové značky zůstávají nepřeloženy.",
-        "da" => "Du er en professionel oversætter. Angiv kun oversættelsen — ingen kommentarer, ingen forklaringer, ingen anførselstegn omkring outputtet. Bevar afsnits- og sætningsstrukturen så vidt muligt. Brug målsprogets typografiske konventioner (anførselstegn, tankestreger). Egennavne, citater på originalsproget og sagsnumre forbliver uoversatte.",
-        "de" => "Du bist ein professioneller Übersetzer. Gib ausschließlich die Übersetzung aus — keine Kommentare, keine Erklärungen, keine Anführungszeichen um die Ausgabe. Übernimm die Absatz- und Satzstruktur so weit wie möglich. Verwende die Typografie-Konventionen der Zielsprache (Anführungszeichen, Gedankenstriche). Eigennamen, Zitate in Originalsprache und Aktenzeichen bleiben unübersetzt.",
-        "el" => "Είσαι επαγγελματίας μεταφραστής. Δώσε μόνο τη μετάφραση — χωρίς σχόλια, χωρίς εξηγήσεις, χωρίς εισαγωγικά γύρω από το κείμενο εξόδου. Διατήρησε τη δομή παραγράφων και προτάσεων όσο το δυνατόν περισσότερο. Χρησιμοποίησε τις τυπογραφικές συμβάσεις της γλώσσας-στόχου (εισαγωγικά, παύλες). Τα κύρια ονόματα, τα αποσπάσματα στην πρωτότυπη γλώσσα και οι αριθμοί φακέλων παραμένουν αμετάφραστα.",
-        "es" => "Eres un traductor profesional. Devuelve únicamente la traducción — sin comentarios, sin explicaciones, sin comillas alrededor del resultado. Conserva en lo posible la estructura de párrafos y frases. Utiliza las convenciones tipográficas del idioma de destino (comillas, guiones). Los nombres propios, las citas en el idioma original y los números de expediente permanecen sin traducir.",
-        "et" => "Sa oled professionaalne tõlkija. Väljasta ainult tõlge — ilma kommentaarideta, ilma selgitusteta, ilma jutumärkideta väljundi ümber. Säilita lõigu- ja lausestruktuur nii palju kui võimalik. Kasuta sihtkeele tüpograafiakonventsioone (jutumärgid, mõttekriipsud). Pärisnimed, originaalkeelsed tsitaadid ja toimikunumbrid jäävad tõlkimata.",
-        "fi" => "Olet ammattikääntäjä. Anna vain käännös — ei kommentteja, ei selityksiä, ei lainausmerkkejä tulosteen ympärillä. Säilytä kappale- ja lauserakenne mahdollisimman tarkasti. Käytä kohdekielen typografisia käytäntöjä (lainausmerkit, ajatusviivat). Erisnimet, alkukielellä olevat lainaukset ja asianumerot jätetään kääntämättä.",
-        "fr" => "Tu es un traducteur professionnel. Ne donne que la traduction — sans commentaires, sans explications, sans guillemets autour du résultat. Conserve autant que possible la structure des paragraphes et des phrases. Utilise les conventions typographiques de la langue cible (guillemets, tirets). Les noms propres, les citations dans leur langue d'origine et les numéros de dossier restent non traduits.",
-        "ga" => "Is aistritheoir gairmiúil thú. Ná tabhair ach an t-aistriúchán — gan nótaí tráchta, gan mhínithe, gan comharthaí athfhriotail timpeall an aschuir. Coinnigh struchtúr na n-ailt agus na n-abairtí chomh fada agus is féidir. Bain úsáid as coinbhinsiúin thipeagrafaíochta na sprioctheanga (comharthaí athfhriotail, dáiseanna). Fanann ainmneacha dílse, athfhriotail sa bhunteanga agus uimhreacha comhaid gan aistriú.",
-        "hr" => "Ti si profesionalni prevoditelj. Iznesi samo prijevod — bez komentara, bez objašnjenja, bez navodnika oko izlaza. Zadrži strukturu odlomaka i rečenica koliko god je to moguće. Koristi tipografske konvencije ciljnog jezika (navodnici, crtice). Vlastita imena, citati na izvornom jeziku i brojevi predmeta ostaju neprevedeni.",
-        "hu" => "Professzionális fordító vagy. Kizárólag a fordítást add meg — megjegyzések, magyarázatok és a kimenetet körülvevő idézőjelek nélkül. Amennyire lehetséges, tartsd meg a bekezdés- és mondatszerkezetet. Használd a célnyelv tipográfiai konvencióit (idézőjelek, gondolatjelek). A tulajdonnevek, az eredeti nyelvű idézetek és az ügyszámok fordítatlanul maradnak.",
-        "it" => "Sei un traduttore professionista. Restituisci solo la traduzione — senza commenti, senza spiegazioni, senza virgolette attorno al risultato. Mantieni per quanto possibile la struttura di paragrafi e frasi. Usa le convenzioni tipografiche della lingua di destinazione (virgolette, trattini). I nomi propri, le citazioni nella lingua originale e i numeri di fascicolo restano non tradotti.",
-        "lt" => "Tu esi profesionalus vertėjas. Pateik tik vertimą — be komentarų, be paaiškinimų, be kabučių aplink rezultatą. Kiek įmanoma išlaikyk pastraipų ir sakinių struktūrą. Naudok tikslinės kalbos tipografijos konvencijas (kabutes, brūkšnius). Tikriniai vardai, citatos originalo kalba ir bylų numeriai lieka neišversti.",
-        "lv" => "Tu esi profesionāls tulkotājs. Sniedz tikai tulkojumu — bez komentāriem, bez paskaidrojumiem, bez pēdiņām ap izvadi. Cik vien iespējams, saglabā rindkopu un teikumu struktūru. Izmanto mērķvalodas tipogrāfijas konvencijas (pēdiņas, domuzīmes). Īpašvārdi, citāti oriģinālvalodā un lietu numuri paliek netulkoti.",
-        "mt" => "Int traduttur professjonali. Agħti biss it-traduzzjoni — mingħajr kummenti, mingħajr spjegazzjonijiet, mingħajr virgoletti madwar l-output. Żomm l-istruttura tal-paragrafi u tas-sentenzi kemm jista' jkun. Uża l-konvenzjonijiet tipografiċi tal-lingwa fil-mira (virgoletti, dashes). L-ismijiet proprji, il-kwotazzjonijiet fil-lingwa oriġinali u n-numri tal-fajls jibqgħu mhux tradotti.",
-        "nl" => "Je bent een professionele vertaler. Geef uitsluitend de vertaling — geen commentaar, geen uitleg, geen aanhalingstekens rond de uitvoer. Behoud zoveel mogelijk de alinea- en zinsstructuur. Gebruik de typografische conventies van de doeltaal (aanhalingstekens, gedachtestreepjes). Eigennamen, citaten in de oorspronkelijke taal en dossiernummers blijven onvertaald.",
-        "pl" => "Jesteś profesjonalnym tłumaczem. Podaj wyłącznie tłumaczenie — bez komentarzy, bez wyjaśnień, bez cudzysłowów wokół wyniku. Zachowaj strukturę akapitów i zdań w miarę możliwości. Stosuj konwencje typograficzne języka docelowego (cudzysłowy, myślniki). Nazwy własne, cytaty w języku oryginalnym oraz sygnatury akt pozostają nieprzetłumaczone.",
-        "pt" => "És um tradutor profissional. Fornece apenas a tradução — sem comentários, sem explicações, sem aspas à volta do resultado. Mantém, tanto quanto possível, a estrutura de parágrafos e frases. Usa as convenções tipográficas da língua de destino (aspas, travessões). Nomes próprios, citações na língua original e números de processo permanecem por traduzir.",
-        "ro" => "Ești un traducător profesionist. Oferă doar traducerea — fără comentarii, fără explicații, fără ghilimele în jurul rezultatului. Păstrează pe cât posibil structura paragrafelor și a propozițiilor. Folosește convențiile tipografice ale limbii țintă (ghilimele, liniuțe). Numele proprii, citatele în limba originală și numerele de dosar rămân netraduse.",
-        "sk" => "Si profesionálny prekladateľ. Uveď iba preklad — žiadne komentáre, žiadne vysvetlenia, žiadne úvodzovky okolo výstupu. Zachovaj štruktúru odsekov a viet, pokiaľ je to možné. Použi typografické konvencie cieľového jazyka (úvodzovky, pomlčky). Vlastné mená, citácie v pôvodnom jazyku a spisové značky zostávajú nepreložené.",
-        "sl" => "Si profesionalni prevajalec. Navedi samo prevod — brez komentarjev, brez razlag, brez narekovajev okoli izpisa. Ohrani strukturo odstavkov in stavkov, kolikor je mogoče. Uporabi tipografske konvencije ciljnega jezika (narekovaji, pomišljaji). Lastna imena, citati v izvirnem jeziku in številke zadev ostanejo neprevedeni.",
-        "sv" => "Du är en professionell översättare. Ange endast översättningen — inga kommentarer, inga förklaringar, inga citattecken runt utdata. Behåll stycke- och meningsstrukturen så långt det är möjligt. Använd målspråkets typografiska konventioner (citattecken, tankstreck). Egennamn, citat på originalspråket och ärendenummer förblir oöversatta.",
-        _ => "You are a professional translator. Output only the translation — no comments, no explanations, no quotation marks around the output. Preserve the paragraph and sentence structure as closely as possible. Use the target language's typographic conventions (quotation marks, dashes). Proper names, quotations in their original language, and file/case numbers remain untranslated.",
+        "bg" => "Изведи само превода — без коментари, без обяснения, без кавички около изхода. Запази абзацната и изреченската структура, доколкото е възможно. Използвай типографските конвенции на целевия език (кавички, тирета). Собствените имена, цитатите на оригиналния език и номерата на дела остават непреведени.",
+        "cs" => "Uveď pouze překlad — žádné komentáře, žádná vysvětlení, žádné uvozovky kolem výstupu. Zachovej strukturu odstavců a vět, pokud je to možné. Použij typografické konvence cílového jazyka (uvozovky, pomlčky). Vlastní jména, citace v původním jazyce a spisové značky zůstávají nepřeloženy.",
+        "da" => "Angiv kun oversættelsen — ingen kommentarer, ingen forklaringer, ingen anførselstegn omkring outputtet. Bevar afsnits- og sætningsstrukturen så vidt muligt. Brug målsprogets typografiske konventioner (anførselstegn, tankestreger). Egennavne, citater på originalsproget og sagsnumre forbliver uoversatte.",
+        "de" => "Gib ausschließlich die Übersetzung aus — keine Kommentare, keine Erklärungen, keine Anführungszeichen um die Ausgabe. Übernimm die Absatz- und Satzstruktur so weit wie möglich. Verwende die Typografie-Konventionen der Zielsprache (Anführungszeichen, Gedankenstriche). Eigennamen, Zitate in Originalsprache und Aktenzeichen bleiben unübersetzt.",
+        "el" => "Δώσε μόνο τη μετάφραση — χωρίς σχόλια, χωρίς εξηγήσεις, χωρίς εισαγωγικά γύρω από το κείμενο εξόδου. Διατήρησε τη δομή παραγράφων και προτάσεων όσο το δυνατόν περισσότερο. Χρησιμοποίησε τις τυπογραφικές συμβάσεις της γλώσσας-στόχου (εισαγωγικά, παύλες). Τα κύρια ονόματα, τα αποσπάσματα στην πρωτότυπη γλώσσα και οι αριθμοί φακέλων παραμένουν αμετάφραστα.",
+        "es" => "Devuelve únicamente la traducción — sin comentarios, sin explicaciones, sin comillas alrededor del resultado. Conserva en lo posible la estructura de párrafos y frases. Utiliza las convenciones tipográficas del idioma de destino (comillas, guiones). Los nombres propios, las citas en el idioma original y los números de expediente permanecen sin traducir.",
+        "et" => "Väljasta ainult tõlge — ilma kommentaarideta, ilma selgitusteta, ilma jutumärkideta väljundi ümber. Säilita lõigu- ja lausestruktuur nii palju kui võimalik. Kasuta sihtkeele tüpograafiakonventsioone (jutumärgid, mõttekriipsud). Pärisnimed, originaalkeelsed tsitaadid ja toimikunumbrid jäävad tõlkimata.",
+        "fi" => "Anna vain käännös — ei kommentteja, ei selityksiä, ei lainausmerkkejä tulosteen ympärillä. Säilytä kappale- ja lauserakenne mahdollisimman tarkasti. Käytä kohdekielen typografisia käytäntöjä (lainausmerkit, ajatusviivat). Erisnimet, alkukielellä olevat lainaukset ja asianumerot jätetään kääntämättä.",
+        "fr" => "Ne donne que la traduction — sans commentaires, sans explications, sans guillemets autour du résultat. Conserve autant que possible la structure des paragraphes et des phrases. Utilise les conventions typographiques de la langue cible (guillemets, tirets). Les noms propres, les citations dans leur langue d'origine et les numéros de dossier restent non traduits.",
+        "ga" => "Ná tabhair ach an t-aistriúchán — gan nótaí tráchta, gan mhínithe, gan comharthaí athfhriotail timpeall an aschuir. Coinnigh struchtúr na n-ailt agus na n-abairtí chomh fada agus is féidir. Bain úsáid as coinbhinsiúin thipeagrafaíochta na sprioctheanga (comharthaí athfhriotail, dáiseanna). Fanann ainmneacha dílse, athfhriotail sa bhunteanga agus uimhreacha comhaid gan aistriú.",
+        "hr" => "Iznesi samo prijevod — bez komentara, bez objašnjenja, bez navodnika oko izlaza. Zadrži strukturu odlomaka i rečenica koliko god je to moguće. Koristi tipografske konvencije ciljnog jezika (navodnici, crtice). Vlastita imena, citati na izvornom jeziku i brojevi predmeta ostaju neprevedeni.",
+        "hu" => "Kizárólag a fordítást add meg — megjegyzések, magyarázatok és a kimenetet körülvevő idézőjelek nélkül. Amennyire lehetséges, tartsd meg a bekezdés- és mondatszerkezetet. Használd a célnyelv tipográfiai konvencióit (idézőjelek, gondolatjelek). A tulajdonnevek, az eredeti nyelvű idézetek és az ügyszámok fordítatlanul maradnak.",
+        "it" => "Restituisci solo la traduzione — senza commenti, senza spiegazioni, senza virgolette attorno al risultato. Mantieni per quanto possibile la struttura di paragrafi e frasi. Usa le convenzioni tipografiche della lingua di destinazione (virgolette, trattini). I nomi propri, le citazioni nella lingua originale e i numeri di fascicolo restano non tradotti.",
+        "lt" => "Pateik tik vertimą — be komentarų, be paaiškinimų, be kabučių aplink rezultatą. Kiek įmanoma išlaikyk pastraipų ir sakinių struktūrą. Naudok tikslinės kalbos tipografijos konvencijas (kabutes, brūkšnius). Tikriniai vardai, citatos originalo kalba ir bylų numeriai lieka neišversti.",
+        "lv" => "Sniedz tikai tulkojumu — bez komentāriem, bez paskaidrojumiem, bez pēdiņām ap izvadi. Cik vien iespējams, saglabā rindkopu un teikumu struktūru. Izmanto mērķvalodas tipogrāfijas konvencijas (pēdiņas, domuzīmes). Īpašvārdi, citāti oriģinālvalodā un lietu numuri paliek netulkoti.",
+        "mt" => "Agħti biss it-traduzzjoni — mingħajr kummenti, mingħajr spjegazzjonijiet, mingħajr virgoletti madwar l-output. Żomm l-istruttura tal-paragrafi u tas-sentenzi kemm jista' jkun. Uża l-konvenzjonijiet tipografiċi tal-lingwa fil-mira (virgoletti, dashes). L-ismijiet proprji, il-kwotazzjonijiet fil-lingwa oriġinali u n-numri tal-fajls jibqgħu mhux tradotti.",
+        "nl" => "Geef uitsluitend de vertaling — geen commentaar, geen uitleg, geen aanhalingstekens rond de uitvoer. Behoud zoveel mogelijk de alinea- en zinsstructuur. Gebruik de typografische conventies van de doeltaal (aanhalingstekens, gedachtestreepjes). Eigennamen, citaten in de oorspronkelijke taal en dossiernummers blijven onvertaald.",
+        "pl" => "Podaj wyłącznie tłumaczenie — bez komentarzy, bez wyjaśnień, bez cudzysłowów wokół wyniku. Zachowaj strukturę akapitów i zdań w miarę możliwości. Stosuj konwencje typograficzne języka docelowego (cudzysłowy, myślniki). Nazwy własne, cytaty w języku oryginalnym oraz sygnatury akt pozostają nieprzetłumaczone.",
+        "pt" => "Fornece apenas a tradução — sem comentários, sem explicações, sem aspas à volta do resultado. Mantém, tanto quanto possível, a estrutura de parágrafos e frases. Usa as convenções tipográficas da língua de destino (aspas, travessões). Nomes próprios, citações na língua original e números de processo permanecem por traduzir.",
+        "ro" => "Oferă doar traducerea — fără comentarii, fără explicații, fără ghilimele în jurul rezultatului. Păstrează pe cât posibil structura paragrafelor și a propozițiilor. Folosește convențiile tipografice ale limbii țintă (ghilimele, liniuțe). Numele proprii, citatele în limba originală și numerele de dosar rămân netraduse.",
+        "sk" => "Uveď iba preklad — žiadne komentáre, žiadne vysvetlenia, žiadne úvodzovky okolo výstupu. Zachovaj štruktúru odsekov a viet, pokiaľ je to možné. Použi typografické konvencie cieľového jazyka (úvodzovky, pomlčky). Vlastné mená, citácie v pôvodnom jazyku a spisové značky zostávajú nepreložené.",
+        "sl" => "Navedi samo prevod — brez komentarjev, brez razlag, brez narekovajev okoli izpisa. Ohrani strukturo odstavkov in stavkov, kolikor je mogoče. Uporabi tipografske konvencije ciljnega jezika (narekovaji, pomišljaji). Lastna imena, citati v izvirnem jeziku in številke zadev ostanejo neprevedeni.",
+        "sv" => "Ange endast översättningen — inga kommentarer, inga förklaringar, inga citattecken runt utdata. Behåll stycke- och meningsstrukturen så långt det är möjligt. Använd målspråkets typografiska konventioner (citattecken, tankstreck). Egennamn, citat på originalspråket och ärendenummer förblir oöversatta.",
+        _ => "Output only the translation — no comments, no explanations, no quotation marks around the output. Preserve the paragraph and sentence structure as closely as possible. Use the target language's typographic conventions (quotation marks, dashes). Proper names, quotations in their original language, and file/case numbers remain untranslated.",
     }
     .to_string()
 }
@@ -1081,30 +1081,30 @@ fn default_translation_system_prompt_for_locale(ui_lang: &str) -> String {
 /// in i18n.ts.
 fn default_translation_main_prompt_template(ui_lang: &str) -> String {
     match normalize_locale(ui_lang) {
-        "bg" => "Преведи изцяло следния текст на {lang} език.",
-        "cs" => "Přelož následující text kompletně. Cílový jazyk: {lang}.",
-        "da" => "Oversæt følgende tekst fuldstændigt til {lang}.",
-        "de" => "Übersetze den folgenden Text vollständig nach {lang}.",
-        "el" => "Μετάφρασε πλήρως το ακόλουθο κείμενο στα {lang}.",
-        "es" => "Traduce completamente el siguiente texto al {lang}.",
-        "et" => "Tõlgi järgnev tekst täielikult {lang} keelde.",
-        "fi" => "Käännä seuraava teksti kokonaan. Kohdekieli: {lang}.",
-        "fr" => "Traduis intégralement le texte suivant en {lang}.",
-        "ga" => "Aistrigh an téacs seo a leanas go hiomlán go {lang}.",
-        "hr" => "Prevedi sljedeći tekst u potpunosti na {lang}.",
-        "hu" => "Fordítsd le a következő szöveget teljes egészében. Célnyelv: {lang}.",
-        "it" => "Traduci integralmente il testo seguente in {lang}.",
-        "lt" => "Išversk šį tekstą pilnai į {lang} kalbą.",
-        "lv" => "Pilnībā iztulko šo tekstu {lang} valodā.",
-        "mt" => "Traduċi bis-sħiħ dan it-test għal {lang}.",
-        "nl" => "Vertaal de volgende tekst volledig naar het {lang}.",
-        "pl" => "Przetłumacz w całości poniższy tekst na {lang}.",
-        "pt" => "Traduz integralmente o texto seguinte para {lang}.",
-        "ro" => "Tradu integral textul următor în {lang}.",
-        "sk" => "Prelož nasledujúci text kompletne. Cieľový jazyk: {lang}.",
-        "sl" => "Prevedi naslednje besedilo v celoti. Ciljni jezik: {lang}.",
-        "sv" => "Översätt följande text fullständigt till {lang}.",
-        _ => "Translate the following text completely into {lang}.",
+        "bg" => "Ти си професионален преводач. Преведи изцяло следния текст на {lang} език.",
+        "cs" => "Jsi profesionální překladatel. Přelož následující text kompletně. Cílový jazyk: {lang}.",
+        "da" => "Du er en professionel oversætter. Oversæt følgende tekst fuldstændigt til {lang}.",
+        "de" => "Du bist ein professioneller Übersetzer. Übersetze den folgenden Text vollständig nach {lang}.",
+        "el" => "Είσαι επαγγελματίας μεταφραστής. Μετάφρασε πλήρως το ακόλουθο κείμενο στα {lang}.",
+        "es" => "Eres un traductor profesional. Traduce completamente el siguiente texto al {lang}.",
+        "et" => "Sa oled professionaalne tõlkija. Tõlgi järgnev tekst täielikult {lang} keelde.",
+        "fi" => "Olet ammattikääntäjä. Käännä seuraava teksti kokonaan. Kohdekieli: {lang}.",
+        "fr" => "Tu es un traducteur professionnel. Traduis intégralement le texte suivant en {lang}.",
+        "ga" => "Is aistritheoir gairmiúil thú. Aistrigh an téacs seo a leanas go hiomlán go {lang}.",
+        "hr" => "Ti si profesionalni prevoditelj. Prevedi sljedeći tekst u potpunosti na {lang}.",
+        "hu" => "Professzionális fordító vagy. Fordítsd le a következő szöveget teljes egészében. Célnyelv: {lang}.",
+        "it" => "Sei un traduttore professionista. Traduci integralmente il testo seguente in {lang}.",
+        "lt" => "Tu esi profesionalus vertėjas. Išversk šį tekstą pilnai į {lang} kalbą.",
+        "lv" => "Tu esi profesionāls tulkotājs. Pilnībā iztulko šo tekstu {lang} valodā.",
+        "mt" => "Int traduttur professjonali. Traduċi bis-sħiħ dan it-test għal {lang}.",
+        "nl" => "Je bent een professionele vertaler. Vertaal de volgende tekst volledig naar het {lang}.",
+        "pl" => "Jesteś profesjonalnym tłumaczem. Przetłumacz w całości poniższy tekst na {lang}.",
+        "pt" => "És um tradutor profissional. Traduz integralmente o texto seguinte para {lang}.",
+        "ro" => "Ești un traducător profesionist. Tradu integral textul următor în {lang}.",
+        "sk" => "Si profesionálny prekladateľ. Prelož nasledujúci text kompletne. Cieľový jazyk: {lang}.",
+        "sl" => "Si profesionalni prevajalec. Prevedi naslednje besedilo v celoti. Ciljni jezik: {lang}.",
+        "sv" => "Du är en professionell översättare. Översätt följande text fullständigt till {lang}.",
+        _ => "You are a professional translator. Translate the following text completely into {lang}.",
     }
     .to_string()
 }
@@ -1741,6 +1741,11 @@ struct FrontendSettings {
     setup_completed: Option<bool>,
     #[serde(default = "default_operation_mode")]
     mode: String,
+    // Gates the translation feature entirely; off by default since it's experimental
+    // (see sync_translation_prompt_with_active_preset, which forces mode back to
+    // "correction" whenever this is false).
+    #[serde(default)]
+    translation_enabled: bool,
     #[serde(default)]
     translation: TranslationSettings,
 }
@@ -1795,6 +1800,7 @@ impl FrontendSettings {
             font_size: "default".into(),
             setup_completed: None,
             mode: default_operation_mode(),
+            translation_enabled: false,
             translation: TranslationSettings::default_for_locale(normalized_locale),
         }
     }
@@ -2574,6 +2580,15 @@ fn sync_custom_prompt_with_active_preset(settings: &mut FrontendSettings) -> Res
 /// so the translation preset bookkeeping stays consistent even while mode ==
 /// "correction", ready for whenever the user switches back.
 fn sync_translation_prompt_with_active_preset(settings: &mut FrontendSettings) {
+    // The translation feature is experimental and off by default; if it's disabled (or was
+    // turned off after having been on), force the mode back to "correction" so a stale
+    // "translation" value from an older settings.json can't leave the main window stuck
+    // showing translation UI with no way to switch back (the mode toggle itself is hidden
+    // while disabled).
+    if !settings.translation_enabled && settings.mode == "translation" {
+        settings.mode = default_operation_mode();
+    }
+
     let target_language = settings.translation.target_language.trim().to_string();
     if target_language.is_empty() {
         // Not yet configured (e.g. pre-translation-feature settings.json); nothing to

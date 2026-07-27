@@ -1146,42 +1146,46 @@ function App() {
                 </div>
               ) : (
                 <div className="flex items-center gap-3 min-w-0">
-                  {/* Mode toggle: always visible (not just in the empty state) so switching
-                      correction/translation never requires clearing the input first.
-                      Styled as a neutral segmented control (not a filled accent pill) so the
-                      accent color stays reserved for primary action buttons. */}
-                  <div className={`inline-flex rounded-lg p-1 gap-1 flex-shrink-0 ${isDarkMode ? 'bg-surface-900' : 'bg-surface-100'}`}>
-                    <button
-                      type="button"
-                      onClick={() => void handleModeChange('correction')}
-                      aria-pressed={settings.mode === 'correction'}
-                      aria-label={t('mode.correction', lang)}
-                      title={t('mode.correction', lang)}
-                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${
-                        settings.mode === 'correction'
-                          ? (isDarkMode ? 'bg-surface-700 text-accent-400 shadow-sm' : 'bg-white text-accent-600 shadow-sm')
-                          : (isDarkMode ? 'text-surface-400 hover:text-surface-200' : 'text-surface-500 hover:text-surface-800')
-                      }`}
-                    >
-                      <Sparkles size={15} />
-                      {t('mode.correction', lang)}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleModeChange('translation')}
-                      aria-pressed={settings.mode === 'translation'}
-                      aria-label={t('mode.translation', lang)}
-                      title={t('mode.translation', lang)}
-                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${
-                        settings.mode === 'translation'
-                          ? (isDarkMode ? 'bg-surface-700 text-accent-400 shadow-sm' : 'bg-white text-accent-600 shadow-sm')
-                          : (isDarkMode ? 'text-surface-400 hover:text-surface-200' : 'text-surface-500 hover:text-surface-800')
-                      }`}
-                    >
-                      <Languages size={15} />
-                      {t('mode.translation', lang)}
-                    </button>
-                  </div>
+                  {/* Mode toggle: hidden entirely while the translation feature is disabled
+                      in Settings (it's experimental, off by default). Otherwise always
+                      visible (not just in the empty state) so switching correction/
+                      translation never requires clearing the input first. Styled as a
+                      neutral segmented control (not a filled accent pill) so the accent
+                      color stays reserved for primary action buttons. */}
+                  {settings.translation_enabled && (
+                    <div className={`inline-flex rounded-lg p-1 gap-1 flex-shrink-0 ${isDarkMode ? 'bg-surface-900' : 'bg-surface-100'}`}>
+                      <button
+                        type="button"
+                        onClick={() => void handleModeChange('correction')}
+                        aria-pressed={settings.mode === 'correction'}
+                        aria-label={t('mode.correction', lang)}
+                        title={t('mode.correction', lang)}
+                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${
+                          settings.mode === 'correction'
+                            ? (isDarkMode ? 'bg-surface-700 text-accent-400 shadow-sm' : 'bg-white text-accent-600 shadow-sm')
+                            : (isDarkMode ? 'text-surface-400 hover:text-surface-200' : 'text-surface-500 hover:text-surface-800')
+                        }`}
+                      >
+                        <Sparkles size={15} />
+                        {t('mode.correction', lang)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleModeChange('translation')}
+                        aria-pressed={settings.mode === 'translation'}
+                        aria-label={t('mode.translation', lang)}
+                        title={t('mode.translation', lang)}
+                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${
+                          settings.mode === 'translation'
+                            ? (isDarkMode ? 'bg-surface-700 text-accent-400 shadow-sm' : 'bg-white text-accent-600 shadow-sm')
+                            : (isDarkMode ? 'text-surface-400 hover:text-surface-200' : 'text-surface-500 hover:text-surface-800')
+                        }`}
+                      >
+                        <Languages size={15} />
+                        {t('mode.translation', lang)}
+                      </button>
+                    </div>
+                  )}
 
                   {isDocxMode ? (
                     <div className="flex items-center gap-3 min-w-0">

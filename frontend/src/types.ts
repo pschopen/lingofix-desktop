@@ -167,6 +167,11 @@ export interface Settings {
   font_size: FontSize;
   setup_completed?: boolean | null;
   mode: OperationMode;
+  // Gates the translation feature entirely (docs/plans/translation-polish.md follow-up):
+  // off by default since it's experimental. While false, Settings only shows the toggle
+  // itself (not the rest of the Translation section), and the main window hides the
+  // correction/translation mode switch, keeping the app in correction-only mode.
+  translation_enabled: boolean;
   translation: TranslationSettings;
 }
 
