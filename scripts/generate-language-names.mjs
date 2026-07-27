@@ -3,9 +3,9 @@
 // built-in Intl.DisplayNames (CLDR data), so the "what is {targetLanguage} called in
 // {uiLanguage}?" table is generated once and kept byte-identical between the Rust and
 // TypeScript sides — those two sides fill the same {lang} placeholder into
-// independently-maintained but textually-matching default translation prompts (see
-// docs/plans/translation-polish.md AP 1/AP 2), so any drift between them would make the
-// "is this still the default prompt?" comparison in main.rs silently stop matching.
+// independently-maintained but textually-matching default translation prompts, so any
+// drift between them would make the "is this still the default prompt?" comparison in
+// main.rs silently stop matching.
 //
 // Run with: node scripts/generate-language-names.mjs
 

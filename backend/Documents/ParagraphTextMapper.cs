@@ -114,8 +114,8 @@ internal static class ParagraphTextMapper
     }
 
     /// <summary>
-    /// Marker-free translation write-back (see docs/plans/translation-mode.md, Phase 2):
-    /// the LLM never sees or produces position markers, so run-level attribution is done
+    /// Marker-free translation write-back: the LLM never sees or produces position
+    /// markers, so run-level attribution is done
     /// deterministically here instead of via the char-span/token diff used for corrections
     /// (which assumes near-identical text and is unsuitable for a full-text replacement).
     /// The paragraph is split into segments at non-text anchors (footnote/endnote refs,

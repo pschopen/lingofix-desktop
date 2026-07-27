@@ -90,8 +90,7 @@ export function SettingsModal({
   const [presetDialogMode, setPresetDialogMode] = useState<PresetDialogMode>(null);
   const [presetDialogValue, setPresetDialogValue] = useState('');
 
-  // Translation prompt preset UI state (own namespace, own dialog: see
-  // docs/plans/translation-mode.md Phase 5c)
+  // Translation prompt preset UI state (own namespace, own dialog)
   const [translationPresetMessage, setTranslationPresetMessage] = useState('');
   const [translationPresetDialogMode, setTranslationPresetDialogMode] = useState<PresetDialogMode>(null);
   const [translationPresetDialogValue, setTranslationPresetDialogValue] = useState('');
@@ -570,9 +569,9 @@ export function SettingsModal({
 
   // ================================================================
   // Translation prompt presets — own namespace, keyed by target-language
-  // slug rather than correction_language (see docs/plans/translation-mode.md
-  // Phase 4/5c). custom_prompt / translation.footnote_prompt are only
-  // written here while mode === 'translation', mirroring the guard above.
+  // slug rather than correction_language. custom_prompt /
+  // translation.footnote_prompt are only written here while
+  // mode === 'translation', mirroring the guard above.
   // ================================================================
 
   const createDefaultTranslationPreset = (targetLanguage: string): TranslationPromptPreset => ({
@@ -646,9 +645,9 @@ export function SettingsModal({
   };
 
   // Permanently remembers a free-text "other language" and makes it the active target
-  // language (docs/plans/translation-polish.md AP 3 follow-up: adding a custom language is
-  // an explicit action here in Settings, not a side effect of typing — the main window can
-  // only select an already-added language, never add or remove one).
+  // language. Adding a custom language is an explicit action here in Settings, not a
+  // side effect of typing — the main window can only select an already-added language,
+  // never add or remove one.
   const handleAddTranslationLanguage = (rawLanguage: string) => {
     if (!formData) {
       return;
@@ -674,7 +673,7 @@ export function SettingsModal({
     ));
   };
 
-  // Removes a remembered "other language" entry (docs/plans/translation-polish.md AP 3).
+  // Removes a remembered "other language" entry.
   // If it's the currently selected target language, falls back to English first so the
   // Rust-side sync doesn't just re-add it on save.
   const handleRemoveTranslationLanguage = (language: string) => {

@@ -111,8 +111,7 @@ export function defaultSystemPrompt(lang: Language): string {
 }
 
 /* ================================================================
-   Translation-mode defaults (docs/plans/translation-mode.md Phase 4/5;
-   localized per UI language since docs/plans/translation-polish.md AP 2).
+   Translation-mode defaults, localized per UI language.
    Mirrors tauri/src/main.rs (language_display_name in language_names.rs,
    target_language_slug, default_translation_main_prompt,
    default_translation_footnote_prompt, default_translation_system_prompt):
@@ -151,9 +150,9 @@ export function targetLanguageSlug(targetLanguage: string): string {
 }
 
 // General translation-quality rules, independent of the target language (the "how to
-// translate" instructions the user typically shouldn't need to touch — see
-// docs/plans/translation-polish.md AP 2). The per-preset main/footnote prompts below stay
-// deliberately short so users mostly edit register/tone or footnote scope there instead.
+// translate" instructions the user typically shouldn't need to touch). The per-preset
+// main/footnote prompts below stay deliberately short so users mostly edit register/tone
+// or footnote scope there instead.
 const defaultTranslationSystemPrompts: Record<Language, string> = {
   bg: 'Изведи само превода — без коментари, без обяснения, без кавички около изхода. Запази абзацната и изреченската структура, доколкото е възможно. Използвай типографските конвенции на целевия език (кавички, тирета). Собствените имена, цитатите на оригиналния език и номерата на дела остават непреведени.',
   cs: 'Uveď pouze překlad — žádné komentáře, žádná vysvětlení, žádné uvozovky kolem výstupu. Zachovej strukturu odstavců a vět, pokud je to možné. Použij typografické konvence cílového jazyka (uvozovky, pomlčky). Vlastní jména, citace v původním jazyce a spisové značky zůstávají nepřeloženy.',
@@ -6143,7 +6142,7 @@ const translations: Record<string, Partial<Record<Language, string>> & Record<'e
     sv: 'Uppdateringskontroll är för närvarande inte tillgänglig.',
   },
 
-  // ---- Translation mode (docs/plans/translation-mode.md, Phase 5e) ----
+  // ---- Translation mode ----
 
   'mode.label': {
     bg: 'Режим', cs: 'Režim', da: 'Tilstand', de: 'Modus', el: 'Λειτουργία', en: 'Mode',

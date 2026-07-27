@@ -922,8 +922,7 @@ function App() {
     ? languageDisplayName(lang, targetLanguageCode)
     : t('mode.target_language.other', lang);
   // EU languages sorted by their name in the current UI language (not alphabetically by
-  // code), so e.g. "Tschechisch" sits where a German speaker expects it — see
-  // docs/plans/translation-polish.md AP 4.
+  // code), so e.g. "Tschechisch" sits where a German speaker expects it.
   const sortedEuLanguageCodes = useMemo(
     () => [...EU_LANGUAGE_CODES].sort((a, b) => languageDisplayName(lang, a).localeCompare(languageDisplayName(lang, b), lang)),
     [lang],

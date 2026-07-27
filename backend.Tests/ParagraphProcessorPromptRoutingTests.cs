@@ -133,4 +133,63 @@ public class ParagraphProcessorPromptRoutingTests
 
         Assert.Single(fake.Calls, c => c.Input == "Repeat.");
     }
+
+    // ---- Number-only paragraphs ("Randnummern") ----------------------------------
+
+    [Theory]
+    [InlineData("12")]
+    [InlineData("(3)")]
+    [InlineData("§ 12")]
+    [InlineData("2.3.4")]
+    [InlineData("– 17 –")]
+    [InlineData("[5]")]
+    public async Task NumberOnlyParagraph_IsNeverSentToLlm(string numberText)
+    {
+        var paragraphs = new[] { Text(numberText) };
+        var fake = new FakeLlmClient();
+        var settings = BuildSettings(OperationMode.Correction, enableBatching: false);
+
+        await ParagraphProcessor.ProcessAsync(paragraphs, fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
+
+        Assert.Empty(fake.Calls);
+    }
+
+    [Fact]
+    public async Task NumberOnlyParagraph_TextIsUnchangedInDocument()
+    {
+        var paragraph = Text("12");
+        var fake = new FakeLlmClient { ResponseFactory = _ => "SHOULD NEVER APPEAR" };
+        var settings = BuildSettings(OperationMode.Correction, enableBatching: false);
+
+        await ParagraphProcessor.ProcessAsync([paragraph], fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
+
+        Assert.Equal("12", paragraph.InnerText);
+    }
+
+    [Fact]
+    public async Task MixedBatch_NumberOnlyParagraphIsSkipped_TextParagraphIsStillProcessed()
+    {
+        var paragraphs = new[] { Text("12"), Text("Ein normaler Satz.") };
+        var fake = new FakeLlmClient();
+        var settings = BuildSettings(OperationMode.Correction, enableBatching: true);
+
+        await ParagraphProcessor.ProcessAsync(paragraphs, fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
+
+        Assert.DoesNotContain(fake.Calls, c => c.Input.Contains("12", StringComparison.Ordinal));
+        Assert.Contains(fake.Calls, c => c.Input.Contains("Ein normaler Satz.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RomanNumeralParagraph_IsStillSentToLlm()
+    {
+        // Roman numerals contain letters, so the number-only skip does not apply to
+        // them; documented as an accepted gap (see IsNumberOnly's remarks).
+        var paragraphs = new[] { Text("IV.") };
+        var fake = new FakeLlmClient();
+        var settings = BuildSettings(OperationMode.Correction, enableBatching: false);
+
+        await ParagraphProcessor.ProcessAsync(paragraphs, fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
+
+        Assert.Single(fake.Calls);
+    }
 }

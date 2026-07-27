@@ -10,15 +10,20 @@ It is built for people who want fast proofreading help without using a browser-b
   </a>
 </p>
 
+![Lingofix main window with the editor, the correct/translate switch, and the file drop zone](main-window.png)
+
+<sub>Main window with a German interface and the experimental translation mode enabled.</sub>
+
 ## What Lingofix Does
 
 - Corrects plain text with AI
-- Translates plain text and documents into another language (see [Translation Mode](#translation-mode))
-- Processes `.docx` and `.odt` files
+- Processes Word and OpenDocument files (`.docx`, `.docm`, `.dotx`, `.dotm`, `.odt`)
 - Supports tracked-change style workflows for office documents
-- Lets you choose between multiple AI providers
+- Translates plain text and documents into another language (experimental, see [Translation Mode](#translation-mode-experimental))
+- Lets you choose between multiple AI providers, including local models via Ollama
+- Adapts its request pace to the provider's rate limit, and resumes interrupted document runs
 - Runs as a desktop app for macOS, Windows, and Linux
-- Offers an English and German interface
+- Ships a user interface and correction prompts in all 24 official EU languages
 
 ## Who It Is For
 
@@ -40,13 +45,13 @@ Lingofix is useful if you want to:
 5. Click `Correct`.
 6. Review the highlighted differences and either apply or reject the changes.
 
-### DOCX or ODT documents
+### Documents
 
 1. Open Lingofix.
 2. Configure your provider and model in `Settings`.
-3. Drag a `.docx` or `.odt` file into the app, or choose a file manually.
+3. Drag one or more documents into the app, or choose files manually.
 4. Click `Correct`.
-5. Wait for processing to finish.
+5. Watch progress, remaining-time estimate, and log messages.
 6. Open the generated output file from the result banner.
 
 Depending on your compare mode, Lingofix can generate a corrected file with tracked changes or fall back to a corrected output file without generated change markup.
@@ -118,9 +123,17 @@ If `Open Anyway` does not appear immediately, try this fallback:
 
 After that, macOS should allow future launches normally.
 
-## First-Time Setup
+## First Start
 
-Before Lingofix can correct text, you usually need to configure an AI provider.
+On the first launch Lingofix shows a short setup wizard with three options:
+
+- **Local & private (free)** — set up [Ollama](https://ollama.com) on your own machine. The wizard can install Ollama, suggests a model that fits your available RAM, and downloads it. No text leaves your computer.
+- **Cloud (may incur costs)** — pick a provider (OpenAI, Mistral, OpenRouter, Google AI Studio, Hugging Face), paste an API key, and choose a model. The wizard links directly to each provider's API-key page.
+- **Set up later** — skip configuration and choose a provider anytime in `Settings`.
+
+You can run the wizard again later from `Settings` > `Advanced`.
+
+### Manual setup
 
 1. Open `Settings`.
 2. Select a provider.
@@ -135,6 +148,16 @@ Before Lingofix can correct text, you usually need to configure an AI provider.
 - `OpenAI`, `OpenRouter`, `Hugging Face`, `Google AI Studio`, and `Mistral` usually require an API key.
 - `Ollama` is for local use and usually works without an API key if Ollama is running on your computer.
 - `Custom` is for OpenAI-compatible or other custom endpoints.
+- API keys are stored per provider, so switching providers does not lose the previous key.
+
+## Settings Overview
+
+`Settings` is split into sections:
+
+- **General** — provider, API key, API URL, model, and which document parts are processed (main text, footnotes, endnotes, headers, footers, glossary).
+- **Correction** — correction language, correction prompt and prompt presets, compare mode, citation normalization, and whitespace handling.
+- **Translation** — off by default; see [Translation Mode](#translation-mode-experimental).
+- **Advanced** — interface language and font size, system prompt, temperature, reasoning toggle and effort, document processing and speed options, update checks, system paths, wizard re-run, and app reset.
 
 ## Working With Plain Text
 
@@ -142,22 +165,24 @@ Lingofix can correct pasted text directly in the editor.
 
 - Type or paste your text into the main editor
 - Press `Correct`
-- Wait for the corrected result
-- Review the differences
+- Watch the corrected result stream in
+- Review the differences (deletions and additions are highlighted)
 - Use `Apply` to keep the correction or `Reject` to discard it
 
 The app is designed to keep the output focused on the corrected text instead of long explanations.
 
-## Working With DOCX and ODT Files
+## Working With Documents
 
-You can drop office documents into the app or select them with the file picker.
+You can drop office documents into the app or select them with the file picker. Supported formats are `.docx`, `.docm`, `.dotx`, `.dotm`, and `.odt`.
 
 Typical workflow:
 
-- add one or more `.docx` or `.odt` files
+- add one or more files (they are processed one after another)
 - start correction
-- review progress and log messages
+- review progress, remaining-time estimate, and log messages
 - open the corrected result from the result banner
+
+If a run is cancelled or interrupted, Lingofix keeps a checkpoint and resumes the same file where it left off instead of starting over.
 
 ### Compare modes
 
@@ -182,17 +207,32 @@ Lingofix includes different compare modes for document correction.
 - Useful when working with LibreOffice or `.odt` files
 - Requires LibreOffice and the `soffice` command to be available
 
-## Translation Mode
+If an external compare step fails, Lingofix still saves the corrected document instead of discarding the run.
 
-Besides correcting text, Lingofix can translate plain text and DOCX/ODT documents into another language, reusing the same document pipeline (formatting, footnotes, headers/footers are handled the same way as in correction).
+### Processing and speed
 
-### Switching to translation mode
+Document runs can be tuned in `Settings` > `Advanced`:
 
-- Use the mode dropdown next to the dark-mode toggle in the header (`Correct` / `Translate`).
-- When `Translate` is selected, a second dropdown lets you pick the target language.
-- Choose a language from the curated list, or pick `Other language…` to type a free-text target (e.g. a dialect or a language not in the list — the model is given the name exactly as typed).
+- **Batching** — several paragraphs are sent in one request, configurable per document part and limited by characters and paragraph count.
+- **Cache** — unchanged paragraphs are not sent again.
+- **Parallel requests** — up to 16 concurrent requests.
+- **Speed mode** — `Automatic` learns the provider's advertised rate limit from response headers and paces itself, backing off and recovering on its own. `Manual` keeps a fixed requests-per-minute ceiling that you set.
+
+While a run is in progress, the toolbar shows the current percentage, an estimated remaining time, and a notice when the provider throttles the app down to a lower request rate.
+
+## Translation Mode (experimental)
+
+Besides correcting text, Lingofix can translate plain text and documents into another language, reusing the same document pipeline (formatting, footnotes, headers/footers are handled the same way as in correction).
+
+Translation is **experimental and disabled by default**.
+
+### Enabling and using translation
+
+- Turn it on in `Settings` > `Translation`. While it is off, the rest of that section and the mode switch in the main window stay hidden, and the app runs in correction-only mode.
+- Once enabled, the main window toolbar shows a `Correct` / `Translate` switch.
+- In `Translate` mode, a second dropdown selects the target language: pick one from the curated list, or choose `Other language…` to type a free-text target (e.g. a dialect or a language not in the list — the model is given the name exactly as typed). Typed languages are remembered for later runs.
 - Both dropdowns save immediately; no need to open `Settings` first.
-- `Settings` has its own `Translation` section (target language, and per-language prompt presets for the main text and for footnotes) alongside the existing `General` and `Correction` sections.
+- `Settings` > `Translation` also holds the target language and per-language prompt presets for the main text and for footnotes.
 
 ### What happens during a translation run
 
@@ -236,6 +276,12 @@ For best results:
 - use `Word` mode for `.docx` when Microsoft Word is installed
 - use `LibreOffice UNO` for `.odt` when LibreOffice is installed
 
+### A document run is very slow
+
+- leave `Speed mode` on `Automatic` so the app can find the provider's rate limit itself
+- check the throttle notice in the progress bar: it shows the request rate the provider currently allows
+- free provider tiers usually have low request limits; a local Ollama model has none
+
 ### The app behaves strangely after a broken configuration
 
 Open `Settings` > `Advanced` and use `Reset app`.
@@ -252,7 +298,7 @@ directly from the advanced settings section.
 
 Lingofix sends text or document content to the AI provider you configure.
 
-Please make sure you understand the privacy and data-handling rules of your chosen provider before processing sensitive material.
+Please make sure you understand the privacy and data-handling rules of your chosen provider before processing sensitive material. If you use `Ollama` with a local model, no content leaves your computer.
 
 ## For Developers
 
@@ -263,7 +309,9 @@ lingofix-desktop/
   Lingofix.slnx         .NET solution
   frontend/             React + Vite UI
   backend/              .NET document processing backend
+  backend.Tests/        Backend unit tests
   tauri/                Tauri desktop host
+  scripts/              Build, packaging, and helper scripts
 ```
 
 ### Prerequisites
@@ -277,6 +325,13 @@ lingofix-desktop/
 ```bash
 npm run setup
 npm run build
+```
+
+### Tests
+
+```bash
+npm test --prefix frontend
+dotnet test backend.Tests/Lingofix.Backend.Tests.csproj
 ```
 
 ### Build targets

@@ -56,7 +56,7 @@ export function SelectField({
   className?: string;
   isDarkMode?: boolean;
   // Options whose value is in this list get a small red "x" to remove them (used for
-  // user-added "other language" entries — see docs/plans/translation-polish.md AP 3).
+  // user-added "other language" entries).
   removableValues?: string[];
   onRemoveOption?: (value: string) => void;
   // aria-label for the remove button, given the option's value; falls back to a generic
@@ -304,10 +304,10 @@ export function ToggleRow({
 }
 
 /**
- * Textarea that grows to fit its content instead of scrolling internally (see
- * docs/plans/translation-polish.md AP 9). Deliberately resizes via inline style + a
- * ResizeObserver-free useLayoutEffect rather than CSS `field-sizing: content` — Tauri's
- * macOS WKWebView doesn't support that property.
+ * Textarea that grows to fit its content instead of scrolling internally.
+ * Deliberately resizes via inline style + a ResizeObserver-free useLayoutEffect rather
+ * than CSS `field-sizing: content` — Tauri's macOS WKWebView doesn't support that
+ * property.
  */
 export function AutoGrowTextarea({
   value,

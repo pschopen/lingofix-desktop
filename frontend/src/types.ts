@@ -120,7 +120,7 @@ export const OPERATION_MODES = ['correction', 'translation'] as const;
 export type OperationMode = (typeof OPERATION_MODES)[number];
 
 // A translation preset carries both prompts as a pair, so they are always switched
-// together (see docs/plans/translation-mode.md Phase 4).
+// together.
 export interface TranslationPromptPreset {
   id: string;
   name: string;
@@ -139,7 +139,7 @@ export interface TranslationSettings {
   // correction-only) — see AdvancedSection's "Übersetzung" heading.
   system_prompt: string;
   // Free-text "other language" entries the user has typed in, remembered across target-
-  // language switches (see docs/plans/translation-polish.md AP 3). Never contains a
+  // language switches. Never contains a
   // EU_LANGUAGE_CODES entry; kept in sync by the Rust backend.
   custom_languages: string[];
 }
@@ -167,7 +167,7 @@ export interface Settings {
   font_size: FontSize;
   setup_completed?: boolean | null;
   mode: OperationMode;
-  // Gates the translation feature entirely (docs/plans/translation-polish.md follow-up):
+  // Gates the translation feature entirely:
   // off by default since it's experimental. While false, Settings only shows the toggle
   // itself (not the rest of the Translation section), and the main window hides the
   // correction/translation mode switch, keeping the app in correction-only mode.

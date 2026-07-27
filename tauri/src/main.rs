@@ -1044,8 +1044,8 @@ fn lingofix_temp_root() -> PathBuf {
 
 const DEFAULT_TRANSLATION_PRESET_NAME: &str = "Standard";
 
-/// General translation-quality rules for the given UI language (docs/plans/translation-polish.md
-/// AP 2). Must stay textually identical to defaultTranslationSystemPrompts in i18n.ts.
+/// General translation-quality rules for the given UI language. Must stay textually
+/// identical to defaultTranslationSystemPrompts in i18n.ts.
 fn default_translation_system_prompt_for_locale(ui_lang: &str) -> String {
     match normalize_locale(ui_lang) {
         "bg" => "Изведи само превода — без коментари, без обяснения, без кавички около изхода. Запази абзацната и изреченската структура, доколкото е възможно. Използвай типографските конвенции на целевия език (кавички, тирета). Собствените имена, цитатите на оригиналния език и номерата на дела остават непреведени.",
@@ -1645,8 +1645,7 @@ fn default_target_language() -> String {
 }
 
 /// One translation preset carries *both* the main-text and footnote prompt, so the two
-/// are always switched together as a consistent pair (see docs/plans/translation-mode.md
-/// Phase 4).
+/// are always switched together as a consistent pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TranslationPromptPreset {
     id: String,
@@ -1680,8 +1679,8 @@ struct TranslationSettings {
     system_prompt: String,
     // Free-text "other language" entries the user has typed in, remembered across target-
     // language switches so they stay selectable (with a way to remove them) instead of
-    // disappearing the moment a different language is picked (docs/plans/translation-polish.md
-    // AP 3). Populated by sync_translation_prompt_with_active_preset; trimmed, deduplicated
+    // disappearing the moment a different language is picked. Populated by
+    // sync_translation_prompt_with_active_preset; trimmed, deduplicated
     // case-insensitively, and never contains a KNOWN_LANGUAGES code.
     #[serde(default)]
     custom_languages: Vec<String>,
@@ -2598,8 +2597,7 @@ fn sync_translation_prompt_with_active_preset(settings: &mut FrontendSettings) {
     settings.translation.target_language = target_language.clone();
     let slug = target_language_slug(&target_language);
     // Prompts (default preset + system prompt) are worded in the UI language, not the
-    // target language — the target language only fills the "{lang}" placeholder (see
-    // docs/plans/translation-polish.md AP 2).
+    // target language — the target language only fills the "{lang}" placeholder.
     let ui_lang = normalize_language(&settings.ui_language).to_string();
 
     // Free-text "other language" bookkeeping (AP 3): normalize whatever is already in the
@@ -5554,7 +5552,7 @@ mod translation_mode_migration_tests {
     fn default_preset_is_worded_in_the_ui_language_not_the_target_language() {
         // ui_lang == "en", target_language == "de": the prompt wording must be English
         // ("Translate ... into German"), not German — the target language only fills the
-        // "{lang}" placeholder (docs/plans/translation-polish.md AP 2).
+        // "{lang}" placeholder.
         let mut settings = FrontendSettings::default_for_locale("en");
         settings.mode = "translation".to_string();
         settings.translation.target_language = "de".to_string();

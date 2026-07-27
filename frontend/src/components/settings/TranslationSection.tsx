@@ -14,8 +14,8 @@ interface TranslationSectionProps {
   onToggleEnabled: () => void;
   onTargetLanguageChange: (value: string) => void;
   // Permanently adds a free-text language to translation.custom_languages and selects it
-  // (docs/plans/translation-polish.md AP 3 follow-up). Adding is only possible here in
-  // Settings; the main window can only pick from already-added languages.
+  // Adding is only possible here in Settings; the main window can only pick from
+  // already-added languages.
   onAddLanguage: (value: string) => void;
   onRemoveLanguage: (value: string) => void;
   visiblePresets: TranslationPromptPreset[];
@@ -73,8 +73,8 @@ export function TranslationSection({
 
   // "Add a new language" is its own explicit action, decoupled from the select's current
   // value: opening it must not change the active target language, and typing must not
-  // either — only pressing the Add button (or Enter) does (docs/plans/translation-polish.md
-  // AP 3 follow-up). Lazily defaults to open, pre-filled, if the loaded target_language is
+  // either — only pressing the Add button (or Enter) does. Lazily defaults to open,
+  // pre-filled, if the loaded target_language is
   // itself neither a EU_LANGUAGE_CODES entry nor already remembered — a legacy/stray value
   // that predates custom_languages tracking — so it isn't silently invisible.
   const [isAddingLanguage, setIsAddingLanguage] = useState(!isSelectableLanguage);
@@ -94,8 +94,7 @@ export function TranslationSection({
     closeAddLanguage();
   };
 
-  // EU languages sorted by their name in the current UI language (see
-  // docs/plans/translation-polish.md AP 4).
+  // EU languages sorted by their name in the current UI language.
   const sortedEuLanguageCodes = useMemo(
     () => [...EU_LANGUAGE_CODES].sort((a, b) => languageDisplayName(lang, a).localeCompare(languageDisplayName(lang, b), lang)),
     [lang],

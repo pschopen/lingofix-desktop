@@ -70,6 +70,11 @@ public static class ParagraphProcessor
                 continue;
             }
 
+            if (IsNumberOnly(original))
+            {
+                continue;
+            }
+
             totalChars += original.Length;
 
             var cacheKey = BuildCacheKey(original);
@@ -309,6 +314,13 @@ public static class ParagraphProcessor
     {
         return original;
     }
+
+    // Paragraphs with no letters at all (marginal numbers like "12", "(3)", "§ 12",
+    // "2.3.4", "– 17 –") have nothing for the LLM to correct or translate. Skipping
+    // them here means they're never added to a WorkBatch, so they stay byte-identical
+    // in the document — no placeholder/reinsertion step needed.
+    private static bool IsNumberOnly(string text) =>
+        !text.Any(char.IsLetter);
 
     private static async Task<string> CorrectWithChunkingAsync(
         string original,
