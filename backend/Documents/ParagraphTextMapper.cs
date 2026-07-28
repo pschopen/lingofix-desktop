@@ -41,12 +41,12 @@ internal static class ParagraphTextMapper
     {
         var total = 0;
         var inField = false;
-        // Mirror of the label-prefix exclusion in BuildEditableRuns: chars before the
-        // first tab, and whether letters occur before/after it, so an intentionally
-        // stripped label ("1." + tab) does not read as an extraction gap.
+        // Mirror of the label-prefix exclusion in BuildEditableRuns: the chars before the
+        // first tab and the text they form, so an intentionally stripped label ("1." or
+        // "aa)" + tab) does not read as an extraction gap.
         var prefixChars = -1;
         var tabSeen = false;
-        var letterBeforeTab = false;
+        var prefixText = new StringBuilder();
         var letterAfterTab = false;
 
         foreach (var run in paragraph.Descendants<Run>())
@@ -86,16 +86,13 @@ internal static class ParagraphTextMapper
                     if (!DocumentPartUtils.IsInsideNestedTextBox(text, paragraph))
                     {
                         total += text.Text.Length;
-                        if (text.Text.Any(char.IsLetter))
+                        if (tabSeen)
                         {
-                            if (tabSeen)
-                            {
-                                letterAfterTab = true;
-                            }
-                            else
-                            {
-                                letterBeforeTab = true;
-                            }
+                            letterAfterTab |= text.Text.Any(char.IsLetter);
+                        }
+                        else
+                        {
+                            prefixText.Append(text.Text);
                         }
                     }
                 }
@@ -107,7 +104,9 @@ internal static class ParagraphTextMapper
             }
         }
 
-        if (prefixChars > 0 && prefixChars < total && !letterBeforeTab && letterAfterTab)
+        var prefix = prefixText.ToString();
+        if (prefixChars > 0 && prefixChars < total && letterAfterTab
+            && (string.IsNullOrWhiteSpace(prefix) || OutlineLabelDetector.IsLabelOnly(prefix)))
         {
             return total - prefixChars;
         }
@@ -991,10 +990,14 @@ internal static class ParagraphTextMapper
 
         var prefix = originalText[..labelPrefixEnd];
         var rest = originalText[labelPrefixEnd..];
-        // Letters before the tab mean it is real content ("Siehe" + tab + "Kapitel 3"),
-        // not a label; no letters after it mean there is nothing to correct anyway (and
-        // the whole paragraph is likely skipped as number-only upstream).
-        if (prefix.Any(char.IsLetter) || !rest.Any(char.IsLetter))
+        // Strippable prefixes are a footnote's whitespace spacer, or an outline label —
+        // which includes the alphanumeric levels of German legal writing ("A.", "IV.",
+        // "aa)", "(1)"), not just letter-free numbers. Real content before the tab
+        // ("Siehe" + tab + "Kapitel 3", "Rn." + tab) must stay editable. No letters
+        // after the tab means there is nothing to correct anyway (and the whole
+        // paragraph is likely skipped as label-only upstream).
+        var isStrippablePrefix = string.IsNullOrWhiteSpace(prefix) || OutlineLabelDetector.IsLabelOnly(prefix);
+        if (!isStrippablePrefix || !rest.Any(char.IsLetter))
         {
             return;
         }

@@ -252,6 +252,52 @@ public class ParagraphTextMapperTests
         Assert.Equal("Thus the maxim of canon law.", ParagraphTextMapper.ExtractEditableText(p));
     }
 
+    [Theory]
+    [InlineData("A.")]
+    [InlineData("IV.")]
+    [InlineData("a)")]
+    [InlineData("aa)")]
+    [InlineData("(1)")]
+    [InlineData("A.1")]
+    public void AlphanumericOutlineLabel_BeforeTab_IsExcludedFromEditableText(string label)
+    {
+        // Same layout as the "1." case, but with the alphanumeric levels German legal
+        // writing uses. These contain letters, so the letter-free prefix rule used to
+        // let them through and the LLM saw "A.Bestimmung des Gegenstands".
+        var p = P(
+            $"<w:r><w:t>{label}</w:t></w:r>" +
+            "<w:r><w:tab/><w:t>Bestimmung des Gegenstands</w:t></w:r>");
+
+        Assert.Equal("Bestimmung des Gegenstands", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_KeepsAlphanumericLabelAndTab()
+    {
+        var p = P(
+            "<w:r><w:t>aa)</w:t></w:r>" +
+            "<w:r><w:tab/><w:t>Bestimmung des Gegenstands</w:t></w:r>");
+
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        ParagraphTextMapper.ApplyTranslation(p, original, "Definition of the subject");
+
+        var runs = p.Descendants<Run>().ToList();
+        Assert.Equal("aa)", runs[0].InnerText);
+        Assert.Single(p.Descendants<TabChar>());
+        Assert.Equal("Definition of the subject", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void AbbreviationBeforeTab_IsNotStripped()
+    {
+        // "Rn." is content, not an outline label: it must stay in the editable stream.
+        var p = P(
+            "<w:r><w:t>Rn.</w:t></w:r>" +
+            "<w:r><w:tab/><w:t>Bestimmung des Gegenstands</w:t></w:r>");
+
+        Assert.Equal("Rn.Bestimmung des Gegenstands", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
     [Fact]
     public void LettersBeforeTab_AreRealContent_NotALabel()
     {

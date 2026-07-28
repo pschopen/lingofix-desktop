@@ -153,7 +153,7 @@ public static class LingofixRunner
 
             using (var doc = WordprocessingDocument.Open(correctedPath, true))
             {
-                coverage = DocxPartScanner.Scan(doc);
+                coverage = DocxPartScanner.Scan(doc, logger);
 
                 var scopedWorkItems = coverage.WorkItems
                     .Where(item => settings.CorrectionScopeParts.Contains(item.Kind))
@@ -197,13 +197,16 @@ public static class LingofixRunner
                     logger.Info(isTranslation ? "Citation normalization disabled (translation mode)." : "Citation normalization disabled.");
                 }
 
-                if (isTranslation)
+                // Always logged (even at 0) so a run's log proves the guard was active in
+                // the binary that produced it, matching the number-only line in
+                // ParagraphProcessor.
+                logger.Info($"Skipped {coverage.DirectoryParagraphs} table-of-contents paragraph(s) (generated field content).");
+                if (coverage.DirectoryParagraphs > 0)
                 {
-                    // Field results (TOC entries, PAGEREF page numbers, ...) are never
-                    // rewritten (see ParagraphTextMapper) — surfaced here so the frontend
-                    // can localize it via localizeDocxLogMessage, matching the
-                    // compare_fallback_manual_hint pattern.
-                    logger.Info("Fields and table-of-contents entries are not translated; update them manually in Word.");
+                    // Fixed EN wording — the frontend swaps in a localized version via
+                    // localizeDocxLogMessage, matching the compare_fallback_manual_hint
+                    // pattern.
+                    logger.Info("Table-of-contents and index entries are excluded from processing; Word refreshes them when the document is opened.");
                 }
 
                 if (coverage.CommentCount > 0)
@@ -477,6 +480,14 @@ public static class LingofixRunner
                 }
             }
 
+            // Applied to the finished deliverable rather than to correctedPath, so it
+            // survives every route above (translation, all three compare modes, and the
+            // salvage copy) and cannot be dropped by an external comparator.
+            if (!useNativeOdtLibreOfficeCompare && coverage.DirectoryParagraphs > 0)
+            {
+                MarkDirectoryFieldsDirty(tempOutputPath, logger);
+            }
+
             try
             {
                 if (useNativeOdtLibreOfficeCompare)
@@ -612,4 +623,36 @@ public static class LingofixRunner
         throw new IOException($"Could not create readable snapshot of input file: {sourcePath}", lastError);
     }
 
+    /// <summary>
+    /// Flags the output's directory fields as out of date so Word rebuilds them on open,
+    /// which is what makes skipping them during correction invisible to the user.
+    /// </summary>
+    /// <remarks>
+    /// Cosmetic, like the NBSP restorer above it: a failure here must never cost the user
+    /// a finished document, so it only warns. The refresh then has to be triggered
+    /// manually with F9.
+    /// </remarks>
+    private static void MarkDirectoryFieldsDirty(string documentPath, IRunLogger logger)
+    {
+        try
+        {
+            using var doc = WordprocessingDocument.Open(documentPath, true);
+            var body = doc.MainDocumentPart?.Document?.Body;
+            if (body is null)
+            {
+                return;
+            }
+
+            var marked = DirectoryFieldDetector.MarkDirectoryFieldsDirty(body);
+            if (marked > 0)
+            {
+                doc.Save();
+                logger.Info($"Marked {marked} directory field(s) for refresh on open.");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.Warning($"Could not flag table-of-contents fields for refresh: {ex.Message} Update them in Word with F9.");
+        }
+    }
 }

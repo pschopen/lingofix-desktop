@@ -22,19 +22,29 @@ internal sealed class DocxCoverageReport
     public required int CommentCount { get; init; }
     public required int GlossaryParagraphs { get; init; }
     public required int AltChunkCount { get; init; }
+    public required int DirectoryParagraphs { get; init; }
     public required SpecialContentAudit SpecialContentAudit { get; init; }
 }
 
 internal static class DocxPartScanner
 {
-    public static DocxCoverageReport Scan(WordprocessingDocument doc)
+    public static DocxCoverageReport Scan(WordprocessingDocument doc, IRunLogger? logger = null)
     {
         var workItems = new List<ProcessorWorkItem>();
         var totalParagraphs = 0;
+        var directoryStyleIds = DirectoryFieldDetector.ResolveDirectoryStyleIds(doc);
+        var directoryParagraphs = 0;
 
+        // Directory detection runs on the main body only: TOC/index fields live there, and
+        // scanning notes, headers and footers for them would only add false-positive risk
+        // (a STYLEREF in a running header mirrors heading text but is not a directory).
         if (doc.MainDocumentPart?.Document?.Body is not null)
         {
-            var bodyParagraphs = FilterEditableParagraphs(doc.MainDocumentPart.Document.Body.Descendants<Paragraph>());
+            var body = doc.MainDocumentPart.Document.Body;
+            var bodyParagraphs = FilterEditableParagraphs(
+                body.Descendants<Paragraph>(),
+                DirectoryFieldDetector.FindDirectoryParagraphs(body, directoryStyleIds, logger),
+                ref directoryParagraphs);
             if (bodyParagraphs.Count > 0)
             {
                 workItems.Add(new ProcessorWorkItem(ProcessorWorkItemKind.Main, "Main Document", 70, bodyParagraphs));
@@ -113,6 +123,7 @@ internal static class DocxPartScanner
             CommentCount = commentCount,
             GlossaryParagraphs = glossaryCount,
             AltChunkCount = altChunkCount,
+            DirectoryParagraphs = directoryParagraphs,
             SpecialContentAudit = specialContentAudit
         };
     }
@@ -120,6 +131,29 @@ internal static class DocxPartScanner
     private static List<Paragraph> FilterEditableParagraphs(IEnumerable<Paragraph> paragraphs)
     {
         return paragraphs.Where(p => !string.IsNullOrWhiteSpace(ExtractText(p))).ToList();
+    }
+
+    /// <summary>
+    /// Like <see cref="FilterEditableParagraphs(IEnumerable{Paragraph})"/>, but also drops
+    /// generated directory paragraphs (see <see cref="DirectoryFieldDetector"/>) and adds
+    /// their number to <paramref name="directoryParagraphs"/>. Only paragraphs that would
+    /// otherwise have been processed are counted, so the reported number matches the work
+    /// actually saved.
+    /// </summary>
+    private static List<Paragraph> FilterEditableParagraphs(
+        IEnumerable<Paragraph> paragraphs,
+        IReadOnlySet<Paragraph> directory,
+        ref int directoryParagraphs)
+    {
+        var editable = FilterEditableParagraphs(paragraphs);
+        if (directory.Count == 0)
+        {
+            return editable;
+        }
+
+        var kept = editable.Where(p => !directory.Contains(p)).ToList();
+        directoryParagraphs += editable.Count - kept.Count;
+        return kept;
     }
 
     private static string ExtractText(Paragraph paragraph)

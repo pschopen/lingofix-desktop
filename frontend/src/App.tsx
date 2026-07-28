@@ -959,8 +959,8 @@ function App() {
     if (message === t('docx.logs.compare_fallback_manual_hint.backend_source', 'en')) {
       return t('docx.logs.compare_fallback_manual_hint', lang);
     }
-    if (message === t('docx.logs.fields_not_translated_hint.backend_source', 'en')) {
-      return t('docx.logs.fields_not_translated_hint', lang);
+    if (message === t('docx.logs.directory_fields_hint.backend_source', 'en')) {
+      return t('docx.logs.directory_fields_hint', lang);
     }
     return message;
   }, [lang]);

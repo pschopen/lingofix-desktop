@@ -184,6 +184,14 @@ Typical workflow:
 
 If a run is cancelled or interrupted, Lingofix keeps a checkpoint and resumes the same file where it left off instead of starting over.
 
+### Tables of contents and indexes
+
+Generated directories — table of contents, table of figures, index, table of authorities — are excluded from correction and translation. Their text is field output that Word recomputes from the headings, so processing it would spend tokens on text that the next field update overwrites anyway, and risks entries drifting away from the headings they mirror.
+
+Instead, Lingofix flags those fields as out of date in the output file. Word rebuilds them from the (corrected or translated) headings when you open the document; no manual step is needed. If your editor does not refresh them on open, select the directory and press `F9`. Only the directory fields are flagged — unrelated fields such as `DATE` keep their existing result.
+
+This relies on the directory being a real field or carrying Word's built-in directory styles. A table of contents that was typed by hand is indistinguishable from ordinary text and is corrected like any other paragraph. The log line `Skipped N table-of-contents paragraph(s)` reports what was recognised.
+
 ### Compare modes
 
 Lingofix includes different compare modes for document correction.
@@ -239,7 +247,7 @@ Translation is **experimental and disabled by default**.
 - The output is a plain translated file (`..._translated_<language>.docx`), never a tracked-changes/compare file — a full-text replacement is not something a change-tracking diff can show meaningfully.
 - Each paragraph is translated together with the *previous paragraph* as context, so the model has some continuity across a document (useful for footnote follow-citations like "ibid."). Only the original source paragraph is used as context, never an already-translated one.
 - Footnotes/endnotes use their own prompt (configurable in `Settings` > `Translation`), separate from the main-text prompt — useful for keeping bibliographic references untouched while translating the surrounding explanation.
-- **Fields and table-of-contents entries are not translated** (e.g. `TOC`, page-number fields). Update these manually in Word/LibreOffice after translation (`Update Field`/`Update Table` or similar).
+- **Field results are not translated** (e.g. page-number fields, cross-references). Update these manually in Word/LibreOffice after translation (`Update Field`/`Update Table` or similar). Generated directories are handled automatically — see below.
 - **Inline formatting mixed within a paragraph can be lost.** Because the model only ever sees and returns plain text (no formatting markers), Lingofix cannot map bold/italic back to the exact same words after translation. A paragraph that is *predominantly* italic or bold stays that way; a single bold/italic word inside otherwise plain text will typically lose that formatting. Paragraph-level formatting (headings, indentation, list styles, etc.) is unaffected, since only the text content is rewritten.
 - Interrupted translation runs resume where they left off, the same way correction runs do — switching modes on the same file (e.g. correcting after translating) always starts a fresh run rather than resuming the other mode's progress.
 

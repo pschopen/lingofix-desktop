@@ -59,7 +59,7 @@ public static class ParagraphProcessor
         var totalParagraphs = paragraphList.Count;
         var totalChars = 0;
         var extractionGapWarnings = 0;
-        var numberOnlySkipped = 0;
+        var labelOnlySkipped = 0;
         foreach (var paragraph in paragraphList)
         {
             var original = ParagraphTextMapper.ExtractEditableText(paragraph);
@@ -71,9 +71,12 @@ public static class ParagraphProcessor
                 continue;
             }
 
-            if (IsNumberOnly(original))
+            // Marginal numbers and hand-typed outline labels ("A.", "aa)", "(1)") are
+            // never added to a WorkBatch, so they stay byte-identical in the document —
+            // no placeholder/reinsertion step needed.
+            if (OutlineLabelDetector.IsLabelOnly(original))
             {
-                numberOnlySkipped++;
+                labelOnlySkipped++;
                 continue;
             }
 
@@ -118,9 +121,9 @@ public static class ParagraphProcessor
         }
 
         // Always logged (even when 0) so a run's log proves whether this guard was active
-        // in the binary that produced it — number-only paragraphs showing up in LLM
+        // in the binary that produced it — label-only paragraphs showing up in LLM
         // payloads plus this line missing means a stale build.
-        logger?.Info($"Skipped {numberOnlySkipped} number-only paragraph(s) (marginal numbers etc.).");
+        logger?.Info($"Skipped {labelOnlySkipped} label-only paragraph(s) (marginal numbers, outline labels).");
 
         if (work.Count == 0)
         {
@@ -321,13 +324,6 @@ public static class ParagraphProcessor
     {
         return original;
     }
-
-    // Paragraphs with no letters at all (marginal numbers like "12", "(3)", "§ 12",
-    // "2.3.4", "– 17 –") have nothing for the LLM to correct or translate. Skipping
-    // them here means they're never added to a WorkBatch, so they stay byte-identical
-    // in the document — no placeholder/reinsertion step needed.
-    private static bool IsNumberOnly(string text) =>
-        !text.Any(char.IsLetter);
 
     private static async Task<string> CorrectWithChunkingAsync(
         string original,

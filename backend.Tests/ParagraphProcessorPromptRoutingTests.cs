@@ -134,7 +134,7 @@ public class ParagraphProcessorPromptRoutingTests
         Assert.Single(fake.Calls, c => c.Input == "Repeat.");
     }
 
-    // ---- Number-only paragraphs ("Randnummern") ----------------------------------
+    // ---- Label-only paragraphs (Randnummern, Gliederungsmarken) ------------------
 
     [Theory]
     [InlineData("12")]
@@ -143,9 +143,15 @@ public class ParagraphProcessorPromptRoutingTests
     [InlineData("2.3.4")]
     [InlineData("– 17 –")]
     [InlineData("[5]")]
-    public async Task NumberOnlyParagraph_IsNeverSentToLlm(string numberText)
+    [InlineData("A.")]
+    [InlineData("IV.")]
+    [InlineData("a)")]
+    [InlineData("aa)")]
+    [InlineData("(1)")]
+    [InlineData("A.1")]
+    public async Task LabelOnlyParagraph_IsNeverSentToLlm(string labelText)
     {
-        var paragraphs = new[] { Text(numberText) };
+        var paragraphs = new[] { Text(labelText) };
         var fake = new FakeLlmClient();
         var settings = BuildSettings(OperationMode.Correction, enableBatching: false);
 
@@ -155,40 +161,102 @@ public class ParagraphProcessorPromptRoutingTests
     }
 
     [Fact]
-    public async Task NumberOnlyParagraph_TextIsUnchangedInDocument()
+    public async Task LabelOnlyParagraph_TextIsUnchangedInDocument()
     {
-        var paragraph = Text("12");
+        var paragraph = Text("aa)");
         var fake = new FakeLlmClient { ResponseFactory = _ => "SHOULD NEVER APPEAR" };
         var settings = BuildSettings(OperationMode.Correction, enableBatching: false);
 
         await ParagraphProcessor.ProcessAsync([paragraph], fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
 
-        Assert.Equal("12", paragraph.InnerText);
+        Assert.Equal("aa)", paragraph.InnerText);
     }
 
     [Fact]
-    public async Task MixedBatch_NumberOnlyParagraphIsSkipped_TextParagraphIsStillProcessed()
+    public async Task MixedBatch_LabelParagraphsSkipped_TextParagraphsStillProcessed()
     {
-        var paragraphs = new[] { Text("12"), Text("Ein normaler Satz.") };
+        var paragraphs = new[] { Text("A."), Text("Ein normaler Satz."), Text("aa)"), Text("Noch ein Satz.") };
         var fake = new FakeLlmClient();
         var settings = BuildSettings(OperationMode.Correction, enableBatching: true);
 
         await ParagraphProcessor.ProcessAsync(paragraphs, fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
 
-        Assert.DoesNotContain(fake.Calls, c => c.Input.Contains("12", StringComparison.Ordinal));
-        Assert.Contains(fake.Calls, c => c.Input.Contains("Ein normaler Satz.", StringComparison.Ordinal));
+        var batch = Assert.Single(fake.Calls);
+        Assert.Equal("Ein normaler Satz.\n\nNoch ein Satz.", batch.Input);
     }
 
     [Fact]
-    public async Task RomanNumeralParagraph_IsStillSentToLlm()
+    public async Task LabelWithHeading_IsStillSentToLlm()
     {
-        // Roman numerals contain letters, so the number-only skip does not apply to
-        // them; documented as an accepted gap (see IsNumberOnly's remarks).
-        var paragraphs = new[] { Text("IV.") };
+        // "A. Einleitung" carries translatable text; only the bare label is skipped.
+        var paragraphs = new[] { Text("A. Einleitung") };
         var fake = new FakeLlmClient();
-        var settings = BuildSettings(OperationMode.Correction, enableBatching: false);
+        var settings = BuildSettings(OperationMode.Translation, enableBatching: false);
 
         await ParagraphProcessor.ProcessAsync(paragraphs, fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
+
+        Assert.Equal("A. Einleitung", Assert.Single(fake.Calls).Input);
+    }
+
+    [Fact]
+    public async Task LabelAndHeadingInOneParagraph_LabelIsStrippedFromThePayload()
+    {
+        // The Word layout for a manually numbered legal heading is label + <w:tab/> +
+        // heading in ONE paragraph. ParagraphTextMapper strips the label prefix, so the
+        // LLM sees only the heading — and the label run is never written back to.
+        var paragraph = P(
+            "<w:r><w:t>aa)</w:t></w:r>" +
+            "<w:r><w:tab/><w:t>Einleitung</w:t></w:r>");
+        var fake = new FakeLlmClient { ResponseFactory = _ => "Introduction" };
+        var settings = BuildSettings(OperationMode.Translation, enableBatching: false);
+
+        await ParagraphProcessor.ProcessAsync([paragraph], fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
+
+        Assert.Equal("Einleitung", Assert.Single(fake.Calls).Input);
+        Assert.Equal("aa)", paragraph.Descendants<Run>().First().InnerText);
+    }
+
+    [Fact]
+    public async Task HeadingWithWordListNumbering_HasNoLabelInItsText()
+    {
+        // Styles + a Word list keep the label in w:numPr, never in run text — so it was
+        // never part of the payload, with or without the label filter.
+        var paragraph = P(
+            "<w:pPr><w:pStyle w:val=\"berschrift1\"/><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"3\"/></w:numPr></w:pPr>" +
+            "<w:r><w:t>Einleitung</w:t></w:r>");
+        var fake = new FakeLlmClient();
+        var settings = BuildSettings(OperationMode.Translation, enableBatching: false);
+
+        await ParagraphProcessor.ProcessAsync([paragraph], fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
+
+        Assert.Equal("Einleitung", Assert.Single(fake.Calls).Input);
+    }
+
+    [Fact]
+    public async Task LabelInOwnParagraph_HeadingReachesLlmWithoutTheLabel()
+    {
+        // Separate-paragraph layout: the label paragraph is skipped, so the heading is
+        // translated on its own. The label itself survives untouched in the document.
+        var label = Text("A.");
+        var heading = Text("Einleitung");
+        var fake = new FakeLlmClient();
+        var settings = BuildSettings(OperationMode.Translation, enableBatching: false);
+
+        await ParagraphProcessor.ProcessAsync([label, heading], fake, settings, ProcessorWorkItemKind.Main, NullRunLogger.Instance);
+
+        Assert.Equal("Einleitung", Assert.Single(fake.Calls).Input);
+        Assert.Equal("A.", label.InnerText);
+    }
+
+    [Fact]
+    public async Task LegalAbbreviationParagraph_IsStillSentToLlm()
+    {
+        // "a.a.O." must be translated ("ibid."), so it must not parse as a label.
+        var paragraphs = new[] { Text("a.a.O.") };
+        var fake = new FakeLlmClient();
+        var settings = BuildSettings(OperationMode.Translation, enableBatching: false);
+
+        await ParagraphProcessor.ProcessAsync(paragraphs, fake, settings, ProcessorWorkItemKind.Footnotes, NullRunLogger.Instance);
 
         Assert.Single(fake.Calls);
     }
