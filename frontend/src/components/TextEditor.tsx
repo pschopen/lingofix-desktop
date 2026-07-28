@@ -355,6 +355,13 @@ export function TextEditor({
   if (mode === 'translation' && docxFiles.length === 0) {
     const borderClass = isDarkMode ? 'border-surface-700' : 'border-surface-100';
     const labelClass = isDarkMode ? 'text-surface-400' : 'text-surface-500';
+    // The whole original pane greys out while the run is in flight, not just the textarea:
+    // the label header above it would otherwise stay white. Applying the disabled colour to
+    // the column (rather than to header and textarea separately) also makes the textarea's
+    // disabled:opacity-60 blend against the same tone, so both end up at the identical grey.
+    const originalPaneClass = readOnly || isCorrecting
+      ? (isDarkMode ? 'bg-surface-900' : 'bg-surface-100')
+      : '';
     return (
       <div
         className={`relative w-full h-full grid grid-cols-1 md:grid-cols-2 transition-colors duration-200 ${
@@ -384,7 +391,7 @@ export function TextEditor({
           </div>
         )}
 
-        <div className={`flex flex-col h-full min-h-0 md:border-r ${borderClass}`}>
+        <div className={`flex flex-col h-full min-h-0 md:border-r ${borderClass} ${originalPaneClass}`}>
           <div className="h-11 px-5 flex items-center flex-shrink-0">
             <p className={`text-sm font-medium ${labelClass}`}>{t('translation.original_label', lang)}</p>
           </div>
