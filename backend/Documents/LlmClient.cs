@@ -213,7 +213,8 @@ public sealed class LlmClient : ILlmClient
             baseRequest,
             sanitizeOutput: true,
             gate: gate,
-            cancellationToken: cancellationToken);
+            cancellationToken: cancellationToken,
+            originalForSanitization: input);
     }
 
     public async Task<string> CorrectBatchAsync(
@@ -278,7 +279,14 @@ public sealed class LlmClient : ILlmClient
         return string.Join("\n\n", parts);
     }
 
-    internal static string SanitizeCorrection(string? value)
+    /// <summary>
+    /// <paramref name="original"/>, when given, guards the leading-list-number strip in
+    /// <see cref="StripMarkdown"/>: a "3." at the start of a line is only a markdown-list
+    /// artifact to remove when the original paragraph didn't itself start with the same
+    /// numbering (legal-citation lists and outline numbers legitimately look identical to
+    /// a markdown ordered list, and must survive a correction verbatim).
+    /// </summary>
+    internal static string SanitizeCorrection(string? value, string? original = null)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -286,7 +294,7 @@ public sealed class LlmClient : ILlmClient
         }
 
         var text = value.Trim();
-        text = StripMarkdown(text);
+        text = StripMarkdown(text, original);
         if (text.Length >= 2 &&
             ((text.StartsWith("\"") && text.EndsWith("\"")) || (text.StartsWith("'") && text.EndsWith("'"))))
         {
@@ -298,7 +306,7 @@ public sealed class LlmClient : ILlmClient
         return text.Trim();
     }
 
-    private static string StripMarkdown(string text)
+    private static string StripMarkdown(string text, string? original)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -331,10 +339,56 @@ public sealed class LlmClient : ILlmClient
         text = System.Text.RegularExpressions.Regex.Replace(text, @"(\*\*|__)(.*?)\1", "$2");
         text = System.Text.RegularExpressions.Regex.Replace(text, @"(\*|_)(.*?)\1", "$2");
 
-        // Strip common markdown prefixes at line starts.
-        text = System.Text.RegularExpressions.Regex.Replace(text, @"(?m)^[ \t]*([#>*-]|\d+\.)[ \t]+", string.Empty);
+        // Strip markdown heading/bullet prefixes at line starts. Unlike the "<n>." case
+        // below, "#", ">", "*", "-" are never legitimate citation/outline content, so no
+        // origin check is needed here.
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"(?m)^[ \t]*[#>*-][ \t]+", string.Empty);
+
+        text = StripLeadingListNumbers(text, original);
 
         return text.Trim();
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex LeadingListNumber =
+        new(@"^[ \t]*\d+\.[ \t]+", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Strips a leading "&lt;n&gt;." from each line of <paramref name="text"/>, but only
+    /// when the corresponding line of <paramref name="original"/> (by index) did not
+    /// itself start with the same numbering — i.e. only when it is provably a markdown
+    /// artifact the model introduced, not real content (e.g. a footnote/reference list
+    /// entry like "3. Jean Gaudemet, ..." or an outline number). When line counts don't
+    /// line up (the model answered with a different paragraph count), nothing is stripped
+    /// for the unmatched lines: without a same-index original to compare against, there is
+    /// no way to tell an artifact from real content, and leaving a stray "3. " in place is
+    /// far less damaging than deleting a real citation number.
+    /// </summary>
+    private static string StripLeadingListNumbers(string text, string? original)
+    {
+        if (!LeadingListNumber.IsMatch(text))
+        {
+            return text;
+        }
+
+        var textLines = text.Replace("\r\n", "\n").Split('\n');
+        var originalLines = (original ?? string.Empty).Replace("\r\n", "\n").Split('\n');
+
+        for (var i = 0; i < textLines.Length; i++)
+        {
+            var match = LeadingListNumber.Match(textLines[i]);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var originalHasNumberHere = i < originalLines.Length && LeadingListNumber.IsMatch(originalLines[i].TrimStart());
+            if (!originalHasNumberHere)
+            {
+                textLines[i] = textLines[i][match.Length..];
+            }
+        }
+
+        return string.Join("\n", textLines);
     }
 
     private static string StripLeadingNote(string text)
@@ -475,7 +529,8 @@ public sealed class LlmClient : ILlmClient
         int maxAttempts = 3,
         bool allowTemperatureFallback = true,
         bool allowReasoningFallback = true,
-        bool trimOutputWhenNotSanitized = true)
+        bool trimOutputWhenNotSanitized = true,
+        string? originalForSanitization = null)
     {
         maxAttempts = Math.Max(1, maxAttempts);
         var includeTemperature = request.Temperature.HasValue && Volatile.Read(ref _temperatureSupport) != TemperatureSupportUnsupported;
@@ -567,7 +622,7 @@ public sealed class LlmClient : ILlmClient
                 LogResponsePayload(result, attempt);
 
                 var finalResult = sanitizeOutput
-                    ? SanitizeCorrection(result)
+                    ? SanitizeCorrection(result, originalForSanitization)
                     : (trimOutputWhenNotSanitized ? result.Trim() : result);
                 if (!string.Equals(result, finalResult, StringComparison.Ordinal))
                 {
@@ -1078,6 +1133,13 @@ public interface IConcurrencyGate
 /// Retry-After is honored as a hard floor for the next global slot even when it exceeds
 /// the pacing cap, so we never retry before the server said we may.
 ///
+/// When a provider states its ceiling outright (see <see cref="ApplyAuthoritativeLimit"/>),
+/// a 429 is treated as a transient blip rather than evidence the stated limit is wrong:
+/// growth is milder (<see cref="AuthoritativeIncreaseFactor"/>) and recovery back to the
+/// known floor only needs a short confirmation streak
+/// (<see cref="AuthoritativeSuccessesBeforeDecay"/>), not the long streak used while the
+/// limit is still being discovered by probing.
+///
 /// The clock, jitter and delay are injectable so convergence is deterministically
 /// testable without real time.
 /// </summary>
@@ -1091,6 +1153,13 @@ internal sealed class AdaptiveRateLimiter
     private const double FloorProbeRatio = 0.9;
     private const double JitterFraction = 0.25;
 
+    // When the provider has told us the exact ceiling (_authoritativeFloorMs > 0), a 429
+    // is a transient blip, not evidence that the true limit is lower than stated — so grow
+    // more gently and confirm recovery with a short streak instead of the full learning
+    // streak used when the limit is still being discovered by probing.
+    private const double AuthoritativeIncreaseFactor = 1.5;
+    private const int AuthoritativeSuccessesBeforeDecay = 5;
+
     // Auto mode opens with this gentle non-zero spacing instead of interval 0, so the very
     // first wave of workers is paced apart rather than fired as a simultaneous burst that
     // blows a small per-minute budget (e.g. Mistral's 15/min) before any header is seen.
@@ -1099,8 +1168,8 @@ internal sealed class AdaptiveRateLimiter
     // When a provider advertises a hard request/minute ceiling in its headers we pace to
     // 60000/limit, but leave a margin below the raw limit: slot jitter (±JitterFraction)
     // and the server's rolling-minute window would otherwise let occasional bursts cross
-    // the limit and trip needless 429s. Targeting ~91% of the ceiling absorbs that.
-    private const double HeaderReqSafetyFactor = 1.1;
+    // the limit and trip needless 429s. Targeting ~95% of the ceiling absorbs that.
+    private const double HeaderReqSafetyFactor = 1.05;
 
     private readonly object _sync = new();
     private readonly Func<TimeSpan> _now;
@@ -1295,7 +1364,8 @@ internal sealed class AdaptiveRateLimiter
             // penalty window opened by the first one elapses, so they don't stack growth.
             if (now >= _growthLockedUntil)
             {
-                var grown = _intervalMs <= 0 ? InitialPenaltyMs : _intervalMs * IncreaseFactor;
+                var increaseFactor = _authoritativeFloorMs > 0 ? AuthoritativeIncreaseFactor : IncreaseFactor;
+                var grown = _intervalMs <= 0 ? InitialPenaltyMs : _intervalMs * increaseFactor;
                 _intervalMs = Math.Min(grown, MaxIntervalMs);
                 _consecutiveSuccesses = 0;
                 _growthLockedUntil = now + TimeSpan.FromMilliseconds(_intervalMs);
@@ -1303,8 +1373,11 @@ internal sealed class AdaptiveRateLimiter
                 // The interval that just got a 429 did not hold; raise the safe floor to
                 // the grown interval so decay never probes back down into it. In Manual
                 // mode we do not learn a floor — the backoff is temporary and must decay
-                // all the way back to the configured hard minimum.
-                if (_learnFloor && _intervalMs > _learnedFloorMs)
+                // all the way back to the configured hard minimum. When the provider has
+                // stated its ceiling outright, the authoritative floor already is the
+                // correct target — don't let a transient overshoot raise the learned floor
+                // above it, or OnSuccess would decay to the wrong (higher) plateau.
+                if (_learnFloor && _authoritativeFloorMs <= 0 && _intervalMs > _learnedFloorMs)
                 {
                     _learnedFloorMs = _intervalMs;
                 }
@@ -1338,7 +1411,12 @@ internal sealed class AdaptiveRateLimiter
                 return;
             }
 
-            if (++_consecutiveSuccesses < SuccessesBeforeDecay)
+            // The provider stated its ceiling outright, so the sustainable rate is already
+            // known — recovery from a 429-driven overshoot only needs a short confirmation
+            // streak, not the full streak used when the limit is still being discovered by
+            // probing (that one has to survive long enough to be trustworthy).
+            var successesNeeded = _authoritativeFloorMs > 0 ? AuthoritativeSuccessesBeforeDecay : SuccessesBeforeDecay;
+            if (++_consecutiveSuccesses < successesNeeded)
             {
                 return;
             }
@@ -1347,10 +1425,9 @@ internal sealed class AdaptiveRateLimiter
 
             if (_authoritativeFloorMs > 0)
             {
-                // The provider stated its ceiling outright, so the sustainable rate is
-                // already known — no gradual probing needed. Any interval that a transient
-                // 429 inflated above the floor returns straight to it once a success streak
-                // confirms recovery, instead of crawling down 150 ms at a time for hours.
+                // Any interval that a transient 429 inflated above the floor returns straight
+                // to it once the (short) success streak confirms recovery, instead of
+                // crawling down 150 ms at a time for potentially minutes.
                 _intervalMs = Math.Max(_authoritativeFloorMs, _hardMinIntervalMs);
                 return;
             }

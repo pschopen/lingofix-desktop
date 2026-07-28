@@ -38,7 +38,9 @@ public class ParagraphTextMapperTests
         Assert.Contains("Darauf wies nun hin: Charles de Miramon", extracted);
         // The mid-word split across two runs must be joined into one word.
         Assert.Contains("juridicisation", extracted);
-        Assert.Equal(" Darauf wies nun hin: Charles de Miramon, La juridicisation de l’Église, Paris 2025.", extracted);
+        // The letter-free spacer run before the tab is a label prefix and stays out of
+        // the editable stream (so the LLM never sees it and write-back never touches it).
+        Assert.Equal("Darauf wies nun hin: Charles de Miramon, La juridicisation de l’Église, Paris 2025.", extracted);
     }
 
     [Fact]
@@ -179,6 +181,111 @@ public class ParagraphTextMapperTests
         Assert.Contains("Miramon,", ParagraphTextMapper.ExtractEditableText(p));
     }
 
+    // ---- Label prefix before a tab: outline numbers, footnote spacers ---------
+
+    [Fact]
+    public void HeadingOutlineNumber_BeforeTab_IsExcludedFromEditableText()
+    {
+        // Mirrors the field bug: "1." + tab + heading text. The tab is invisible in
+        // the extracted stream, so the LLM used to see "1.Bestimmung …", drop the
+        // number, and the write-back deleted the "1." run.
+        var p = P(
+            "<w:r><w:t>1.</w:t></w:r>" +
+            "<w:r><w:tab/><w:t>Bestimmung des Gegenstands</w:t></w:r>");
+
+        Assert.Equal("Bestimmung des Gegenstands", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_NeverTouchesOutlineNumberRun()
+    {
+        var p = P(
+            "<w:r><w:t>1.</w:t></w:r>" +
+            "<w:r><w:tab/><w:t>Bestimung des Gegenstands</w:t></w:r>");
+
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        ParagraphTextMapper.ApplyCorrection(p, original, "Bestimmung des Gegenstands");
+
+        Assert.Single(p.Descendants<TabChar>());
+        Assert.Equal("1.", p.Descendants<Run>().First().InnerText);
+        Assert.Equal("Bestimmung des Gegenstands", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_KeepsOutlineNumberAndTab_TextGoesAfterTheTab()
+    {
+        var p = P(
+            "<w:r><w:t>1.</w:t></w:r>" +
+            "<w:r><w:tab/><w:t>Bestimmung des Gegenstands</w:t></w:r>");
+
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        ParagraphTextMapper.ApplyTranslation(p, original, "Definition of the subject");
+
+        // The outline number run is untouched and the tab survives; the translated
+        // text lives in the run after the tab.
+        var runs = p.Descendants<Run>().ToList();
+        Assert.Equal("1.", runs[0].InnerText);
+        Assert.Single(p.Descendants<TabChar>());
+        Assert.Equal("Definition of the subject", ParagraphTextMapper.ExtractEditableText(p));
+        // Inside the tab run, the text node still sits after the tab element.
+        var tabRun = runs[1];
+        var children = tabRun.ChildElements.ToList();
+        Assert.True(children.FindIndex(c => c is TabChar) < children.FindIndex(c => c is Text));
+    }
+
+    [Fact]
+    public void ApplyTranslation_FootnoteSpacerAndTab_TranslationGoesAfterTheTab()
+    {
+        // Footnote layout: ref mark, " " spacer, tab + text. The translation must not
+        // land in the spacer run before the tab (which used to visually delete the tab).
+        var p = P(
+            "<w:r><w:footnoteRef/></w:r>" +
+            "<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>" +
+            "<w:r><w:tab/><w:t>So die Maxime des kanonischen Rechts.</w:t></w:r>");
+
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        ParagraphTextMapper.ApplyTranslation(p, original, "Thus the maxim of canon law.");
+
+        var runs = p.Descendants<Run>().ToList();
+        Assert.Equal(" ", runs[1].InnerText);
+        Assert.Single(p.Descendants<TabChar>());
+        Assert.Equal("Thus the maxim of canon law.", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void LettersBeforeTab_AreRealContent_NotALabel()
+    {
+        // "Siehe" + tab + "Kapitel 3": letters before the tab mean it is content, not
+        // a label — everything stays editable.
+        var p = P(
+            "<w:r><w:t>Siehe</w:t></w:r>" +
+            "<w:r><w:tab/><w:t>Kapitel 3 der Einleitung</w:t></w:r>");
+
+        Assert.Equal("SieheKapitel 3 der Einleitung", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void TextBeforeTabInsideSameRun_DisablesPrefixStripping()
+    {
+        // The label boundary would cut through the run ("1." and the tab share a run
+        // with the number before the tab): nothing is stripped.
+        var p = P("<w:r><w:t>1.</w:t><w:tab/><w:t>Bestimmung des Gegenstands</w:t></w:r>");
+
+        Assert.Equal("1.Bestimmung des Gegenstands", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void CountVisibleTextChars_MirrorsLabelPrefixExclusion()
+    {
+        var p = P(
+            "<w:r><w:t>1.</w:t></w:r>" +
+            "<w:r><w:tab/><w:t>Bestimmung des Gegenstands</w:t></w:r>");
+
+        Assert.Equal(
+            ParagraphTextMapper.ExtractEditableText(p).Length,
+            ParagraphTextMapper.CountVisibleTextChars(p));
+    }
+
     // ---- ApplyTranslation: marker-free write-back (Phase 2) -------------------
 
     [Fact]
@@ -311,10 +418,102 @@ public class ParagraphTextMapperTests
     {
         var p = P("<w:r><w:t>Kurz</w:t></w:r>");
         var original = ParagraphTextMapper.ExtractEditableText(p);
-        var tooLong = new string('x', 401); // exceeds the 400-char absolute cap for short originals.
+        // "Kurz" is 4 chars; cap is max(4 * 6.0, 60) = 60. 70 exceeds it.
+        var tooLong = new string('x', 70);
 
         ParagraphTextMapper.ApplyTranslation(p, original, tooLong);
 
+        Assert.Equal(original, ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_ShortHeading_TightenedCap_RejectsBlobThatOldFlatCapWouldHaveAllowed()
+    {
+        // A 26-char heading "translated" into a 200-char single-block invention (no
+        // newline, so Point 1's multi-paragraph guard doesn't apply here — this is
+        // Point 2's ratio-based cap doing the work). The old flat 400-char cap for short
+        // originals let this straight through; the new cap (max(6x original, 60) = 156
+        // here) catches it.
+        var p = P("<w:r><w:t>Bestimmung des Gegenstands</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        Assert.Equal(26, original.Length);
+        var hallucinated = new string('あ', 200);
+
+        ParagraphTextMapper.ApplyTranslation(p, original, hallucinated);
+
+        Assert.Equal(original, ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    // ---- Multi-paragraph results: the model answered with more than one paragraph ---
+
+    [Fact]
+    public void ApplyTranslation_ModelHallucinatesContinuation_UsesOnlyTheFirstBlock()
+    {
+        // Mirrors the field bug: a short heading gets a correct short translation as the
+        // first paragraph, followed by a hallucinated, unrelated continuation after a
+        // blank line. A single extracted paragraph can never legitimately contain a
+        // literal newline, so only the first block is ever eligible for write-back.
+        var p = P("<w:r><w:t>Bestimmung des Gegenstands</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "対象の定義\n\n" + new string('あ', 200) + "\n\n" + new string('い', 200);
+
+        var applied = ParagraphTextMapper.ApplyTranslation(p, original, modelReply);
+
+        Assert.True(applied);
+        Assert.Equal("対象の定義", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_ModelHallucinatesContinuation_FirstBlockTooLong_Discarded()
+    {
+        // Same shape, but this time even the leading block alone fails the length-safety
+        // check: nothing is written back, and the paragraph stays untouched.
+        var p = P("<w:r><w:t>Kurz</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = new string('あ', 200) + "\n\n" + new string('い', 200);
+
+        var applied = ParagraphTextMapper.ApplyTranslation(p, original, modelReply);
+
+        Assert.False(applied);
+        Assert.Equal(original, ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_ModelHallucinatesContinuation_UsesOnlyTheFirstBlock()
+    {
+        var p = P("<w:r><w:t>Ein kurzer Satz mit einem Feler.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "Ein kurzer Satz mit einem Fehler.\n\nUnd hier erfindet das Modell einen ganz neuen, thematisch fremden Absatz frei dazu, der niemals im Original stand.";
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, modelReply);
+
+        Assert.True(applied);
+        Assert.Equal("Ein kurzer Satz mit einem Fehler.", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_SingleNewlineWithoutBlankLine_SplitsOnTheFirstNewline()
+    {
+        var p = P("<w:r><w:t>Kurzer Titel</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "Short Title\nSome unexpected second line.";
+
+        var applied = ParagraphTextMapper.ApplyTranslation(p, original, modelReply);
+
+        Assert.True(applied);
+        Assert.Equal("Short Title", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_MultiParagraphReply_EmptyFirstBlock_IsEntirelyDiscarded()
+    {
+        var p = P("<w:r><w:t>Unverändert lassen.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "\n\nDoch etwas Text, aber erst nach einer leeren ersten Zeile.";
+
+        var applied = ParagraphTextMapper.ApplyTranslation(p, original, modelReply);
+
+        Assert.False(applied);
         Assert.Equal(original, ParagraphTextMapper.ExtractEditableText(p));
     }
 }

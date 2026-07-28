@@ -59,6 +59,7 @@ public static class ParagraphProcessor
         var totalParagraphs = paragraphList.Count;
         var totalChars = 0;
         var extractionGapWarnings = 0;
+        var numberOnlySkipped = 0;
         foreach (var paragraph in paragraphList)
         {
             var original = ParagraphTextMapper.ExtractEditableText(paragraph);
@@ -72,6 +73,7 @@ public static class ParagraphProcessor
 
             if (IsNumberOnly(original))
             {
+                numberOnlySkipped++;
                 continue;
             }
 
@@ -81,7 +83,7 @@ public static class ParagraphProcessor
             if (enableCache && cache is not null && cache.TryGetValue(cacheKey, out var cached))
             {
                 cacheHits++;
-                ApplyResult(settings.Mode, paragraph, original, cached);
+                ApplyResult(settings.Mode, paragraph, original, cached, logger);
                 continue;
             }
 
@@ -114,6 +116,11 @@ public static class ParagraphProcessor
         {
             logger?.Info($"Cache: hits {cacheHits}, misses {cacheMisses}.");
         }
+
+        // Always logged (even when 0) so a run's log proves whether this guard was active
+        // in the binary that produced it — number-only paragraphs showing up in LLM
+        // payloads plus this line missing means a stale build.
+        logger?.Info($"Skipped {numberOnlySkipped} number-only paragraph(s) (marginal numbers etc.).");
 
         if (work.Count == 0)
         {
@@ -526,15 +533,15 @@ public static class ParagraphProcessor
         return corrected;
     }
 
-    private static void ApplyResult(OperationMode mode, Paragraph paragraph, string original, string result)
+    private static void ApplyResult(OperationMode mode, Paragraph paragraph, string original, string result, IRunLogger? logger = null)
     {
         if (mode == OperationMode.Translation)
         {
-            ParagraphTextMapper.ApplyTranslation(paragraph, original, result);
+            ParagraphTextMapper.ApplyTranslation(paragraph, original, result, logger);
         }
         else
         {
-            ParagraphTextMapper.ApplyCorrection(paragraph, original, result);
+            ParagraphTextMapper.ApplyCorrection(paragraph, original, result, logger);
         }
     }
 
@@ -563,7 +570,7 @@ public static class ParagraphProcessor
                 corrected = CitationNormalizer.Normalize(corrected, citationStyle.Value);
             }
 
-            ApplyResult(mode, item.Paragraph, item.Original, corrected);
+            ApplyResult(mode, item.Paragraph, item.Original, corrected, logger);
 
             if (cache is not null)
             {
@@ -629,7 +636,7 @@ public static class ParagraphProcessor
 
         for (var i = 0; i < expectedItems.Count; i++)
         {
-            results[expectedItems[i].Id] = LlmClient.SanitizeCorrection(parsedParagraphs[i]);
+            results[expectedItems[i].Id] = LlmClient.SanitizeCorrection(parsedParagraphs[i], expectedItems[i].Original);
         }
 
         failureCode = "ok";
@@ -784,7 +791,7 @@ public static class ParagraphProcessor
             }
 
             var expected = expectedItems[expectedIndex];
-            aligned[expected.Id] = LlmClient.SanitizeCorrection(parsedParagraphs[i]);
+            aligned[expected.Id] = LlmClient.SanitizeCorrection(parsedParagraphs[i], expected.Original);
         }
 
         return true;

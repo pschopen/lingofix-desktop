@@ -175,14 +175,43 @@ public class AdaptiveRateLimiterTests
         Assert.True(limiter.CurrentIntervalMs > 5000, "429 burst should have grown the interval");
 
         // Unlike the old limiter (which pinned near 0.9 * 15 s essentially forever once a
-        // 429 raised the learned floor), one success streak now returns straight to the
-        // authoritative floor. One success streak (SuccessesBeforeDecay == 20) is enough.
-        for (var i = 0; i < 20; i++)
+        // 429 raised the learned floor), a short confirmation streak now returns straight
+        // to the authoritative floor (AuthoritativeSuccessesBeforeDecay == 5, not the full
+        // 20-success streak used while the limit is still being discovered by probing).
+        for (var i = 0; i < 4; i++)
         {
             limiter.OnSuccess();
         }
+        Assert.True(limiter.CurrentIntervalMs > 5000, "should not decay before the confirmation streak completes");
+
+        limiter.OnSuccess();
 
         Assert.InRange(limiter.CurrentIntervalMs, 4000, 4600);
+    }
+
+    [Fact]
+    public void AuthoritativeLimit_Grows_More_Gently_On_A_429_Than_Undiscovered_Limits()
+    {
+        var clockAuthoritative = new VirtualClock();
+        var authoritative = new AdaptiveRateLimiter(clockAuthoritative.NowFn, () => 0.5, clockAuthoritative.Delay);
+        authoritative.Configure(pacingEnabled: true, learnFloor: true, hardMinIntervalMs: 0);
+        authoritative.ApplyAuthoritativeLimit(15); // floor ~4400 ms
+        var beforeAuthoritative = authoritative.CurrentIntervalMs;
+        authoritative.OnRateLimited(null);
+
+        var clockProbing = new VirtualClock();
+        var probing = new AdaptiveRateLimiter(clockProbing.NowFn, () => 0.5, clockProbing.Delay);
+        probing.Configure(pacingEnabled: true, learnFloor: true, hardMinIntervalMs: 0);
+        probing.Seed(beforeAuthoritative); // same starting interval, but no stated ceiling
+        probing.OnRateLimited(null);
+
+        // Same pre-429 interval, but the authoritative case knows the true limit is not in
+        // question, so it grows 1.5x instead of the 2x used while still discovering a limit
+        // by probing.
+        Assert.True(authoritative.CurrentIntervalMs < probing.CurrentIntervalMs,
+            $"authoritative growth ({authoritative.CurrentIntervalMs}) should be milder than probing growth ({probing.CurrentIntervalMs})");
+        Assert.InRange(authoritative.CurrentIntervalMs, beforeAuthoritative * 1.4, beforeAuthoritative * 1.6);
+        Assert.InRange(probing.CurrentIntervalMs, beforeAuthoritative * 1.9, beforeAuthoritative * 2.1);
     }
 
     [Fact]

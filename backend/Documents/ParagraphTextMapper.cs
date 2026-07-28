@@ -13,10 +13,15 @@ internal static class ParagraphTextMapper
     private const double MinLengthContractionFactor = 0.2;
     // Below this original length, the ratio guard (4.0x/0.2x) would silently reject
     // legitimate short-original expansions (e.g. "Inhaltsübersicht" -> "Contents" is a
-    // contraction, but "TOC" -> "Inhaltsverzeichnis" is a >4x expansion). An absolute cap
-    // is used instead for these.
+    // contraction, but "TOC" -> "Inhaltsverzeichnis" is a >4x expansion). A looser
+    // ratio (scaled by original length, with a floor for very short originals so an
+    // acronym-like "TOC" can still expand into a full word) is used instead — NOT a flat
+    // cap: a flat 400-char cap let a made-up paragraph through for any short heading
+    // (e.g. a 26-char heading "translated" into an unrelated 100-char invention), because
+    // it didn't scale down for genuinely short originals at all.
     private const int ShortOriginalLengthThreshold = 40;
-    private const int MaxSafeTranslatedLengthForShortOriginal = 400;
+    private const double ShortOriginalMaxExpansionFactor = 6.0;
+    private const int MinSafeTranslatedLengthForShortOriginal = 60;
     public static string ExtractEditableText(Paragraph paragraph)
     {
         var runs = BuildEditableRuns(paragraph, out var originalText);
@@ -36,12 +41,34 @@ internal static class ParagraphTextMapper
     {
         var total = 0;
         var inField = false;
+        // Mirror of the label-prefix exclusion in BuildEditableRuns: chars before the
+        // first tab, and whether letters occur before/after it, so an intentionally
+        // stripped label ("1." + tab) does not read as an extraction gap.
+        var prefixChars = -1;
+        var tabSeen = false;
+        var letterBeforeTab = false;
+        var letterAfterTab = false;
 
         foreach (var run in paragraph.Descendants<Run>())
         {
             if (IsDeletedRun(run))
             {
                 continue;
+            }
+
+            if (!tabSeen)
+            {
+                var tab = run.Descendants<TabChar>()
+                    .FirstOrDefault(t => !DocumentPartUtils.IsInsideNestedTextBox(t, paragraph));
+                if (tab is not null)
+                {
+                    tabSeen = true;
+                    var textBeforeTab = run.Descendants()
+                        .TakeWhile(e => !ReferenceEquals(e, tab))
+                        .OfType<Text>()
+                        .Any(t => !DocumentPartUtils.IsInsideNestedTextBox(t, paragraph));
+                    prefixChars = textBeforeTab ? -1 : total;
+                }
             }
 
             var fieldChar = run.Descendants<FieldChar>().FirstOrDefault();
@@ -59,6 +86,17 @@ internal static class ParagraphTextMapper
                     if (!DocumentPartUtils.IsInsideNestedTextBox(text, paragraph))
                     {
                         total += text.Text.Length;
+                        if (text.Text.Any(char.IsLetter))
+                        {
+                            if (tabSeen)
+                            {
+                                letterAfterTab = true;
+                            }
+                            else
+                            {
+                                letterBeforeTab = true;
+                            }
+                        }
                     }
                 }
             }
@@ -69,26 +107,42 @@ internal static class ParagraphTextMapper
             }
         }
 
+        if (prefixChars > 0 && prefixChars < total && !letterBeforeTab && letterAfterTab)
+        {
+            return total - prefixChars;
+        }
+
         return total;
     }
 
-    public static void ApplyCorrection(Paragraph paragraph, string original, string corrected)
+    public static bool ApplyCorrection(Paragraph paragraph, string original, string corrected, IRunLogger? logger = null)
     {
         corrected = XmlTextSanitizer.StripInvalidXmlChars(corrected, out _);
         if (string.IsNullOrWhiteSpace(corrected) || corrected == original)
         {
-            return;
+            return false;
+        }
+
+        if (!TryNormalizeSingleParagraphResult(corrected, out corrected, out var hadMultipleParagraphs))
+        {
+            logger?.Warning("Correction discarded: model returned multiple paragraphs with no usable leading block.");
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(corrected) || corrected == original)
+        {
+            return false;
         }
 
         if (HasUnsafeStructure(paragraph))
         {
-            return;
+            return false;
         }
 
         var editableRuns = BuildEditableRuns(paragraph, out var normalizedOriginal);
         if (editableRuns.Count == 0)
         {
-            return;
+            return false;
         }
 
         if (!string.Equals(normalizedOriginal, original, StringComparison.Ordinal))
@@ -98,7 +152,17 @@ internal static class ParagraphTextMapper
 
         if (!IsLengthChangeSafe(original, corrected))
         {
-            return;
+            if (hadMultipleParagraphs)
+            {
+                logger?.Warning("Correction discarded: model returned multiple paragraphs; the leading block failed the length-safety check.");
+            }
+
+            return false;
+        }
+
+        if (hadMultipleParagraphs)
+        {
+            logger?.Info("Correction: model returned multiple paragraphs for one input paragraph; used only the first block.");
         }
 
         var allTextNodes = editableRuns.SelectMany(r => r.TextNodes).ToList();
@@ -106,11 +170,12 @@ internal static class ParagraphTextMapper
 
         if (TryApplyCharSpanMappedUpdate(editableRuns, original, corrected))
         {
-            return;
+            return true;
         }
 
         var runs = editableRuns.Select(r => new RunInfo(r.TextNodes, r.OriginalText)).ToList();
         ApplyTokenMappedUpdate(runs, corrected);
+        return true;
     }
 
     /// <summary>
@@ -123,23 +188,34 @@ internal static class ParagraphTextMapper
     /// proportionally to their original character share, and within each segment the
     /// full text goes into the first text node with the dominant run's formatting.
     /// </summary>
-    public static void ApplyTranslation(Paragraph paragraph, string original, string translated)
+    public static bool ApplyTranslation(Paragraph paragraph, string original, string translated, IRunLogger? logger = null)
     {
         translated = XmlTextSanitizer.StripInvalidXmlChars(translated, out _);
         if (string.IsNullOrWhiteSpace(translated))
         {
-            return;
+            return false;
+        }
+
+        if (!TryNormalizeSingleParagraphResult(translated, out translated, out var hadMultipleParagraphs))
+        {
+            logger?.Warning("Translation discarded: model returned multiple paragraphs with no usable leading block.");
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(translated))
+        {
+            return false;
         }
 
         if (HasUnsafeStructure(paragraph))
         {
-            return;
+            return false;
         }
 
         var editableRuns = BuildEditableRuns(paragraph, out var normalizedOriginal);
         if (editableRuns.Count == 0)
         {
-            return;
+            return false;
         }
 
         if (!string.Equals(normalizedOriginal, original, StringComparison.Ordinal))
@@ -149,13 +225,23 @@ internal static class ParagraphTextMapper
 
         if (!IsTranslationLengthChangeSafe(original, translated))
         {
-            return;
+            if (hadMultipleParagraphs)
+            {
+                logger?.Warning("Translation discarded: model returned multiple paragraphs; the leading block failed the length-safety check.");
+            }
+
+            return false;
+        }
+
+        if (hadMultipleParagraphs)
+        {
+            logger?.Info("Translation: model returned multiple paragraphs for one input paragraph; used only the first block.");
         }
 
         var segments = BuildTranslationSegments(paragraph, editableRuns);
         if (segments.Count == 0)
         {
-            return;
+            return false;
         }
 
         var texts = segments.Count == 1
@@ -166,13 +252,51 @@ internal static class ParagraphTextMapper
         {
             ApplyTranslationSegmentText(segments[i], texts[i]);
         }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Enforces the one-paragraph-in, one-paragraph-out invariant write-back relies on: a
+    /// single extracted paragraph's text can never legitimately contain a newline (a
+    /// <c>w:t</c> body has none), so a result with one is always a protocol violation —
+    /// the model hallucinated a continuation, leaked "1. "-style formatting across lines,
+    /// or otherwise split one paragraph into several. Recovery is attempted only for the
+    /// leading block (the common case: a short paragraph like a heading gets a made-up
+    /// continuation appended); the caller's existing length-safety check still guards
+    /// that block before it is ever applied. Returns false only when even the leading
+    /// block is empty, i.e. there is nothing usable at all.
+    /// </summary>
+    private static bool TryNormalizeSingleParagraphResult(string result, out string normalized, out bool hadMultipleParagraphs)
+    {
+        normalized = result.Replace("\r\n", "\n").Replace('\r', '\n');
+        hadMultipleParagraphs = normalized.Contains('\n');
+        if (!hadMultipleParagraphs)
+        {
+            return true;
+        }
+
+        var separatorIndex = normalized.IndexOf("\n\n", StringComparison.Ordinal);
+        var firstBlock = separatorIndex >= 0
+            ? normalized[..separatorIndex]
+            : normalized[..normalized.IndexOf('\n')];
+        firstBlock = firstBlock.Trim();
+
+        if (firstBlock.Length == 0)
+        {
+            return false;
+        }
+
+        normalized = firstBlock;
+        return true;
     }
 
     private static bool IsTranslationLengthChangeSafe(string original, string translated)
     {
         if (original.Length < ShortOriginalLengthThreshold)
         {
-            return translated.Length <= MaxSafeTranslatedLengthForShortOriginal;
+            var maxSafe = Math.Max(original.Length * ShortOriginalMaxExpansionFactor, MinSafeTranslatedLengthForShortOriginal);
+            return translated.Length <= maxSafe;
         }
 
         return IsLengthChangeSafe(original, translated);
@@ -750,6 +874,12 @@ internal static class ParagraphTextMapper
         var runs = new List<EditableRun>();
         var builder = new StringBuilder();
         var inField = false;
+        // Char offset (into the builder) where a leading label prefix ends: everything
+        // before the paragraph's first tab. -1 = no tab seen, or the boundary would cut
+        // through a run (text preceding the tab inside the same run), so nothing is
+        // stripped. See StripLeadingLabelPrefix for why.
+        var labelPrefixEnd = -1;
+        var tabSeen = false;
 
         foreach (var run in paragraph.Descendants<Run>())
         {
@@ -760,6 +890,24 @@ internal static class ParagraphTextMapper
             if (IsDeletedRun(run) || DocumentPartUtils.IsInsideNestedTextBox(run, paragraph))
             {
                 continue;
+            }
+
+            if (!tabSeen)
+            {
+                var tab = run.Descendants<TabChar>()
+                    .FirstOrDefault(t => !DocumentPartUtils.IsInsideNestedTextBox(t, paragraph));
+                if (tab is not null)
+                {
+                    tabSeen = true;
+                    // The prefix boundary sits at a run boundary only when no editable
+                    // text of this run precedes the tab (typical: <w:tab/> first, then
+                    // <w:t>). Text before the tab would put the boundary mid-run; bail.
+                    var textBeforeTab = run.Descendants()
+                        .TakeWhile(e => !ReferenceEquals(e, tab))
+                        .OfType<Text>()
+                        .Any(t => !DocumentPartUtils.IsInsideNestedTextBox(t, paragraph));
+                    labelPrefixEnd = textBeforeTab ? -1 : builder.Length;
+                }
             }
 
             var fieldChar = run.Descendants<FieldChar>().FirstOrDefault();
@@ -808,6 +956,12 @@ internal static class ParagraphTextMapper
             return runs;
         }
 
+        StripLeadingLabelPrefix(runs, ref originalText, labelPrefixEnd);
+        if (runs.Count == 0)
+        {
+            return runs;
+        }
+
         for (int i = 0; i < runs.Count; i++)
         {
             var run = runs[i];
@@ -816,6 +970,45 @@ internal static class ParagraphTextMapper
         }
 
         return runs;
+    }
+
+    /// <summary>
+    /// Excludes a leading "label" from the editable stream: runs before the paragraph's
+    /// first tab whose combined text contains no letters — outline numbers in headings
+    /// ("1." + tab + title), the spacer between a footnote mark and its text (" " + tab),
+    /// "§ 12" prefixes, and the like. The tab is invisible in the extracted text, so the
+    /// LLM sees the label glued to the following text ("1.Bestimmung …"), tends to drop
+    /// it, and the write-back then deletes (correction) or overwrites (translation) the
+    /// label run. Keeping those runs out of the editable stream means the LLM never sees
+    /// them and no write-back path can touch them.
+    /// </summary>
+    private static void StripLeadingLabelPrefix(List<EditableRun> runs, ref string originalText, int labelPrefixEnd)
+    {
+        if (labelPrefixEnd <= 0 || labelPrefixEnd >= originalText.Length)
+        {
+            return;
+        }
+
+        var prefix = originalText[..labelPrefixEnd];
+        var rest = originalText[labelPrefixEnd..];
+        // Letters before the tab mean it is real content ("Siehe" + tab + "Kapitel 3"),
+        // not a label; no letters after it mean there is nothing to correct anyway (and
+        // the whole paragraph is likely skipped as number-only upstream).
+        if (prefix.Any(char.IsLetter) || !rest.Any(char.IsLetter))
+        {
+            return;
+        }
+
+        // The boundary is guaranteed to sit on a run boundary (see BuildEditableRuns),
+        // so runs are either entirely inside the prefix or entirely after it.
+        runs.RemoveAll(r => r.EndChar <= labelPrefixEnd);
+        for (var i = 0; i < runs.Count; i++)
+        {
+            var run = runs[i];
+            runs[i] = run with { StartChar = run.StartChar - labelPrefixEnd, EndChar = run.EndChar - labelPrefixEnd };
+        }
+
+        originalText = rest;
     }
 
     private static bool HasMidWordSplit(string text, int start, int end)
