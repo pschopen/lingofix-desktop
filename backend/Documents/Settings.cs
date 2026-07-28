@@ -56,14 +56,14 @@ public sealed class Settings
         ProcessorWorkItemKind.Footers,
         ProcessorWorkItemKind.Glossary
     ];
+    // Mirrors default_correction_scope_parts() in tauri/src/main.rs, the actual source of
+    // truth for new settings.json files; kept in sync here for direct Settings construction
+    // (e.g. in tests) that does not go through FromFrontendJson.
     internal HashSet<ProcessorWorkItemKind> CorrectionScopeParts { get; set; } =
     [
         ProcessorWorkItemKind.Main,
         ProcessorWorkItemKind.Footnotes,
-        ProcessorWorkItemKind.Endnotes,
-        ProcessorWorkItemKind.Headers,
-        ProcessorWorkItemKind.Footers,
-        ProcessorWorkItemKind.Glossary
+        ProcessorWorkItemKind.Endnotes
     ];
     public int BatchMaxChars { get; set; }
     public int BatchMaxParagraphs { get; set; }

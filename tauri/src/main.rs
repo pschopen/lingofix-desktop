@@ -1506,7 +1506,10 @@ fn default_batching_parts() -> Vec<String> {
 }
 
 fn default_correction_scope_parts() -> Vec<String> {
-    KNOWN_DOCX_PARTS
+    // Headers, footers and glossary are opt-in: they typically repeat the same short
+    // text (running titles, page-number labels) on every page, so correcting them by
+    // default burns tokens disproportionate to their content.
+    ["main", "footnotes", "endnotes"]
         .iter()
         .map(|part| (*part).to_string())
         .collect()
