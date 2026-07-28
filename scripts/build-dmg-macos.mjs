@@ -91,7 +91,13 @@ run('hdiutil', [
 ]);
 
 console.log('Mounting writable DMG to arrange layout');
-run('hdiutil', ['attach', rwDmgPath, '-mountpoint', mountedVolume]);
+// The device node is captured here because detaching has to target the image
+// device, not the mountpoint: once anything unmounts the volume, the mountpoint
+// is gone while the image itself is still attached, and `hdiutil detach
+// /Volumes/...` can then only fail.
+const rwDevice = parseAttachDevice(
+  run('hdiutil', ['attach', rwDmgPath, '-mountpoint', mountedVolume], { capture: true }),
+);
 
 try {
   if (hasVolumeIcon) {
@@ -109,7 +115,7 @@ try {
     run('SetFile', ['-a', 'C', mountedVolume]);
   }
 } finally {
-  detachWithRetry(mountedVolume);
+  detachWithRetry(mountedVolume, rwDevice);
 }
 
 console.log(`Converting to compressed DMG: ${dmgPath}`);
@@ -120,7 +126,9 @@ console.log(`Verifying DMG: ${dmgPath}`);
 run('hdiutil', ['verify', dmgPath]);
 
 console.log(`Mounting DMG for signature verification: ${dmgPath}`);
-run('hdiutil', ['attach', dmgPath, '-nobrowse', '-quiet', '-mountpoint', mountedVolume]);
+const verifyDevice = parseAttachDevice(
+  run('hdiutil', ['attach', dmgPath, '-nobrowse', '-mountpoint', mountedVolume], { capture: true }),
+);
 
 try {
   const mountedApp = join(mountedVolume, 'Lingofix Desktop.app');
@@ -135,7 +143,7 @@ try {
 
   run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', mountedApp]);
 } finally {
-  run('hdiutil', ['detach', mountedVolume, '-quiet'], { allowFailure: true });
+  detachWithRetry(mountedVolume, verifyDevice, { allowFailure: true, attempts: 5 });
 }
 
 cleanup(stagingDir);
@@ -181,34 +189,114 @@ end tell
   }
 }
 
-function detachWithRetry(mountpoint, attempts = 10) {
-  // Prevent Spotlight (mds/mdworker) from indexing the mounted volume, which
-  // can hold an exclusive lock and make hdiutil detach fail on CI runners.
-  spawnSync('mdutil', ['-i', 'off', mountpoint], { stdio: 'ignore' });
+function detachWithRetry(mountpoint, device, options = {}) {
+  const attempts = options.attempts ?? 10;
+  // Detaching the device is what actually releases the image; the mountpoint is
+  // only a fallback for a stale volume whose device we could not resolve.
+  const target = device ?? mountpoint;
 
-  // Kill Finder to release any locks it holds on the volume after
-  // AppleScript layout manipulation. This is the most common cause of
-  // "hdiutil detach" failures on GitHub Actions macOS runners.
-  spawnSync('killall', ['Finder'], { stdio: 'ignore' });
-  spawnSync('sleep', ['3']);
+  // Finder writes .DS_Store lazily after the layout script closes its window,
+  // so flush pending writes before the first attempt rather than racing them.
+  spawnSync('sync', [], { stdio: 'ignore' });
 
-  for (let i = 0; i < attempts; i += 1) {
-    const result = spawnSync('hdiutil', ['detach', mountpoint, '-quiet'], { stdio: 'inherit' });
-    if (result.status === 0) {
-      return;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (!isAttached(device, mountpoint)) {
+      return true;
     }
-    // Force-unmount to release any file-system-level locks (fseventsd, etc.).
+
+    const result = spawnSync('hdiutil', ['detach', target], { encoding: 'utf8' });
+    if (result.status === 0) {
+      return true;
+    }
+
+    // `diskutil unmount force` below tears the volume down without detaching
+    // the image, and hdiutil then reports "no such file or directory" for the
+    // mountpoint on every later attempt. A non-zero status therefore only
+    // counts as a failure while the image is genuinely still attached.
+    if (!isAttached(device, mountpoint)) {
+      return true;
+    }
+
+    console.warn(`Detach attempt ${attempt}/${attempts} failed: ${describeFailure(result)}`);
+
+    if (attempt === 1) {
+      // Named holders make the CI log actionable; without this the script used
+      // to fail after ~30 silent seconds with no hint at what was holding on.
+      reportVolumeHolders(mountpoint);
+      // Spotlight (mds/mdworker) and Finder are the usual holders on GitHub
+      // Actions runners: the former indexes the volume, the latter keeps locks
+      // from the AppleScript layout pass.
+      spawnSync('mdutil', ['-i', 'off', mountpoint], { stdio: 'ignore' });
+      spawnSync('killall', ['Finder'], { stdio: 'ignore' });
+    }
+
+    // Release any file-system-level locks (fseventsd, etc.).
     spawnSync('diskutil', ['unmount', 'force', mountpoint], { stdio: 'ignore' });
-    spawnSync('killall', ['Finder'], { stdio: 'ignore' });
     spawnSync('sleep', ['3']);
   }
 
-  const forced = spawnSync('hdiutil', ['detach', mountpoint, '-force', '-quiet'], { stdio: 'inherit' });
-  if (forced.status === 0) {
-    return;
+  const forced = spawnSync('hdiutil', ['detach', target, '-force'], { encoding: 'utf8' });
+  if (forced.status === 0 || !isAttached(device, mountpoint)) {
+    return true;
   }
 
-  fail(`Could not detach ${mountpoint} after ${attempts} attempts.`);
+  const message = `Could not detach ${target} after ${attempts} attempts: ${describeFailure(forced)}`;
+  if (options.allowFailure) {
+    console.warn(`Warning: ${message}`);
+    return false;
+  }
+
+  fail(message);
+}
+
+// Whether the disk image is still attached. Checked against `hdiutil info`
+// rather than the mountpoint, because an unmounted-but-attached image still
+// blocks `hdiutil convert`.
+function isAttached(device, mountpoint) {
+  if (device) {
+    const info = spawnSync('hdiutil', ['info'], { encoding: 'utf8' });
+    if (info.status === 0) {
+      const escaped = device.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`^${escaped}(s\\d+)?\\b`, 'm').test(info.stdout || '');
+    }
+  }
+
+  return existsSync(mountpoint);
+}
+
+function reportVolumeHolders(mountpoint) {
+  const result = spawnSync('lsof', ['+f', '--', mountpoint], { encoding: 'utf8' });
+  const output = (result.stdout || '').trim();
+  console.warn(output
+    ? `Processes still holding ${mountpoint}:\n${output}`
+    : `No process reported holding ${mountpoint}.`);
+}
+
+function describeFailure(result) {
+  if (result.error) {
+    return result.error.message;
+  }
+  return (result.stderr || result.stdout || '').trim() || `exit code ${result.status}`;
+}
+
+// `hdiutil attach` lists the image's devices, whole disk first:
+//   /dev/disk4          GUID_partition_scheme
+//   /dev/disk4s1        Apple_HFS               /Volumes/Lingofix Desktop
+function parseAttachDevice(output) {
+  const line = (output || '').split('\n').find((entry) => entry.startsWith('/dev/'));
+  if (!line) {
+    return null;
+  }
+  return line.trim().split(/\s+/)[0].replace(/s\d+$/, '');
+}
+
+function deviceForMountpoint(mountpoint) {
+  const result = spawnSync('diskutil', ['info', mountpoint], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    return null;
+  }
+  const match = (result.stdout || '').match(/Device Node:\s*(\/dev\/\S+)/);
+  return match ? match[1].replace(/s\d+$/, '') : null;
 }
 
 function ensureUnmounted(mountpoint) {
@@ -216,7 +304,7 @@ function ensureUnmounted(mountpoint) {
     return;
   }
   console.log(`Detaching stale volume before build: ${mountpoint}`);
-  detachWithRetry(mountpoint);
+  detachWithRetry(mountpoint, deviceForMountpoint(mountpoint));
 }
 
 function getFolderSizeMb(path) {
@@ -323,13 +411,20 @@ function getArgValue(argv, key) {
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
-    stdio: 'inherit',
+    stdio: options.capture ? ['ignore', 'pipe', 'inherit'] : 'inherit',
+    encoding: 'utf8',
     shell: false,
   });
+
+  if (options.capture && result.stdout) {
+    process.stdout.write(result.stdout);
+  }
 
   if (result.status !== 0 && !options.allowFailure) {
     fail(`Command failed: ${command} ${args.join(' ')}`);
   }
+
+  return result.stdout ?? '';
 }
 
 function fail(message) {
