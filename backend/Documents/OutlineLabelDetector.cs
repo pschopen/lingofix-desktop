@@ -72,6 +72,82 @@ internal static class OutlineLabelDetector
         return tokens.All(token => IsLabelToken(token, requireSeparator));
     }
 
+    /// <summary>
+    /// Splits a leading outline label ("1.", "I.", "aa)", "(1)") off <paramref name="text"/>
+    /// when it is followed by real prose, using the same token grammar as
+    /// <see cref="IsLabelOnly"/> — just applied to the first whitespace-delimited token
+    /// instead of every token in the paragraph. This exists for the write-back side: when
+    /// the label's separator is a tab, <see cref="ParagraphTextMapper"/> strips the whole
+    /// prefix from the editable stream before the LLM ever sees it (via
+    /// <c>StripLeadingLabelPrefix</c>), so the label can never be touched. When the
+    /// separator is a plain or non-breaking space instead — or shares a run with the
+    /// following text — that pre-emptive exclusion cannot apply (there is no run boundary
+    /// to cut at), so the label goes to the model as ordinary text and is occasionally
+    /// dropped as perceived list formatting. This method lets the write-back path notice
+    /// that and re-attach the exact original label, using the same trusted grammar that
+    /// already excludes it in the tab case.
+    /// </summary>
+    public static bool TryStripLeadingLabel(string text, out string label, out string rest)
+    {
+        label = string.Empty;
+        rest = text;
+
+        var separatorStart = 0;
+        while (separatorStart < text.Length && !char.IsWhiteSpace(text[separatorStart]))
+        {
+            separatorStart++;
+        }
+
+        if (separatorStart == 0 || separatorStart >= text.Length)
+        {
+            return false;
+        }
+
+        var token = text[..separatorStart];
+        if (!IsLabelToken(token, requireSeparator: true))
+        {
+            return false;
+        }
+
+        // A single-letter-plus-separator token ("S.", "p.") is indistinguishable from a
+        // real level-1 outline label ("A.", "I.") by shape alone — the difference IsLabelOnly
+        // relies on elsewhere is that a bare page number right after it ("S. 42") has no
+        // separator of its own and so fails its own IsLabelToken check as a second token.
+        // The same disambiguation applies here: a label is never immediately followed by a
+        // bare number, that shape is a citation abbreviation instead ("S. 42", "Rn. 17").
+        var nextTokenStart = separatorStart;
+        while (nextTokenStart < text.Length && char.IsWhiteSpace(text[nextTokenStart]))
+        {
+            nextTokenStart++;
+        }
+
+        var nextTokenEnd = nextTokenStart;
+        while (nextTokenEnd < text.Length && !char.IsWhiteSpace(text[nextTokenEnd]))
+        {
+            nextTokenEnd++;
+        }
+
+        if (text[nextTokenStart..nextTokenEnd] is { Length: > 0 } nextToken && nextToken.All(char.IsDigit))
+        {
+            return false;
+        }
+
+        var contentStart = separatorStart;
+        while (contentStart < text.Length && char.IsWhiteSpace(text[contentStart]))
+        {
+            contentStart++;
+        }
+
+        if (contentStart >= text.Length || !text[contentStart..].Any(char.IsLetter))
+        {
+            return false;
+        }
+
+        label = text[..contentStart];
+        rest = text[contentStart..];
+        return true;
+    }
+
     private static bool IsLabelToken(string token, bool requireSeparator)
     {
         // Pure punctuation or symbols: "§", "§§", "–". No text content either way.

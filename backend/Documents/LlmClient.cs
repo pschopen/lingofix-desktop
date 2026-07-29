@@ -606,15 +606,13 @@ public sealed class LlmClient : ILlmClient
                 RecordLatency(sendStopwatch.Elapsed.TotalMilliseconds);
                 _rateLimiter.OnSuccess();
 
-                if (includeTemperature)
+                if (includeTemperature && Interlocked.Exchange(ref _temperatureSupport, TemperatureSupportSupported) != TemperatureSupportSupported)
                 {
-                    Volatile.Write(ref _temperatureSupport, TemperatureSupportSupported);
                     EmitCapabilityLog("temperature", true);
                 }
 
-                if (includeReasoningEffort)
+                if (includeReasoningEffort && Interlocked.Exchange(ref _reasoningSupport, ReasoningSupportSupported) != ReasoningSupportSupported)
                 {
-                    Volatile.Write(ref _reasoningSupport, ReasoningSupportSupported);
                     EmitCapabilityLog("reasoning_effort", true);
                 }
 
@@ -662,16 +660,21 @@ public sealed class LlmClient : ILlmClient
                 _logger?.Info("Note: temperature not accepted by the model. Retrying without temperature.");
                 includeTemperature = false;
                 allowTemperatureFallbackRetry = false;
-                Volatile.Write(ref _temperatureSupport, TemperatureSupportUnsupported);
-                EmitCapabilityLog("temperature", false);
+                if (Interlocked.Exchange(ref _temperatureSupport, TemperatureSupportUnsupported) != TemperatureSupportUnsupported)
+                {
+                    EmitCapabilityLog("temperature", false);
+                }
+
                 attempt = 0;
                 continue;
             }
 
             if (allowReasoningFallbackRetry && IsReasoningOrThinkingError(responseBody))
             {
-                Volatile.Write(ref _reasoningSupport, ReasoningSupportUnsupported);
-                EmitCapabilityLog("reasoning_effort", false);
+                if (Interlocked.Exchange(ref _reasoningSupport, ReasoningSupportUnsupported) != ReasoningSupportUnsupported)
+                {
+                    EmitCapabilityLog("reasoning_effort", false);
+                }
 
                 if (_enableReasoning)
                 {

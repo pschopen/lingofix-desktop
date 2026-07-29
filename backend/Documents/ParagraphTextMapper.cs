@@ -22,6 +22,13 @@ internal static class ParagraphTextMapper
     private const int ShortOriginalLengthThreshold = 40;
     private const double ShortOriginalMaxExpansionFactor = 6.0;
     private const int MinSafeTranslatedLengthForShortOriginal = 60;
+    // Multi-block recovery: the leading block stays the default and is only displaced by a
+    // candidate that scores clearly better, so the common "correct answer first, made-up
+    // continuation after" case is unaffected.
+    private const double SelectionMargin = 0.15;
+    // Above this block count the O(n*m) char diff per candidate stops being worth it and
+    // scoring falls back to length proximity.
+    private const int MaxScoredBlocks = 8;
     public static string ExtractEditableText(Paragraph paragraph)
     {
         var runs = BuildEditableRuns(paragraph, out var originalText);
@@ -122,17 +129,6 @@ internal static class ParagraphTextMapper
             return false;
         }
 
-        if (!TryNormalizeSingleParagraphResult(corrected, out corrected, out var hadMultipleParagraphs))
-        {
-            logger?.Warning("Correction discarded: model returned multiple paragraphs with no usable leading block.");
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(corrected) || corrected == original)
-        {
-            return false;
-        }
-
         if (HasUnsafeStructure(paragraph))
         {
             return false;
@@ -149,19 +145,35 @@ internal static class ParagraphTextMapper
             original = normalizedOriginal;
         }
 
+        // Block selection runs against the same string the length check below uses, so a
+        // candidate can never be picked on one notion of "original" and then measured
+        // against another.
+        if (!TrySelectResultBlock(corrected, original, allowSimilarity: true, allowJoin: true, out corrected, out var selection))
+        {
+            logger?.Warning("Correction discarded: model returned multiple paragraphs with no usable leading block.");
+            return false;
+        }
+
+        corrected = RestoreDroppedOutlineLabel(original, corrected);
+        corrected = RestoreEdgeWhitespace(original, corrected);
+        if (string.IsNullOrWhiteSpace(corrected) || corrected == original)
+        {
+            return false;
+        }
+
         if (!IsLengthChangeSafe(original, corrected))
         {
-            if (hadMultipleParagraphs)
+            if (selection.BlockCount > 1)
             {
-                logger?.Warning("Correction discarded: model returned multiple paragraphs; the leading block failed the length-safety check.");
+                logger?.Warning($"Correction discarded: model returned {selection.BlockCount} blocks; {DescribeSelectionForWarning(selection)} failed the length-safety check.");
             }
 
             return false;
         }
 
-        if (hadMultipleParagraphs)
+        if (selection.BlockCount > 1)
         {
-            logger?.Info("Correction: model returned multiple paragraphs for one input paragraph; used only the first block.");
+            logger?.Info($"Correction: model returned {selection.BlockCount} blocks for one input paragraph; {DescribeSelectionForInfo(selection)}");
         }
 
         var allTextNodes = editableRuns.SelectMany(r => r.TextNodes).ToList();
@@ -195,17 +207,6 @@ internal static class ParagraphTextMapper
             return false;
         }
 
-        if (!TryNormalizeSingleParagraphResult(translated, out translated, out var hadMultipleParagraphs))
-        {
-            logger?.Warning("Translation discarded: model returned multiple paragraphs with no usable leading block.");
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(translated))
-        {
-            return false;
-        }
-
         if (HasUnsafeStructure(paragraph))
         {
             return false;
@@ -222,19 +223,35 @@ internal static class ParagraphTextMapper
             original = normalizedOriginal;
         }
 
+        // Similarity to the original is meaningless across languages, so translation ranks
+        // candidates by length proximity only — and without that signal, joining blocks
+        // back together would be guesswork, so it is not offered as a candidate either.
+        if (!TrySelectResultBlock(translated, original, allowSimilarity: false, allowJoin: false, out translated, out var selection))
+        {
+            logger?.Warning("Translation discarded: model returned multiple paragraphs with no usable leading block.");
+            return false;
+        }
+
+        translated = RestoreDroppedOutlineLabel(original, translated);
+        translated = RestoreEdgeWhitespace(original, translated);
+        if (string.IsNullOrWhiteSpace(translated))
+        {
+            return false;
+        }
+
         if (!IsTranslationLengthChangeSafe(original, translated))
         {
-            if (hadMultipleParagraphs)
+            if (selection.BlockCount > 1)
             {
-                logger?.Warning("Translation discarded: model returned multiple paragraphs; the leading block failed the length-safety check.");
+                logger?.Warning($"Translation discarded: model returned {selection.BlockCount} blocks; {DescribeSelectionForWarning(selection)} failed the length-safety check.");
             }
 
             return false;
         }
 
-        if (hadMultipleParagraphs)
+        if (selection.BlockCount > 1)
         {
-            logger?.Info("Translation: model returned multiple paragraphs for one input paragraph; used only the first block.");
+            logger?.Info($"Translation: model returned {selection.BlockCount} blocks for one input paragraph; {DescribeSelectionForInfo(selection)}");
         }
 
         var segments = BuildTranslationSegments(paragraph, editableRuns);
@@ -256,38 +273,226 @@ internal static class ParagraphTextMapper
     }
 
     /// <summary>
+    /// Which block of a multi-block model reply was picked, for logging: <see cref="BlockCount"/>
+    /// is 1 whenever the reply was well-formed (no newline), in which case no selection happened.
+    /// </summary>
+    private readonly record struct BlockSelection(int BlockCount, int SelectedIndex, bool UsedJoin);
+
+    /// <summary>
     /// Enforces the one-paragraph-in, one-paragraph-out invariant write-back relies on: a
     /// single extracted paragraph's text can never legitimately contain a newline (a
     /// <c>w:t</c> body has none), so a result with one is always a protocol violation —
     /// the model hallucinated a continuation, leaked "1. "-style formatting across lines,
-    /// or otherwise split one paragraph into several. Recovery is attempted only for the
-    /// leading block (the common case: a short paragraph like a heading gets a made-up
-    /// continuation appended); the caller's existing length-safety check still guards
-    /// that block before it is ever applied. Returns false only when even the leading
-    /// block is empty, i.e. there is nothing usable at all.
+    /// or otherwise split one paragraph into several. Recovery picks the block that best
+    /// matches the paragraph that was actually sent, rather than always the leading one:
+    /// taking the first block is right when a made-up continuation was appended, but wrong
+    /// when the model prefixed a note ("Here is the corrected text:"), where the leading
+    /// block is guaranteed garbage and the whole reply used to be discarded.
+    /// <para>
+    /// The leading block stays the default and is only displaced by a candidate scoring at
+    /// least <see cref="SelectionMargin"/> better. For corrections the score is character
+    /// similarity to the original (the output is near-identical to the input, so this is a
+    /// far sharper signal than length, and Dice's penalty for extra characters is wanted
+    /// here: a clean block beats the same block with a comment glued on); for translations,
+    /// and for texts too long to diff, it is length proximity. With <paramref name="allowJoin"/>
+    /// the blocks rejoined into one are offered as an extra candidate, which is the right
+    /// recovery when the model merely wrapped one paragraph across lines.
+    /// </para>
+    /// The caller's length-safety check still guards whatever is picked, so selection can
+    /// never widen what is applied. Returns false only when the leading block is empty,
+    /// i.e. the reply's structure is unusable to begin with.
     /// </summary>
-    private static bool TryNormalizeSingleParagraphResult(string result, out string normalized, out bool hadMultipleParagraphs)
+    private static bool TrySelectResultBlock(
+        string result,
+        string original,
+        bool allowSimilarity,
+        bool allowJoin,
+        out string selected,
+        out BlockSelection selection)
     {
-        normalized = result.Replace("\r\n", "\n").Replace('\r', '\n');
-        hadMultipleParagraphs = normalized.Contains('\n');
-        if (!hadMultipleParagraphs)
+        selected = result.Replace("\r\n", "\n").Replace('\r', '\n');
+        selection = new BlockSelection(1, 0, false);
+        if (!selected.Contains('\n'))
         {
             return true;
         }
 
-        var separatorIndex = normalized.IndexOf("\n\n", StringComparison.Ordinal);
-        var firstBlock = separatorIndex >= 0
-            ? normalized[..separatorIndex]
-            : normalized[..normalized.IndexOf('\n')];
-        firstBlock = firstBlock.Trim();
+        var separator = selected.Contains("\n\n", StringComparison.Ordinal) ? "\n\n" : "\n";
+        var blocks = selected
+            .Split(separator, StringSplitOptions.None)
+            .Select(block => block.Trim())
+            .ToList();
 
-        if (firstBlock.Length == 0)
+        if (blocks[0].Length == 0)
         {
             return false;
         }
 
-        normalized = firstBlock;
+        blocks.RemoveAll(block => block.Length == 0);
+        selected = blocks[0];
+        selection = new BlockSelection(blocks.Count, 0, false);
+        if (blocks.Count == 1)
+        {
+            return true;
+        }
+
+        // The metric is decided once for the whole reply so every candidate is ranked on
+        // the same scale — mixing similarity and length scores across candidates would
+        // compare numbers that don't mean the same thing.
+        var useSimilarity = allowSimilarity
+            && blocks.Count <= MaxScoredBlocks
+            && original.Length <= MaxCharDiffLength
+            && blocks.All(block => block.Length <= MaxCharDiffLength);
+
+        string? joined = null;
+        if (allowJoin)
+        {
+            var candidate = string.Join(" ", blocks);
+            if (!useSimilarity || candidate.Length <= MaxCharDiffLength)
+            {
+                joined = candidate;
+            }
+        }
+
+        var baseScore = ScoreCandidate(original, blocks[0], useSimilarity);
+        var bestScore = baseScore;
+
+        for (var i = 1; i < blocks.Count; i++)
+        {
+            var score = ScoreCandidate(original, blocks[i], useSimilarity);
+            if (score > baseScore + SelectionMargin && score > bestScore)
+            {
+                bestScore = score;
+                selected = blocks[i];
+                selection = new BlockSelection(blocks.Count, i, false);
+            }
+        }
+
+        if (joined is not null)
+        {
+            var score = ScoreCandidate(original, joined, useSimilarity);
+            if (score > baseScore + SelectionMargin && score > bestScore)
+            {
+                selected = joined;
+                selection = new BlockSelection(blocks.Count, 0, true);
+            }
+        }
+
         return true;
+    }
+
+    private static double ScoreCandidate(string original, string candidate, bool useSimilarity)
+    {
+        if (useSimilarity)
+        {
+            return ComputeSimilarity(BuildCharOpcodes(original, candidate), original.Length, candidate.Length);
+        }
+
+        if (original.Length == 0 || candidate.Length == 0)
+        {
+            return 0.0;
+        }
+
+        return (double)Math.Min(original.Length, candidate.Length) / Math.Max(original.Length, candidate.Length);
+    }
+
+    private static string DescribeSelectionForInfo(BlockSelection selection) =>
+        selection.UsedJoin
+            ? $"used the joined text of all {selection.BlockCount} blocks."
+            : $"used block {selection.SelectedIndex + 1}/{selection.BlockCount} (best match).";
+
+    private static string DescribeSelectionForWarning(BlockSelection selection) =>
+        selection.UsedJoin
+            ? $"the joined text of all {selection.BlockCount} blocks"
+            : $"the best-matching block ({selection.SelectedIndex + 1}/{selection.BlockCount})";
+
+    /// <summary>
+    /// Re-attaches a leading outline label ("1.", "I.", "aa)") that the model dropped as
+    /// perceived list formatting. <see cref="ParagraphTextMapper.BuildEditableRuns"/>
+    /// already keeps a hand-typed label out of the editable stream entirely when it sits
+    /// before a tab in its own run — the model never sees it there, so it can never drop
+    /// it — but that exclusion needs a run boundary to cut at. When the label's separator
+    /// is a plain or non-breaking space instead, or the label shares a run with the
+    /// following text, the label goes to the model as ordinary text like any other word,
+    /// and is occasionally stripped. This restores it using the exact original label text,
+    /// so a paragraph whose model-side content is otherwise unchanged (translation aside)
+    /// keeps its numbering. Multi-block selection and edge-whitespace restoration run after
+    /// this, so they never have to special-case a label that is already back in place.
+    /// </summary>
+    private static string RestoreDroppedOutlineLabel(string original, string candidate)
+    {
+        if (!OutlineLabelDetector.TryStripLeadingLabel(original, out var label, out _))
+        {
+            return candidate;
+        }
+
+        if (OutlineLabelDetector.TryStripLeadingLabel(candidate, out _, out _))
+        {
+            // The model kept some form of leading label (possibly reformatted) — that is
+            // not the "dropped entirely" case this guards against, so leave it alone.
+            return candidate;
+        }
+
+        return label + candidate;
+    }
+
+    /// <summary>
+    /// Re-attaches leading/trailing plain spaces (<see cref="original"/> only ever has to
+    /// contribute those, never candidate) that <see cref="SanitizeCorrection"/>'s/the block
+    /// selector's trims drop, but that were part of the paragraph's real content (e.g. a
+    /// space run before a footnote reference). Doing this at write-back time means the
+    /// external track-changes compare never sees an edge difference there to begin with —
+    /// this is what the paragraph looks like when the correction/translation left that edge
+    /// alone — instead of the compare flagging a spurious delete+insert that
+    /// <see cref="TrailingWhitespaceRejector"/> then has to undo after the fact. When a
+    /// candidate is otherwise byte-identical to <paramref name="original"/> once its edges
+    /// are restored, this also means the whole write-back is skipped as a no-op, so a
+    /// Trim()-only "correction" never reaches the document at all.
+    /// </summary>
+    private static string RestoreEdgeWhitespace(string original, string candidate)
+    {
+        if (candidate.Length == 0 || original.Length == 0)
+        {
+            return candidate;
+        }
+
+        var leadingLength = 0;
+        while (leadingLength < original.Length && original[leadingLength] == ' ')
+        {
+            leadingLength++;
+        }
+
+        var trailingLength = 0;
+        while (trailingLength < original.Length - leadingLength && original[original.Length - 1 - trailingLength] == ' ')
+        {
+            trailingLength++;
+        }
+
+        if (leadingLength == 0 && trailingLength == 0)
+        {
+            return candidate;
+        }
+
+        var hasLeading = candidate[0] == ' ';
+        var hasTrailing = candidate[^1] == ' ';
+        if ((leadingLength == 0 || hasLeading) && (trailingLength == 0 || hasTrailing))
+        {
+            return candidate;
+        }
+
+        var builder = new StringBuilder(candidate.Length + leadingLength + trailingLength);
+        if (leadingLength > 0 && !hasLeading)
+        {
+            builder.Append(' ', leadingLength);
+        }
+
+        builder.Append(candidate);
+        if (trailingLength > 0 && !hasTrailing)
+        {
+            builder.Append(' ', trailingLength);
+        }
+
+        return builder.ToString();
     }
 
     private static bool IsTranslationLengthChangeSafe(string original, string translated)

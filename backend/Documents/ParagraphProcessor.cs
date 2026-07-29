@@ -618,15 +618,15 @@ public static class ParagraphProcessor
 
         if (parsedParagraphs.Count != expectedItems.Count)
         {
-            if (parsedParagraphs.Count < expectedItems.Count &&
-                TryAlignBatchParagraphs(expectedItems, parsedParagraphs, out var aligned))
+            var aligned = AlignBatchParagraphs(expectedItems, parsedParagraphs);
+            if (aligned.Count > 0)
             {
                 results = aligned;
                 failureCode = "partial_count_mismatch";
                 return true;
             }
 
-            failureCode = "count_mismatch";
+            failureCode = $"count_mismatch: expected {expectedItems.Count}, received {parsedParagraphs.Count}";
             return false;
         }
 
@@ -695,19 +695,31 @@ public static class ParagraphProcessor
         return currentLength + nextParagraphLength + 16;
     }
 
-    private static bool TryAlignBatchParagraphs(
-        IReadOnlyList<ParagraphItem> expectedItems,
-        IReadOnlyList<string> parsedParagraphs,
-        out Dictionary<int, string> aligned)
-    {
-        aligned = new Dictionary<int, string>();
-        if (parsedParagraphs.Count == 0 || parsedParagraphs.Count > expectedItems.Count)
-        {
-            return false;
-        }
+    // A single low-scoring pair used to void the entire batch alignment (see the old
+    // all-or-nothing dp below), so one merged/split answer among ten good ones sent all
+    // ten back through per-item fallback. This threshold is now a per-pair match floor
+    // instead: a candidate pair below it is simply never matched, and the DP is a genuine
+    // three-way sequence alignment (match / discard a parsed block / leave an expected item
+    // unresolved) so it also handles the model returning *more* blocks than expected — a
+    // paragraph split across the batch separator — which the old one-directional dp
+    // (parsedParagraphs.Count > expectedItems.Count => immediate failure) couldn't recover
+    // at all. Unresolved expected items fall through to the existing per-item fallback the
+    // same way a plain missing item already does; only the paragraphs actually worth
+    // retrying pay for a retry.
+    private const double MinAlignmentMatchScore = 0.34;
 
+    private static Dictionary<int, string> AlignBatchParagraphs(
+        IReadOnlyList<ParagraphItem> expectedItems,
+        IReadOnlyList<string> parsedParagraphs)
+    {
+        var aligned = new Dictionary<int, string>();
         var n = parsedParagraphs.Count;
         var m = expectedItems.Count;
+        if (n == 0 || m == 0)
+        {
+            return aligned;
+        }
+
         var scores = new double[n, m];
         for (var i = 0; i < n; i++)
         {
@@ -717,80 +729,74 @@ public static class ParagraphProcessor
             }
         }
 
+        // dp[i, j]: best total score aligning the first i parsed blocks against the first
+        // j expected items. move[i, j] records which transition produced it: 1 = match
+        // parsed[i-1] to expected[j-1], 2 = discard parsed[i-1] (unmatched extra block),
+        // 3 = leave expected[j-1] unresolved (unmatched/missing item).
         var dp = new double[n + 1, m + 1];
-        var chooseMatch = new bool[n + 1, m + 1];
-        const double negInf = -1_000_000d;
+        var move = new byte[n + 1, m + 1];
 
         for (var i = 1; i <= n; i++)
         {
-            dp[i, 0] = negInf;
+            move[i, 0] = 2;
+        }
+
+        for (var j = 1; j <= m; j++)
+        {
+            move[0, j] = 3;
         }
 
         for (var i = 1; i <= n; i++)
         {
             for (var j = 1; j <= m; j++)
             {
-                var skip = dp[i, j - 1];
-                var match = dp[i - 1, j - 1];
-                if (match > negInf / 2)
+                var best = dp[i, j - 1];
+                var bestMove = (byte)3;
+
+                if (dp[i - 1, j] > best)
                 {
-                    match += scores[i - 1, j - 1];
+                    best = dp[i - 1, j];
+                    bestMove = 2;
                 }
 
-                if (match >= skip)
+                var score = scores[i - 1, j - 1];
+                if (score >= MinAlignmentMatchScore)
                 {
-                    dp[i, j] = match;
-                    chooseMatch[i, j] = true;
+                    var matchScore = dp[i - 1, j - 1] + score;
+                    if (matchScore > best)
+                    {
+                        best = matchScore;
+                        bestMove = 1;
+                    }
                 }
-                else
-                {
-                    dp[i, j] = skip;
-                }
+
+                dp[i, j] = best;
+                move[i, j] = bestMove;
             }
         }
 
-        if (dp[n, m] <= negInf / 2)
-        {
-            return false;
-        }
-
-        var mapping = new int[n];
-        Array.Fill(mapping, -1);
         var row = n;
         var col = m;
-        while (row > 0 && col > 0)
+        while (row > 0 || col > 0)
         {
-            if (chooseMatch[row, col])
+            switch (move[row, col])
             {
-                mapping[row - 1] = col - 1;
-                row--;
-                col--;
-            }
-            else
-            {
-                col--;
+                case 1:
+                    var expected = expectedItems[col - 1];
+                    aligned[expected.Id] = LlmClient.SanitizeCorrection(parsedParagraphs[row - 1], expected.Original);
+                    row--;
+                    col--;
+                    break;
+                case 2:
+                    row--;
+                    break;
+                default:
+                    col--;
+                    break;
             }
         }
 
-        if (row > 0 || mapping.Any(index => index < 0))
-        {
-            return false;
-        }
-
-        for (var i = 0; i < n; i++)
-        {
-            var expectedIndex = mapping[i];
-            var score = scores[i, expectedIndex];
-            if (score < 0.34)
-            {
-                return false;
-            }
-
-            var expected = expectedItems[expectedIndex];
-            aligned[expected.Id] = LlmClient.SanitizeCorrection(parsedParagraphs[i], expected.Original);
-        }
-
-        return true;
+        return aligned;
     }
 
     private static double ParagraphSimilarity(string left, string right)

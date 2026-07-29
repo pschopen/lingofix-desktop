@@ -562,4 +562,261 @@ public class ParagraphTextMapperTests
         Assert.False(applied);
         Assert.Equal(original, ParagraphTextMapper.ExtractEditableText(p));
     }
+
+    // ---- Multi-block replies: the best-matching block wins, not simply the first ----
+
+    [Fact]
+    public void ApplyCorrection_ModelPrefixesANote_UsesTheBlockThatMatchesTheOriginal()
+    {
+        // The leading block is guaranteed garbage here. Taking it always meant the whole
+        // reply was discarded by the length-safety check; the second block is the answer.
+        var p = P("<w:r><w:t>Ein etwas längerer Satz mit einem Feler darin, der korrigiert werden soll.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "Hier ist der korrigierte Text:\n\nEin etwas längerer Satz mit einem Fehler darin, der korrigiert werden soll.";
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, modelReply);
+
+        Assert.True(applied);
+        Assert.Equal("Ein etwas längerer Satz mit einem Fehler darin, der korrigiert werden soll.", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_ModelWrapsOneParagraphAcrossLines_JoinsTheBlocksBackTogether()
+    {
+        // No block on its own resembles the original; the rejoined text does, so writing
+        // back only the first line (the old behaviour) would have silently truncated it.
+        var p = P("<w:r><w:t>Der erste Teil des Satzes steht hier, und der zweite Teil des Satzes folgt danah.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "Der erste Teil des Satzes steht hier,\nund der zweite Teil des Satzes folgt danach.";
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, modelReply);
+
+        Assert.True(applied);
+        Assert.Equal("Der erste Teil des Satzes steht hier, und der zweite Teil des Satzes folgt danach.", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_HallucinatedContinuationOfSimilarLength_StillUsesTheFirstBlock()
+    {
+        // Length alone cannot tell these two blocks apart — 72 vs. 69 characters against a
+        // 71-character original. Similarity to the original can, which is exactly why
+        // corrections are not ranked by length.
+        var p = P("<w:r><w:t>Die Komission prüfte den Antrag und wies ihn im Ergebnis vollständig ab.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "Die Kommission prüfte den Antrag und wies ihn im Ergebnis vollständig ab.\n\nDer Ausschuss tagte danach erneut und beriet über ganz andere Fragen.";
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, modelReply);
+
+        Assert.True(applied);
+        Assert.Equal("Die Kommission prüfte den Antrag und wies ihn im Ergebnis vollständig ab.", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_SecondBlockOnlyMarginallyBetter_KeepsTheFirstBlock()
+    {
+        // Length scores here are 0.90 and 0.96 — better, but not by the margin required to
+        // displace the leading block, so well-behaved replies are never reshuffled.
+        var p = P($"<w:r><w:t>{new string('a', 100)}</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = new string('b', 90) + "\n\n" + new string('c', 96);
+
+        var applied = ParagraphTextMapper.ApplyTranslation(p, original, modelReply);
+
+        Assert.True(applied);
+        Assert.Equal(new string('b', 90), ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_ModelPrefixesANote_UsesTheBlockWithMatchingLength()
+    {
+        var p = P("<w:r><w:t>Ein etwas längerer deutscher Satz, der übersetzt werden soll.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "Here is the translation:\n\nA somewhat longer German sentence that is to be translated.";
+
+        var applied = ParagraphTextMapper.ApplyTranslation(p, original, modelReply);
+
+        Assert.True(applied);
+        Assert.Equal("A somewhat longer German sentence that is to be translated.", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_OriginalTooLongToDiff_FallsBackToLengthProximity()
+    {
+        // Beyond MaxCharDiffLength (2000) the char diff is skipped; selection still works
+        // via length proximity and must not throw.
+        var body = new string('a', 2500);
+        var p = P($"<w:r><w:t>{body}</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "Hinweis zum folgenden Text:\n\n" + new string('b', 2500);
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, modelReply);
+
+        Assert.True(applied);
+        Assert.Equal(new string('b', 2500), ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_EveryBlockFailsTheLengthCheck_IsDiscardedAndLogged()
+    {
+        var p = P("<w:r><w:t>Kurz.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = new string('x', 200) + "\n\n" + new string('y', 300);
+        var logger = new RecordingRunLogger();
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, modelReply, logger);
+
+        Assert.False(applied);
+        Assert.Equal(original, ParagraphTextMapper.ExtractEditableText(p));
+        Assert.Contains(logger.Messages, m => m.Level == "Warning" && m.Message.Contains("failed the length-safety check"));
+    }
+
+    [Fact]
+    public void ApplyCorrection_MultiBlockReply_LogsWhichBlockWasUsed()
+    {
+        var p = P("<w:r><w:t>Ein etwas längerer Satz mit einem Feler darin, der korrigiert werden soll.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+        var modelReply = "Hier ist der korrigierte Text:\n\nEin etwas längerer Satz mit einem Fehler darin, der korrigiert werden soll.";
+        var logger = new RecordingRunLogger();
+
+        Assert.True(ParagraphTextMapper.ApplyCorrection(p, original, modelReply, logger));
+        Assert.Contains(logger.Messages, m => m.Level == "Info" && m.Message.Contains("used block 2/2"));
+    }
+
+    // ---- Edge whitespace: sanitization trims it, write-back restores it ----
+
+    [Fact]
+    public void ApplyCorrection_TrailingSpaceOnlyDifference_IsANoOp()
+    {
+        // The model's answer is identical content-wise but lost the trailing space to
+        // Trim(). Restoring the edge makes it byte-identical to the original, so nothing
+        // should be written back at all — no spurious track-changes edit for a paragraph
+        // that didn't really change.
+        var p = P("<w:r><w:t xml:space=\"preserve\">Guter Satz. </w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, "Guter Satz.");
+
+        Assert.False(applied);
+        Assert.Equal("Guter Satz. ", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_RealFix_KeepsOriginalTrailingSpace()
+    {
+        var p = P("<w:r><w:t xml:space=\"preserve\">Ein Satz mit Feler. </w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, "Ein Satz mit Fehler.");
+
+        Assert.True(applied);
+        Assert.Equal("Ein Satz mit Fehler. ", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_RealFix_KeepsOriginalLeadingSpace()
+    {
+        var p = P("<w:r><w:t xml:space=\"preserve\"> Ein Satz mit Feler.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, "Ein Satz mit Fehler.");
+
+        Assert.True(applied);
+        Assert.Equal(" Ein Satz mit Fehler.", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_KeepsOriginalLeadingAndTrailingSpace()
+    {
+        var p = P("<w:r><w:t xml:space=\"preserve\"> Kurzer Text </w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        var applied = ParagraphTextMapper.ApplyTranslation(p, original, "Short Text");
+
+        Assert.True(applied);
+        Assert.Equal(" Short Text ", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_ModelAlreadyKeptTheTrailingSpace_IsNotDoubled()
+    {
+        var p = P("<w:r><w:t xml:space=\"preserve\">Ein Satz mit Feler. </w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, "Ein Satz mit Fehler. ");
+
+        Assert.True(applied);
+        Assert.Equal("Ein Satz mit Fehler. ", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    // ---- Outline label dropped by the model (no tab -> BuildEditableRuns's own label
+    // exclusion cannot apply, so the label went to the model as ordinary text) ----
+
+    [Fact]
+    public void ApplyCorrection_HeadingLabelSeparatedByNonBreakingSpace_ModelDropsLabel_IsRestored()
+    {
+        // The exact field case: "I. Grundfragen ..." has no tab, so the label is part
+        // of the editable stream the model sees, and it dropped it as perceived list
+        // formatting while fixing a typo in the title.
+        var p = P("<w:r><w:t xml:space=\"preserve\">I. Grundfragen und Terminologye</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, "Grundfragen und Terminologie");
+
+        Assert.True(applied);
+        Assert.Equal("I. Grundfragen und Terminologie", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_ModelKeepsTheLabelInADifferentForm_IsNotDoubled()
+    {
+        // The model reformatted "I." into "1." instead of dropping it — that is still a
+        // label, just not the exact original one, so nothing should be prepended on top.
+        var p = P("<w:r><w:t xml:space=\"preserve\">I. Grundfragen und Terminologye</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, "1. Grundfragen und Terminologie");
+
+        Assert.True(applied);
+        Assert.Equal("1. Grundfragen und Terminologie", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyTranslation_HeadingLabelSeparatedBySpace_ModelDropsLabel_IsRestored()
+    {
+        var p = P("<w:r><w:t xml:space=\"preserve\">I. Grundfragen und Terminologie</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        var applied = ParagraphTextMapper.ApplyTranslation(p, original, "Fundamentals and Terminology");
+
+        Assert.True(applied);
+        Assert.Equal("I. Fundamentals and Terminology", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    [Fact]
+    public void ApplyCorrection_AbbreviationFollowedByPageNumber_LabelIsNotInvented()
+    {
+        // "S. 42" is a page reference, not an outline label (same ambiguity
+        // OutlineLabelDetector already resolves for IsLabelOnly) — nothing should be
+        // prepended even though "S." alone is shaped like a level-1 label.
+        var p = P("<w:r><w:t xml:space=\"preserve\">S. 42 verweist auf die Fundstele.</w:t></w:r>");
+        var original = ParagraphTextMapper.ExtractEditableText(p);
+
+        var applied = ParagraphTextMapper.ApplyCorrection(p, original, "S. 42 verweist auf die Fundstelle.");
+
+        Assert.True(applied);
+        Assert.Equal("S. 42 verweist auf die Fundstelle.", ParagraphTextMapper.ExtractEditableText(p));
+    }
+
+    private sealed class RecordingRunLogger : IRunLogger
+    {
+        public List<(string Level, string Message)> Messages { get; } = [];
+
+        public void Info(string message) => Messages.Add(("Info", message));
+
+        public void Warning(string message) => Messages.Add(("Warning", message));
+
+        public void Error(string message) => Messages.Add(("Error", message));
+
+        public void Progress(int percent, string message) => Messages.Add(("Progress", message));
+    }
 }

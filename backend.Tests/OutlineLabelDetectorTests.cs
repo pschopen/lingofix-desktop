@@ -118,4 +118,50 @@ public class OutlineLabelDetectorTests
         // Word inserts U+00A0 between "§" and the number often enough to matter.
         Assert.True(OutlineLabelDetector.IsLabelOnly("A. I. 1."));
     }
+
+    // ---- TryStripLeadingLabel: the write-back-side counterpart -------------------
+
+    [Theory]
+    [InlineData("I. Grundfragen und Terminologie", "I. ", "Grundfragen und Terminologie")]
+    [InlineData("1. Einleitung", "1. ", "Einleitung")]
+    [InlineData("aa) Zweite Untergliederung", "aa) ", "Zweite Untergliederung")]
+    [InlineData("(1) Erster Absatz", "(1) ", "Erster Absatz")]
+    [InlineData("A.1. Kombinierte Ebene", "A.1. ", "Kombinierte Ebene")]
+    public void TryStripLeadingLabel_HeadingWithLabel_SplitsLabelFromProse(string text, string expectedLabel, string expectedRest)
+    {
+        var stripped = OutlineLabelDetector.TryStripLeadingLabel(text, out var label, out var rest);
+
+        Assert.True(stripped);
+        Assert.Equal(expectedLabel, label);
+        Assert.Equal(expectedRest, rest);
+    }
+
+    [Fact]
+    public void TryStripLeadingLabel_NonBreakingSpaceSeparator_SplitsLabelFromProse()
+    {
+        var stripped = OutlineLabelDetector.TryStripLeadingLabel("I. Grundfragen und Terminologie", out var label, out var rest);
+
+        Assert.True(stripped);
+        Assert.Equal("I. ", label);
+        Assert.Equal("Grundfragen und Terminologie", rest);
+    }
+
+    [Theory]
+    [InlineData("Ein ganz normaler Satz ohne Label.")]
+    [InlineData("S. 42 verweist auf die Fundstelle.")] // abbreviation + number, not a label
+    [InlineData("a.a.O. verweist auf dieselbe Stelle.")]
+    [InlineData("12")] // whole-paragraph label, no separator/prose to split off
+    [InlineData("")]
+    public void TryStripLeadingLabel_NoLeadingLabel_ReturnsFalse(string text)
+    {
+        Assert.False(OutlineLabelDetector.TryStripLeadingLabel(text, out _, out _));
+    }
+
+    [Fact]
+    public void TryStripLeadingLabel_LabelWithNothingAfterIt_ReturnsFalse()
+    {
+        // "1. " alone (no prose following) — same grammar as IsLabelOnly, nothing to
+        // reattach a label to.
+        Assert.False(OutlineLabelDetector.TryStripLeadingLabel("1.   ", out _, out _));
+    }
 }
